@@ -15,7 +15,8 @@ system protections, or request elevation silently.
 
 No GUI/UI automation targets are planned in this core repository. Native-client
 UX verification belongs to those clients. Core CLI process tests are integration
-tests, not GUI tests.
+tests, not GUI tests. Headless terminal-event and pseudo-terminal checks can
+validate TUI mechanics without creating native GUI test targets.
 
 ## Current baseline
 
@@ -119,3 +120,23 @@ work. Human intervention is reserved for environment/consent requirements, not
 routine unit testing. No GitHub Actions workflow is used; run locally or on
 explicitly provisioned native hosts. External hosts/services require separate
 access and cost approval.
+
+## Comparative acceptance
+
+Use [COMPETITIVE.md](COMPETITIVE.md) for the pinned Mole baseline, capability
+inventory, equivalent-work timing, complete distribution size, and usability
+protocol. The published artifact sizes are metadata, not measured runtime or
+full-install results. C0 must freeze scenario manifests and statistical rules
+before collecting competitive measurements.
+
+Do not run a competitor's broad maintenance command on a developer workstation,
+even if it advertises dry-run. Use verified fixture-only entry points or a
+disposable native environment and reset state between comparable runs. Preserve
+both tools' real safety checks and track which eligible objects were handled.
+Unknown/private user data must not enter shared benchmark artifacts.
+
+Functional headless CLI/TUI tests validate mechanics and output contracts, not
+human usability. Participant-based task success, safety comprehension and
+interaction burden require real observations with consent. Record unmeasured
+usability and unavailable native environments honestly; never synthesize results
+to close a competitive milestone.

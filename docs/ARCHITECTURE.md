@@ -132,3 +132,34 @@ For bindings, expose versioned DTOs, stable error codes, opaque task/resource ID
 and explicit allocation, release, cancellation, and callback rules. No panic
 may cross an ABI boundary. Keep native path handling inside the engine and do
 not force Rust internals into lossy FFI-friendly strings.
+
+## Full CLI capability expansion
+
+The foundation is not the final feature boundary. T7-T12 add interactive
+navigation, full cleanup/project/installer workflows, application removal,
+specific system maintenance, live status, and the CLI distribution lifecycle.
+See [COMPETITIVE.md](COMPETITIVE.md) for the required user outcomes.
+
+Keep interactive state, key handling, rendering, and terminal restoration in
+`sayaka-cli`; the engine remains usable without a terminal. Selection and preview
+still feed the shared plan/approval path. UI responsiveness must not depend on
+running enumeration or maintenance synchronously in the rendering loop.
+
+Introduce bounded read-only collectors in an engine module when T11 needs them.
+Retain sample timestamps, source/capability states and stale/unknown distinctions.
+Separate fast metrics from expensive probes; share snapshots where safe and
+measure overhead at the configured interval. Watch mode lives only as long as
+the explicitly started command; it does not install a daemon. A diagnostic
+observation or alert is never authorization to terminate a process or "optimize."
+
+T8-T10 may require new directory, irreversible, external-tool or privileged
+actions. Each requires an action-specific effect/identity/recovery contract,
+fresh approval, and native evidence before being supported. M3's ordinary-file
+trash proof is not sufficient for those actions. Preserve protected data and
+refuse unsupported semantics rather than implement arbitrary command execution.
+
+T12's updater, self-removal and authentication convenience are separate
+side-effect boundaries. Require verified artifact identity/compatibility,
+bounded owned installation paths, explicit user intent, and failure/recovery
+behavior. No silent global authentication changes, background auto-update, or
+credential storage follows from offering convenient CLI commands.

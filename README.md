@@ -15,7 +15,7 @@ scan -> findings -> plan -> user approval -> execute -> journal
 ```
 
 The planned open-source scope includes the Rust engine, rules, platform execution
-adapters, operation protocol, and a basic CLI. Native graphical clients such as
+adapters, operation protocol, and a full maintenance CLI. Native graphical clients such as
 SayakaCleaner are separate projects and are not included in this repository.
 
 Safety checks, basic previews, and operation records belong in the shared core,
@@ -54,6 +54,12 @@ The target platforms are a development goal, not a claim of production readiness
 Start with deterministic contracts and a read-only macOS scanner, then a narrow
 approved execution loop. Validate Windows early, before expanding rules, and
 stabilize native bindings against both platforms.
+
+The long-term CLI objective is to cover all major Mole CLI capabilities and
+demonstrate better usability, faster equivalent work, and a smaller complete
+distribution. This is not a claim of current parity or measured superiority.
+See the [competitive contract](docs/COMPETITIVE.md) for the pinned comparison
+version, capability matrix, and evidence requirements.
 
 See the [roadmap](ROADMAP.md), [core architecture](docs/ARCHITECTURE.md),
 [implementation responsibilities](docs/IMPLEMENTATION.md), and

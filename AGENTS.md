@@ -2,10 +2,16 @@
 
 ## Scope
 
-Sayaka contains an MPL-2.0 Rust maintenance core, basic CLI, and future native
+Sayaka contains an MPL-2.0 Rust maintenance core, CLI scaffold, and future native
 bindings. It currently contains scaffolds only. Follow [ROADMAP.md](ROADMAP.md)
 and the contracts in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Do not report a planned feature as implemented.
+
+The long-term CLI objective is full major-capability coverage of Mole CLI with
+evidenced usability, speed, and complete-footprint advantages. Follow
+[docs/COMPETITIVE.md](docs/COMPETITIVE.md); never claim parity from the scaffold,
+compare unequal workloads, omit runtime dependencies, or weaken protection to
+win a benchmark. Native graphical applications are a separate comparison.
 
 ## Implementation
 

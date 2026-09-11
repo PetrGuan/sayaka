@@ -13,11 +13,25 @@ This document describes public technical responsibilities, not staffing or dates
 | T4: early Windows adapter | Windows adapter and native integration fixtures | Real Windows read-only slice first; write/partial-failure slice after T3 contracts | T1; T3 for writes |
 | T5: evidence-backed rules | `crates/engine/src/rules/`, rule fixtures | Small reviewed rule set with provenance, non-targets, version checks, recovery costs | T3 and T4 |
 | T6: bindings and release contract | `crates/bindings/`, native smoke consumers, release documentation | Versioned ownership/error/cancellation contracts and documented source/binary release gates | T3 and T4 |
+| C0: comparative evidence | Benchmark fixtures/harness and result manifests when implemented | Frozen capability cases, full-install size baseline, paired timing protocol, usability tasks | Starts with M0; harness grows with T1/T2 |
+| T7: interactive CLI | `crates/cli/`, terminal event/rendering and process fixtures | Discoverable menu/disk explorer, filtering, multiselect, preview, cancellation | T2; T3 for actions |
+| T8: full cleanup workflows | Rules, project/installer discovery and CLI flows | Clean/purge/installer task coverage with positive and protected cases | T5 and T7 |
+| T9: app management | App discovery/platform operations/rules and CLI flows | Installed-app removal and related-data selection with shared-state protection | T5 and T7 |
+| T10: specific system maintenance | Platform diagnostics/restricted maintenance operations and CLI flows | Explicit preconditions, reviewed privilege boundaries, native outcomes | T3 and T7 |
+| T11: status monitoring | Bounded platform collectors and CLI rendering/streaming | Accurate and fresh metrics, JSON/NDJSON, alerts, measured collector overhead | T2 |
+| T12: CLI lifecycle and convenience | CLI history, installation/update/removal support and completion/launch integration | Verifiable lifecycle and explicit OS-auth convenience | T3; T10 boundary for authentication setup |
 
 Do not pre-create every listed module. Each package is a vertical slice with its
 own tests and error behavior, not a reason to land an entire speculative engine.
 T4 investigation starts early. Public APIs should remain cheap to change until
 both platforms have exercised their semantics.
+
+T7-T12 expand the original foundation into full CLI competition. They remain in
+the same three-crate architecture unless evidence establishes a better boundary.
+T6 bindings and native GUI work must not inflate or block the CLI comparison
+profile. C0 spans all packages; C1 is the final acceptance gate, not another
+feature implementation. See [COMPETITIVE.md](COMPETITIVE.md) for the ledger and
+the meaning of a verified usability, speed, or size advantage.
 
 ## Responsibilities
 
@@ -42,6 +56,8 @@ Before each slice, record:
 - Unit cases, real-platform cases, fault-injection points, and fixture cleanup.
 - Measurable resource/performance targets with the fixture and host definition.
 - Dependencies and blocking decisions; no unstated platform assumptions.
+- Mole capability cases affected, equivalent-work checks, and size/runtime budget
+  impact for any change contributing to CLI parity.
 
 For T2, enforce configured worker, queue, and handle limits in deterministic
 tests. Record first-result latency, cancellation latency, peak memory, and
@@ -65,6 +81,11 @@ Public documentation and CLI help describe what exists. New behavior includes
 its corresponding tests in the same change. Changes to persisted schemas, rules,
 or approval semantics include compatibility and stale-plan behavior.
 No open blocking finding may be hidden by narrowing a report after execution.
+
+For competitive acceptance, report each major capability and each performance/
+footprint scenario. Unsupported is not parity and unmeasured is not a win.
+Do not tune away safety work, omit necessary dependencies, change the benchmark
+scope after seeing results, or substitute simulated users for usability evidence.
 
 ## Outstanding decisions
 
