@@ -2,10 +2,11 @@
 
 An open-source local maintenance engine and CLI, targeting macOS and Windows.
 
-**Status: M1 in-memory core.** The engine supports deterministic observations,
-plans, exact-preview approval, read-only preflight, and a receipt state model.
-Sayaka does not yet scan, clean, uninstall, or modify files. The CLI still exposes
-only help and version information; native adapters and bindings remain unimplemented.
+**Status: M2 read-only scanner and M1 planning core.** macOS scanning supports
+explicit roots, bounded resources, cancellation and structured output. The
+in-memory core supports plans, exact-preview approval and read-only preflight.
+Sayaka does not clean, uninstall, or modify scanned files. Native execution,
+durable journaling, Windows scanning and client bindings remain unimplemented.
 
 ## Direction
 
@@ -31,6 +32,7 @@ should require AI or an online account.
 | `sayaka-engine` | In-memory planning, approval, read-only preflight and receipt contracts |
 | `sayaka-cli` | Command-line entry point, installed as `sayaka` |
 | `sayaka-bindings` | Reserved for native-client bindings; no ABI exported yet |
+| `sayaka-platform-macos` | Audited thread-policy and native volume-metadata boundary |
 
 ## Build
 
@@ -43,8 +45,20 @@ cargo build --workspace --locked
 The executable is written to `target/debug/sayaka` (`sayaka.exe` on Windows).
 
 ```sh
-cargo run --locked -p sayaka-cli -- --help
-cargo run --locked -p sayaka-cli -- --version
+cargo run --quiet --locked -p sayaka-cli -- --help
+cargo run --quiet --locked -p sayaka-cli -- scan .
+```
+
+`scan .` scans the current directory and prints a readable terminal report with
+sizes, largest files and actionable scan notes. Replace `.` with another
+**existing physical directory** when needed. Do not type a placeholder path.
+Colors and concise progress are automatic in an interactive terminal; redirected
+output stays plain, and `NO_COLOR`, `CLICOLOR=0`, and `TERM=dumb` disable color.
+
+JSON is intended for scripts, not normal interactive reading:
+
+```sh
+cargo run --quiet --locked -p sayaka-cli -- scan . --json
 ```
 
 Package publication is disabled while the public API is being established.
@@ -68,9 +82,9 @@ See the [roadmap](ROADMAP.md), [core architecture](docs/ARCHITECTURE.md),
 These describe intended work, not currently available features.
 
 Local automated unit, integration, and appropriately isolated system tests are
-part of development. M1 includes deterministic decision/state tests, compile-fail
-API checks, and an isolated fixture/child-process round trip. These validate the
-model, not actual OS trash behavior, filesystem race guarantees, or Windows support.
+part of development. M1 validates the model; M2 adds native read-only fixtures,
+CLI subprocess checks and a versioned performance fixture. None of these
+establish actual OS trash behavior, mutation race guarantees, or Windows support.
 
 ```sh
 cargo test -p sayaka-engine --locked
@@ -78,6 +92,8 @@ cargo test -p sayaka-engine --locked
 
 See the [implemented M1 contract](docs/ARCHITECTURE.md#implemented-m1-contract)
 for the trusted probe boundary and the distinction between preflight and execution.
+See the [scanning contract](docs/SCANNING.md) for limits, JSON/exit semantics,
+measurement definitions, native restrictions and benchmark reproduction.
 
 ## Contributing
 

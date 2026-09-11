@@ -2,8 +2,8 @@
 
 ## Scope
 
-Sayaka contains an MPL-2.0 Rust in-memory planning core, CLI scaffold, and future
-native bindings. Native scanning and effects are not implemented. Follow [ROADMAP.md](ROADMAP.md)
+Sayaka contains an MPL-2.0 Rust in-memory planning core, a macOS read-only scanner
+and CLI, and future native bindings. Native effects are not implemented. Follow [ROADMAP.md](ROADMAP.md)
 and the contracts in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Do not report a planned feature as implemented.
 
@@ -19,11 +19,16 @@ Preserve the no-effects boundary until an action-specific native executor exists
 
 ## Implementation
 
-Keep changes surgical and preserve the three-crate workspace until a demonstrated
-boundary requires a split. Use native path types internally, opaque resource IDs
+Keep changes surgical. The fourth crate, `sayaka-platform-macos`, is an explicitly
+approved audit boundary for native FFI; keep `sayaka-engine` unsafe-free and do not
+spread native FFI into its model/scan logic. Use native path types internally, opaque resource IDs
 at client boundaries, explicit capability/error states, and one shared policy
 path. No arbitrary commands, approval booleans, privilege escalation fallbacks,
 or permanent deletion after a failed trash operation.
+
+Follow [docs/SCANNING.md](docs/SCANNING.md). Do not weaken no-follow opens,
+materialization policy, native volume classification or budget/error semantics
+to make a scan or benchmark pass. Unavailable native metadata is not permission.
 
 Add `SPDX-License-Identifier: MPL-2.0` to source files. Keep third-party provenance
 and license obligations explicit. Do not publish private source, planning

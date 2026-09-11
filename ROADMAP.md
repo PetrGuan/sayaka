@@ -1,9 +1,9 @@
 # Roadmap
 
 This is a development plan, not a list of supported features or promised dates.
-M0 and the M1 in-memory model/planning implementation are present. The CLI still
-provides only help/version; native scanning, execution, persistent journaling and
-bindings are not implemented. Model tests do not satisfy native-platform gates.
+M0, the M1 in-memory core and the M2 macOS read-only scanner/CLI are present.
+Execution, persistent journaling, Windows-native scanning and bindings remain
+unimplemented. Read-only/model tests do not satisfy native mutation gates.
 
 ## Product objective
 
@@ -57,7 +57,8 @@ the first real logic; a passing suite with zero tests is not completion.
 Implemented in `sayaka-engine`: injected clock/IDs/probes, protected/excluded
 selection, immutable plans, session-bound approval, one-shot read-only preflight
 and pure receipt transitions. See the [M1 contract](docs/ARCHITECTURE.md#implemented-m1-contract).
-The production engine has no external dependencies; fixture tooling is dev-only.
+The M1 modules themselves use only the standard library. M2 adds targeted native
+scanner dependencies; fixture tooling remains dev-only.
 
 ### M2: understand a selected scope
 
@@ -66,6 +67,11 @@ volumes, traverse network/removable volumes, or hydrate cloud placeholders by
 default. Do not treat denied access as an empty directory. Track logical bytes,
 allocated bytes when known, hard-link deduplication, completeness, and task IDs.
 No cleaning commands are available at this stage.
+
+The [M2 scanning contract](docs/SCANNING.md) specifies actual native restrictions,
+wire semantics, fixtures and resource/performance gates. The separate macOS
+FFI crate preserves the engine's unsafe-free boundary. Actual cloud-provider,
+external/network volume and Windows environments remain unverified.
 
 ### M3: a narrow, honest write path
 
