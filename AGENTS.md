@@ -1,0 +1,41 @@
+# Contributor and coding-agent instructions
+
+## Scope
+
+Sayaka contains an MPL-2.0 Rust maintenance core, basic CLI, and future native
+bindings. It currently contains scaffolds only. Follow [ROADMAP.md](ROADMAP.md)
+and the contracts in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Do not report a planned feature as implemented.
+
+## Implementation
+
+Keep changes surgical and preserve the three-crate workspace until a demonstrated
+boundary requires a split. Use native path types internally, opaque resource IDs
+at client boundaries, explicit capability/error states, and one shared policy
+path. No arbitrary commands, approval booleans, privilege escalation fallbacks,
+or permanent deletion after a failed trash operation.
+
+Add `SPDX-License-Identifier: MPL-2.0` to source files. Keep third-party provenance
+and license obligations explicit. Do not publish private source, planning
+archives, local paths/logs, credentials, or real user data.
+
+## Validation
+
+This repository explicitly permits agents to run unit, integration, and system
+tests as well as builds; older build-only/unit-only restrictions do not apply
+to Sayaka. Follow [docs/TESTING.md](docs/TESTING.md), including fixture isolation
+and opt-in native-system cases. No destructive tests on real user data, silent
+elevation, or indiscriminate trash cleanup.
+
+Run the narrowest relevant checks and add tests with behavior changes. Report
+zero tests, missing prerequisites, skipped native cases, and cleanup failures
+honestly. macOS execution cannot certify Windows behavior. Do not add GitHub
+Actions workflows or GUI/UI test targets.
+
+## Handoff and publication
+
+Follow the role boundaries and definition of done in
+[docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md). Keep implementation evidence
+separate from independent review. Commit, push, release, or create external
+resources only when authorized for the current task. Public documentation must
+be self-contained and must not depend on private issue links.

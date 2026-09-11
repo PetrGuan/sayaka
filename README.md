@@ -49,16 +49,20 @@ cargo run --locked -p sayaka-cli -- --version
 Package publication is disabled while the public API is being established.
 The target platforms are a development goal, not a claim of production readiness.
 
-## Initial milestones
+## Roadmap and development
 
-1. A bounded macOS workflow: authorized scan, findings, preview, explicit approval,
-   supported trash operations, and accurate result records.
-2. An early Windows implementation to validate shared interfaces before broadening
-   the rule set.
-3. Evidence-backed platform rules and application management, followed by history
-   and optional AI explanations. AI must never bypass execution safeguards.
+Start with deterministic contracts and a read-only macOS scanner, then a narrow
+approved execution loop. Validate Windows early, before expanding rules, and
+stabilize native bindings against both platforms.
 
-These milestones describe intended work, not currently available features.
+See the [roadmap](ROADMAP.md), [core architecture](docs/ARCHITECTURE.md),
+[implementation responsibilities](docs/IMPLEMENTATION.md), and
+[testing policy](docs/TESTING.md) for dependencies and acceptance gates.
+These describe intended work, not currently available features.
+
+Local automated unit, integration, and appropriately isolated system tests are
+part of development. The current scaffold has no substantive tests yet; testable
+design and a green build are not claims of complete platform validation.
 
 ## Contributing
 
