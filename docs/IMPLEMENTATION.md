@@ -1,13 +1,15 @@
 # Implementation work packages and ownership
 
-Status: planned work. Only M0 is implemented.
+Status: M0 and the M1 in-memory core are implemented; the remaining packages are
+planned. M1 validation covers the model and isolated test harness, not native
+execution, persistent journaling or Windows runtime behavior.
 This document describes public technical responsibilities, not staffing or dates.
 
 ## Work packages
 
 | Package | Files when needed | Deliverable | Dependency |
 | --- | --- | --- | --- |
-| T1: model and test foundation | `crates/engine/src/model/`, `plan/`, unit tests and test support | Typed facts/plans/results, policy decisions, clock/ID injection, fixture ownership, rejection-case matrix | M0 |
+| T1: model and test foundation | `crates/engine/src/model.rs`, `plan.rs`, `receipt.rs`, unit tests and test support | Implemented in-memory facts/plans/results, decisions, clock/ID/probe injection and isolated test foundation | M0 |
 | T2: read-only scanner and CLI | `crates/engine/src/scan/`, `platform/`, `crates/cli/`, integration fixtures | Bounded enumeration, correct accounting, structured errors/progress and versioned JSON | T1 |
 | T3: execution and journal | `crates/engine/src/execute/`, `journal/`, macOS adapter, CLI confirmation | Feasibility evidence, exact-plan approval, durable intent, restricted trash actions, crash reconciliation | T2 |
 | T4: early Windows adapter | Windows adapter and native integration fixtures | Real Windows read-only slice first; write/partial-failure slice after T3 contracts | T1; T3 for writes |

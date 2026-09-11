@@ -8,3 +8,6 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 description = "Shared local maintenance engine for Sayaka"
+
+[dev-dependencies]
+tempfile = "3"

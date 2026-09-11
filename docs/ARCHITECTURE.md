@@ -1,7 +1,72 @@
 # Core architecture
 
-Status: planned contracts. The current engine and bindings crates are scaffolds.
-Names below describe responsibilities, not APIs that already exist.
+Status: M1's in-memory contracts are implemented as described below. Native
+scanning, effects, journal persistence, CLI workflows and bindings remain planned.
+Later-stage names describe responsibilities, not APIs that already exist.
+
+## Implemented M1 contract
+
+`model`, `plan`, and `receipt` are the only engine modules currently implemented.
+The normal dependency graph is standard-library-only; `tempfile` is test-only.
+
+| API | Behavior |
+| --- | --- |
+| `Scope::new` | Requires a non-root absolute path without parent traversal/NUL; retains protected native paths |
+| `Planner::new` / `with_sources` | Creates a process-local session with system or injected clocks/IDs |
+| `discover(path, probe)` | Registers one trusted read-only snapshot; does not recursively scan; returns a finding with its proposal or refusal |
+| `prepare(selected, excluded, lifetime)` | Builds an immutable preview with eligible items, exclusions, refusal reasons and a known/unknown byte estimate |
+| `approve(&preview)` | Binds confirmation to the entire engine-owned preview and this session, not a boolean or arbitrary imported document |
+| `validate(&preview, &approval, probe, cancellation)` | Performs one read-only preflight of original eligible items, producing only retained items or explicit skips |
+| `set_versions` | Invalidates all old plans on a semantic change, even if prior version numbers are restored |
+| `Receipt::new` / `start` / `finish` | Models allowed per-item transitions; rejects resources outside the plan and terminal-state rewrites |
+
+The trusted embedding code supplies a `Probe`, which receives the actual `Scope`
+and native path. A `Snapshot` reports identity, kind, measured bytes, modification
+time, completeness, physical boundary, protection, capability and owner state.
+The adapter must report unknown evidence honestly and must not mutate or hydrate
+objects. M1 includes no production implementation of this adapter.
+
+Lexical containment/protection checks and probe-reported physical protection are
+separate. Built-in system-root protections cannot be removed through the caller's
+protected-path list. A verified boundary/protection assertion must come from a
+real native adapter before any future effect; the test probes do not establish
+filesystem identity, case/alias safety, permissions or TOCTOU guarantees.
+
+Plans contain only the currently modeled ordinary-file `MoveToTrash` candidate;
+there is no method that executes it. Size is a logical-byte estimate, not
+reclaimable capacity. Unknown counts remain explicit and sums fail on overflow.
+Trash recovery is platform-dependent, not promised.
+
+Selection is deterministic and preserves input order. Unknown IDs, duplicate
+IDs, parent/child selected paths and duplicate eligible file identities are
+rejected rather than silently normalized. Overlapping selected paths are invalid
+even if one would later be excluded. An exclusion covers ancestors/descendants
+by path components; protection takes precedence over exclusion. Empty eligible
+plans retain rejection details for preview, but cannot be approved.
+
+Plan state is `Prepared -> Approved -> Validated`. Preview fields and ID/token
+constructors are private, and all returned previews are checked against the
+engine-owned record. An approval cannot be transferred to another plan/session
+or replayed after preflight. This is not cryptographic authorization against
+malicious code in the caller's own process. The embedding client must obtain
+genuine user confirmation before calling `approve`.
+
+Expiry is exclusive (`now >= expires_at` is expired). Clock rollback is an
+explicit error, not extended validity. Preflight checks cancellation/time around
+each probe, preserves prior results, and never probes new or excluded targets.
+Changed metadata or unavailable evidence produces an explicit skip; probe errors
+retain their cause. A preflight report is neither a mutation permit nor an OS
+receipt, even when an item is in `ready`.
+
+Registry entries and plans are immutable and session-local. To refresh changed
+observations, start a new discovery session for now. There is no persistence,
+serialization, resource replacement, automatic replay, or cross-process approval.
+The later M3 executor must re-establish evidence at the actual effect boundary.
+
+The full public-API fixture round trip is in
+[`in_memory_flow.rs`](../crates/engine/tests/in_memory_flow.rs); decision, injected
+failure and lifecycle matrices are in
+[`plan/tests.rs`](../crates/engine/src/plan/tests.rs).
 
 ## Dependency direction
 

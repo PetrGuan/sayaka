@@ -1,7 +1,9 @@
 # Roadmap
 
 This is a development plan, not a list of supported features or promised dates.
-Only the initial workspace and CLI help/version are implemented today.
+M0 and the M1 in-memory model/planning implementation are present. The CLI still
+provides only help/version; native scanning, execution, persistent journaling and
+bindings are not implemented. Model tests do not satisfy native-platform gates.
 
 ## Product objective
 
@@ -51,6 +53,11 @@ Define observations, findings, immutable plans, approval, execution receipts,
 stable reason codes, and explicit capability states. Separate pure decisions from
 platform effects. Introduce controlled fixtures and failure injection alongside
 the first real logic; a passing suite with zero tests is not completion.
+
+Implemented in `sayaka-engine`: injected clock/IDs/probes, protected/excluded
+selection, immutable plans, session-bound approval, one-shot read-only preflight
+and pure receipt transitions. See the [M1 contract](docs/ARCHITECTURE.md#implemented-m1-contract).
+The production engine has no external dependencies; fixture tooling is dev-only.
 
 ### M2: understand a selected scope
 

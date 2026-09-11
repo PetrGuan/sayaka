@@ -2,8 +2,8 @@
 
 ## Scope
 
-Sayaka contains an MPL-2.0 Rust maintenance core, CLI scaffold, and future native
-bindings. It currently contains scaffolds only. Follow [ROADMAP.md](ROADMAP.md)
+Sayaka contains an MPL-2.0 Rust in-memory planning core, CLI scaffold, and future
+native bindings. Native scanning and effects are not implemented. Follow [ROADMAP.md](ROADMAP.md)
 and the contracts in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Do not report a planned feature as implemented.
 
@@ -12,6 +12,10 @@ evidenced usability, speed, and complete-footprint advantages. Follow
 [docs/COMPETITIVE.md](docs/COMPETITIVE.md); never claim parity from the scaffold,
 compare unequal workloads, omit runtime dependencies, or weaken protection to
 win a benchmark. Native graphical applications are a separate comparison.
+
+M1's `Probe` is a trusted read-only embedding interface. Its snapshot assertions
+and `ValidationReport::ready` are not proof that a filesystem mutation is safe.
+Preserve the no-effects boundary until an action-specific native executor exists.
 
 ## Implementation
 
