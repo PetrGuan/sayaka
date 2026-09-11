@@ -90,17 +90,11 @@ pub(super) fn normalize_roots(
             "root paths exceed the path-byte budget",
         ));
     }
-    let mut sorted = roots.to_vec();
-    sorted.sort();
-    let mut normalized: Vec<PathBuf> = Vec::new();
-    for root in sorted {
-        if !normalized
-            .last()
-            .is_some_and(|parent| root.starts_with(parent))
-        {
-            normalized.push(root);
-        }
-    }
+    // A lexical descendant may be missing, unreadable or a symlink. Retain it
+    // for independent admission; traversal deduplication happens by identity.
+    let mut normalized = roots.to_vec();
+    normalized.sort();
+    normalized.dedup();
     if normalized.len() > limits.queue_capacity {
         return Err(ScanError::new(
             ScanCode::InvalidLimits,
@@ -466,6 +460,26 @@ fn worker<B: Backend>(
                 );
                 continue;
             }
+            if shared
+                .visited
+                .lock()
+                .expect("scan identity set poisoned")
+                .contains(&metadata.identity)
+            {
+                send(
+                    &sender,
+                    issue_event(
+                        Some(path),
+                        ScanCode::DuplicateDirectory,
+                        "directory identity is already scheduled",
+                    ),
+                    shared,
+                    limits,
+                    cancellation,
+                    started,
+                );
+                continue;
+            }
             if depth > limits.max_depth {
                 send(
                     &sender,
@@ -634,14 +648,25 @@ fn add_issue(
     }
 }
 
+#[derive(Default)]
+struct SeenEntries {
+    files: HashMap<FileIdentity, (Option<u64>, Option<u64>)>,
+    directories: HashSet<FileIdentity>,
+}
+
 fn record_entry(
     report: &mut ScanReport,
-    identities: &mut HashMap<FileIdentity, (Option<u64>, Option<u64>)>,
+    identities: &mut SeenEntries,
     path: PathBuf,
     metadata: Metadata,
     depth: usize,
     limits: &ScanLimits,
-) -> Result<(), ScanError> {
+) -> Result<bool, ScanError> {
+    if metadata.kind == ResourceKind::Directory
+        && identities.directories.contains(&metadata.identity)
+    {
+        return Ok(false);
+    }
     if report.entries.len() >= limits.max_entries {
         return Err(ScanError::new(
             ScanCode::EntryLimit,
@@ -664,7 +689,7 @@ fn record_entry(
     match metadata.kind {
         ResourceKind::File => {
             totals.regular_files += 1;
-            match identities.entry(metadata.identity) {
+            match identities.files.entry(metadata.identity) {
                 std::collections::hash_map::Entry::Occupied(previous) => {
                     totals.duplicate_files += 1;
                     if *previous.get() != (metadata.logical_bytes, metadata.allocated_bytes) {
@@ -701,7 +726,10 @@ fn record_entry(
                 }
             }
         }
-        ResourceKind::Directory => totals.directories += 1,
+        ResourceKind::Directory => {
+            totals.directories += 1;
+            identities.directories.insert(metadata.identity);
+        }
         ResourceKind::Link => totals.links += 1,
         ResourceKind::Other => totals.other += 1,
     }
@@ -718,7 +746,7 @@ fn record_entry(
         counted,
         depth,
     });
-    Ok(())
+    Ok(true)
 }
 
 pub(super) fn run<B: Backend>(
@@ -754,7 +782,7 @@ pub(super) fn run<B: Backend>(
         timed_out: AtomicBool::new(false),
         counters: Arc::clone(&counters),
     };
-    let mut identities = HashMap::new();
+    let mut identities = SeenEntries::default();
     for path in report.roots.clone() {
         if shared.should_stop(cancellation, started, limits.time_budget) {
             break;
@@ -890,7 +918,7 @@ pub(super) fn run<B: Backend>(
                             depth,
                         } => {
                             if !shared.stop.load(Ordering::Acquire) {
-                                if let Err(error) = record_entry(
+                                match record_entry(
                                     &mut report,
                                     &mut identities,
                                     path,
@@ -898,11 +926,15 @@ pub(super) fn run<B: Backend>(
                                     depth,
                                     limits,
                                 ) {
-                                    add_issue(&mut report, limits, None, error);
-                                    shared.stop();
-                                } else if report.metrics.first_result_ms.is_none() {
-                                    report.metrics.first_result_ms =
-                                        Some(milliseconds(started.elapsed()));
+                                    Err(error) => {
+                                        add_issue(&mut report, limits, None, error);
+                                        shared.stop();
+                                    }
+                                    Ok(true) if report.metrics.first_result_ms.is_none() => {
+                                        report.metrics.first_result_ms =
+                                            Some(milliseconds(started.elapsed()));
+                                    }
+                                    Ok(_) => {}
                                 }
                             }
                         }

@@ -35,8 +35,11 @@ At least one root is required; no command silently scans the current or home
 directory. Relative input may be expanded against the current directory, but
 parent traversal, filesystem roots and symlink paths are rejected. Use physical
 paths: for example, `/private/tmp` rather than the `/tmp` symlink on macOS.
-Overlapping or repeated roots are normalized by path components; physical root
-aliases are deduplicated by identity.
+Exact repeated root paths are removed, but every distinct explicit root is
+independently validated, including descendants of another root. Physical root
+aliases and directory traversal are deduplicated by identity, so nested roots
+remain usable even when an ancestor cannot be enumerated. The queue must have
+capacity for all distinct explicit roots.
 Running just `sayaka scan` prints a normally formatted usage error and a
 copyable `scan .` example; it does not start a scan. Parser diagnostics escape
 argument values while preserving the generated usage line breaks.
@@ -102,6 +105,8 @@ but have `counted: false`. `regular_files` counts retained file entries, while
 `unique_files` and `duplicate_files` describe identity deduplication.
 
 Logical length and allocated blocks (512-byte units on Darwin) stay separate.
+Directory entries are also retained only once per physical identity, including
+when an explicit nested root is later encountered beneath another root.
 Invalid/unavailable values are null and increase the corresponding unknown-file
 count. A zero-byte file is different from an unmeasured file. Overflow stops
 collection with an explicit issue instead of wrapping or saturating byte totals.

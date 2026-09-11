@@ -572,6 +572,61 @@ mod native {
     }
 
     #[test]
+    fn explicit_descendants_are_validated_before_any_overlap_deduplication() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("data"), b"1234").unwrap();
+        let target = fixture.base.join("target");
+        fs::create_dir(&target).unwrap();
+        let alias = fixture.root.join("link");
+        symlink(&target, &alias).unwrap();
+        for (descendant, expected) in [
+            (fixture.root.join("missing"), "not_found"),
+            (alias, "link_skipped"),
+            (fixture.root.join("data"), "invalid_root"),
+        ] {
+            let mut command = fixture.command();
+            command
+                .arg("scan")
+                .arg(&fixture.root)
+                .arg(&descendant)
+                .arg("--json");
+            let value = json(&capture(command), 3);
+            assert_eq!(value["complete"], false);
+            assert_eq!(value["totals"]["logical_bytes_known"], 4);
+            assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+                issue["code"] == expected && issue["path"]["raw"] == raw(&descendant)
+            }));
+        }
+    }
+
+    #[test]
+    fn accepted_nested_roots_are_counted_and_traversed_once() {
+        let fixture = Fixture::new();
+        let child = fixture.root.join("one/two");
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("data"), b"1234").unwrap();
+        let mut command = fixture.command();
+        command
+            .arg("scan")
+            .arg(&fixture.root)
+            .arg(&child)
+            .args(["--json", "--max-depth", "1"]);
+        let value = json(&capture(command), 0);
+        assert_eq!(value["complete"], true);
+        assert_eq!(value["roots"].as_array().unwrap().len(), 2);
+        assert_eq!(value["totals"]["directories"], 3);
+        assert_eq!(value["totals"]["regular_files"], 1);
+        assert_eq!(value["totals"]["logical_bytes_known"], 4);
+        let paths: std::collections::HashSet<_> = value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["path"]["raw"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths.len(), value["entries"].as_array().unwrap().len());
+    }
+
+    #[test]
     fn a_rejected_explicit_root_makes_a_mixed_scan_partial() {
         let fixture = Fixture::new();
         fs::write(fixture.root.join("data"), b"1234").unwrap();

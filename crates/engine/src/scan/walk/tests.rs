@@ -234,7 +234,7 @@ fn execute(tree: Tree, limits: &ScanLimits) -> ScanReport {
 }
 
 #[test]
-fn roots_are_normalized_by_components_without_string_prefix_confusion() {
+fn normalization_preserves_distinct_explicit_roots_for_admission() {
     let limits = ScanLimits::default();
     let other = root().with_file_name("scan-fixture-other");
     assert_eq!(
@@ -243,7 +243,7 @@ fn roots_are_normalized_by_components_without_string_prefix_confusion() {
             &limits
         )
         .unwrap(),
-        [root(), other]
+        [root(), root().join("nested"), other]
     );
     for invalid in [
         Vec::new(),

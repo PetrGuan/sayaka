@@ -58,7 +58,7 @@ fn native_accounting_handles_empty_sparse_hard_links_and_scope_overlap() {
     )
     .unwrap();
     assert_eq!(report.status, ScanStatus::Complete, "{:?}", report.issues);
-    assert_eq!(report.roots.as_slice(), std::slice::from_ref(&root));
+    assert_eq!(report.roots, [root.clone(), root.join("nested")]);
     assert_eq!(report.totals.regular_files, 5);
     assert_eq!(report.totals.unique_files, 4);
     assert_eq!(report.totals.duplicate_files, 1);
@@ -150,6 +150,40 @@ fn native_permission_failures_are_partial_not_empty_success() {
     let report = result.unwrap();
     assert_eq!(report.status, ScanStatus::Partial, "{:?}", report.issues);
     assert!(!report.complete);
+    assert_eq!(report.totals.logical_bytes_known, 4);
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|issue| issue.code == ScanCode::PermissionDenied)
+    );
+    fixture.close().unwrap();
+}
+
+#[test]
+fn explicit_child_root_is_still_scanned_when_parent_cannot_be_enumerated() {
+    let fixture = Fixture::new().unwrap();
+    let root = scope(&fixture);
+    let child = root.join("known");
+    fs::create_dir(&child).unwrap();
+    fs::write(child.join("data"), b"1234").unwrap();
+    let original = fs::metadata(&root).unwrap().permissions();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o111)).unwrap();
+    let denied = fs::read_dir(&root).is_err();
+    let result = scan::scan(
+        &[root.clone(), child],
+        &ScanLimits::default(),
+        &Cancellation::default(),
+        |_| {},
+    );
+    fs::set_permissions(&root, original).unwrap();
+    assert!(
+        denied,
+        "fixture requires non-elevated directory enumeration"
+    );
+    let report = result.unwrap();
+    assert_eq!(report.status, ScanStatus::Partial, "{:?}", report.issues);
+    assert_eq!(report.totals.unique_files, 1);
     assert_eq!(report.totals.logical_bytes_known, 4);
     assert!(
         report
