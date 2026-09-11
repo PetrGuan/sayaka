@@ -2,11 +2,15 @@
 
 An open-source local maintenance engine and CLI, targeting macOS and Windows.
 
-**Status: M2 read-only scanner and M1 planning core.** macOS scanning supports
+**Status: M2 scanner, M1 planning core, and an initial M3 Trash workflow.** macOS scanning supports
 explicit roots, bounded resources, cancellation and structured output. The
 in-memory core supports plans, exact-preview approval and read-only preflight.
-Sayaka does not clean, uninstall, or modify scanned files. Native execution,
-durable journaling, Windows scanning and client bindings remain unimplemented.
+Scanning never modifies files. The separate `trash` command previews explicitly
+selected ordinary files; `--execute` additionally requires terminal confirmation.
+This native action uses a [revalidation contract](docs/EXECUTION.md), not an
+atomic guarantee against path replacement. It records durable per-item intent
+and results. Broad cleaning, uninstall, Windows execution and bindings remain
+unimplemented. Native Trash/recovery acceptance is a separate opt-in gate.
 
 ## Direction
 
@@ -32,7 +36,7 @@ should require AI or an online account.
 | `sayaka-engine` | In-memory planning, approval, read-only preflight and receipt contracts |
 | `sayaka-cli` | Command-line entry point, installed as `sayaka` |
 | `sayaka-bindings` | Reserved for native-client bindings; no ABI exported yet |
-| `sayaka-platform-macos` | Audited thread-policy and native volume-metadata boundary |
+| `sayaka-platform-macos` | Audited I/O policy, volume metadata and explicit native Trash boundary |
 
 ## Build
 
@@ -48,6 +52,22 @@ The executable is written to `target/debug/sayaka` (`sayaka.exe` on Windows).
 cargo run --quiet --locked -p sayaka-cli -- --help
 cargo run --quiet --locked -p sayaka-cli -- scan .
 ```
+
+For a file you explicitly want to inspect for Trash eligibility:
+
+```sh
+sayaka trash --scope . ./file.txt
+sayaka trash --scope . ./file.txt --json
+```
+
+Replace `./file.txt` with an existing ordinary file. These commands only preview.
+Adding `--execute` requires an interactive terminal and the exact typed
+confirmation shown after the preview. A file or ancestor replaced after the last
+check can still cause a different file to be moved. Do not use this on files
+being modified by other apps. There is no permanent-delete or elevation fallback.
+
+`sayaka receipt --json` reads local records without retrying interrupted work.
+See [execution, state storage, and recovery limits](docs/EXECUTION.md).
 
 `scan .` scans the current directory and prints a readable terminal report with
 sizes, largest files and actionable scan notes. Replace `.` with another
@@ -84,7 +104,9 @@ These describe intended work, not currently available features.
 Local automated unit, integration, and appropriately isolated system tests are
 part of development. M1 validates the model; M2 adds native read-only fixtures,
 CLI subprocess checks and a versioned performance fixture. None of these
-establish actual OS trash behavior, mutation race guarantees, or Windows support.
+establish atomic mutation race guarantees or Windows support. Default M3 checks
+exercise model failures, private journal persistence and read-only native
+admission. Real system Trash cases require explicit opt-in.
 
 ```sh
 cargo test -p sayaka-engine --locked

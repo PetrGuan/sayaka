@@ -1,0 +1,378 @@
+// SPDX-License-Identifier: MPL-2.0
+
+use super::*;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Clone)]
+struct TestClock(Rc<Cell<SystemTime>>);
+impl Clock for TestClock {
+    fn now(&self) -> SystemTime {
+        self.0.get()
+    }
+}
+
+struct FakePlatform {
+    snapshots: HashMap<PathBuf, Snapshot>,
+    effects: Vec<PathBuf>,
+    next_unknown: bool,
+    unknown_evidence: Option<journal::RecoveryEvidence>,
+    before_effect: Option<Box<dyn FnMut()>>,
+}
+impl Probe for FakePlatform {
+    fn inspect(&mut self, _: &Scope, path: &Path) -> Result<Snapshot, ProbeError> {
+        self.snapshots
+            .get(path)
+            .cloned()
+            .ok_or(ProbeError::NotFound)
+    }
+}
+impl Platform for FakePlatform {
+    fn effect(&mut self, path: &Path, stop: &mut dyn FnMut() -> bool) -> Effect {
+        if let Some(callback) = &mut self.before_effect {
+            callback();
+        }
+        if stop() {
+            return Effect::Refused("stopped".into());
+        }
+        self.effects.push(path.to_owned());
+        if self.next_unknown {
+            Effect::Unknown {
+                message: "injected ambiguous native result".into(),
+                evidence: self.unknown_evidence.take().map(Box::new),
+            }
+        } else {
+            Effect::Moved(Path::new("/fixture-trash").join(path.file_name().unwrap()))
+        }
+    }
+}
+
+#[derive(Default)]
+struct FakeJournal {
+    calls: Cell<usize>,
+    fail_on: usize,
+    cleanup_fail_on: usize,
+    durable: RefCell<Vec<Record>>,
+}
+impl Journal for FakeJournal {
+    fn new_id(&self) -> io::Result<String> {
+        Ok("1-a".into())
+    }
+    fn publish(&self, record: &Record, _: bool) -> io::Result<journal::Publication> {
+        record.validate()?;
+        self.calls.set(self.calls.get() + 1);
+        if self.calls.get() == self.fail_on {
+            return Err(io::Error::other("injected journal failure"));
+        }
+        self.durable.borrow_mut().push(record.clone());
+        Ok(journal::Publication {
+            cleanup_error: (self.calls.get() == self.cleanup_fail_on)
+                .then(|| io::Error::other("outcome durable; marker cleanup failed")),
+        })
+    }
+}
+
+fn setup() -> (Session<FakePlatform, TestClock>, TestClock) {
+    let clock = TestClock(Rc::new(Cell::new(UNIX_EPOCH + Duration::from_secs(100))));
+    let mut planner = Planner::with_sources(
+        Scope::new(PathBuf::from("/fixture"), vec![]).unwrap(),
+        Versions {
+            engine: 2,
+            rules: 1,
+        },
+        clock.clone(),
+        SequentialIds::default(),
+    )
+    .unwrap()
+    .for_revalidated_trash();
+    let mut platform = FakePlatform {
+        snapshots: HashMap::new(),
+        effects: Vec::new(),
+        next_unknown: false,
+        unknown_evidence: None,
+        before_effect: None,
+    };
+    let mut selected = Vec::new();
+    for index in 1..=2 {
+        let path = PathBuf::from(format!("/fixture/file{index}"));
+        platform.snapshots.insert(
+            path.clone(),
+            Snapshot {
+                identity: Some(FileIdentity::Unix {
+                    device: 1,
+                    inode: index,
+                }),
+                kind: ResourceKind::File,
+                logical_bytes: Some(7),
+                modified_at: Some(UNIX_EPOCH),
+                complete: true,
+                boundary: Boundary::Verified,
+                protection: Protection::Clear,
+                trash: Capability::Available,
+                owner: OwnerState::NotApplicable,
+            },
+        );
+        selected.push(
+            planner
+                .discover(&path, &mut platform)
+                .unwrap()
+                .observation()
+                .id(),
+        );
+    }
+    let preview = planner
+        .prepare(&selected, &[], Duration::from_secs(60))
+        .unwrap();
+    (
+        Session {
+            planner,
+            platform,
+            preview,
+        },
+        clock,
+    )
+}
+
+fn execute(
+    session: &mut Session<FakePlatform, TestClock>,
+    journal: &FakeJournal,
+) -> ExecutionReport {
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    session
+        .execute(&preview, &approval, &Cancellation::default(), journal)
+        .unwrap()
+}
+
+#[test]
+fn exact_versioned_approval_and_intent_precede_every_effect() {
+    let (mut session, _) = setup();
+    assert_eq!(session.preview.schema_version(), 2);
+    assert_eq!(
+        session.preview.items()[0].action(),
+        Action::RevalidatedMoveToTrash
+    );
+    assert!(
+        session
+            .preview
+            .execution_contract()
+            .warning()
+            .contains("different file")
+    );
+    let journal = FakeJournal::default();
+    let report = execute(&mut session, &journal);
+    assert_eq!(report.exit_code(), 0);
+    assert_eq!(report.record.handled_bytes(), Some(14));
+    let records = journal.durable.borrow();
+    assert_eq!(records.len(), 5);
+    assert_eq!(records[1].items[0].state, ItemState::Started);
+    assert_eq!(records[2].items[0].state, ItemState::Succeeded);
+    assert_eq!(records[3].items[1].state, ItemState::Started);
+}
+
+#[test]
+fn intent_failure_never_enters_native_effect() {
+    let (mut session, _) = setup();
+    let journal = FakeJournal {
+        fail_on: 2,
+        ..Default::default()
+    };
+    let report = execute(&mut session, &journal);
+    assert!(session.platform.effects.is_empty());
+    assert!(report.journal_error.is_some());
+    assert!(
+        report
+            .record
+            .items
+            .iter()
+            .all(|item| item.state == ItemState::Skipped)
+    );
+}
+
+#[test]
+fn outcome_failure_stops_batch_and_preserves_interrupted_intent() {
+    let (mut session, _) = setup();
+    let journal = FakeJournal {
+        fail_on: 3,
+        ..Default::default()
+    };
+    let report = execute(&mut session, &journal);
+    assert_eq!(session.platform.effects.len(), 1);
+    assert_eq!(report.record.items[0].state, ItemState::Unknown);
+    assert_eq!(report.record.items[1].state, ItemState::Skipped);
+    assert_eq!(
+        journal
+            .durable
+            .borrow()
+            .last()
+            .unwrap()
+            .clone()
+            .reconciled()
+            .items[0]
+            .state,
+        ItemState::Unknown
+    );
+}
+
+#[test]
+fn durable_outcome_cleanup_warning_preserves_success_but_stops_batch() {
+    let (mut session, _) = setup();
+    let journal = FakeJournal {
+        cleanup_fail_on: 3,
+        ..Default::default()
+    };
+    let report = execute(&mut session, &journal);
+    assert_eq!(session.platform.effects.len(), 1);
+    assert_eq!(report.record.items[0].state, ItemState::Succeeded);
+    assert_eq!(report.record.items[1].state, ItemState::Skipped);
+    assert!(report.journal_error.is_some());
+    assert_eq!(report.exit_code(), 1);
+}
+
+#[test]
+fn intent_cleanup_warning_prevents_native_call() {
+    let (mut session, _) = setup();
+    let journal = FakeJournal {
+        cleanup_fail_on: 2,
+        ..Default::default()
+    };
+    let report = execute(&mut session, &journal);
+    assert!(session.platform.effects.is_empty());
+    assert!(report.journal_error.is_some());
+    assert!(
+        report
+            .record
+            .items
+            .iter()
+            .all(|item| item.state == ItemState::Skipped)
+    );
+}
+
+#[test]
+fn ambiguous_native_result_never_retries_or_starts_next_item() {
+    let (mut session, _) = setup();
+    session.platform.next_unknown = true;
+    let report = execute(&mut session, &FakeJournal::default());
+    assert_eq!(session.platform.effects.len(), 1);
+    assert_eq!(report.record.items[0].state, ItemState::Unknown);
+    assert_eq!(report.record.items[1].state, ItemState::Skipped);
+}
+
+#[test]
+fn unverified_native_destination_and_held_evidence_survive_journaling() {
+    let (mut session, _) = setup();
+    let approved = journal::FileEvidence {
+        device: 1,
+        inode: 1,
+        logical_bytes: 7,
+        modified: journal::NativeTime::from_system_time(UNIX_EPOCH),
+    };
+    let evidence = journal::RecoveryEvidence {
+        approved: approved.clone(),
+        returned_destination: Some(NativePath::from_path(Path::new("/fixture-trash/reported"))),
+        held_source: Some(approved),
+        held_source_path: Some(NativePath::from_path(Path::new("/fixture/held"))),
+        observation_errors: vec!["destination verification failed".into()],
+    };
+    session.platform.next_unknown = true;
+    session.platform.unknown_evidence = Some(evidence.clone());
+    let journal = FakeJournal::default();
+    let report = execute(&mut session, &journal);
+    assert_eq!(report.exit_code(), 1);
+    assert_eq!(session.platform.effects.len(), 1);
+    assert_eq!(report.record.items[0].state, ItemState::Unknown);
+    assert!(report.record.items[0].destination.is_none());
+    let encoded = serde_json::to_vec(journal.durable.borrow().last().unwrap()).unwrap();
+    let reopened: Record = serde_json::from_slice(&encoded).unwrap();
+    reopened.validate().unwrap();
+    let reopened = reopened.reconciled();
+    assert_eq!(
+        reopened.items[0].recovery_evidence.as_ref(),
+        Some(&evidence)
+    );
+    assert_eq!(reopened.items[0].state, ItemState::Unknown);
+    assert_eq!(reopened.items[1].state, ItemState::Skipped);
+}
+
+#[test]
+fn changed_target_is_skipped_without_expanding_approval() {
+    let (mut session, _) = setup();
+    session
+        .platform
+        .snapshots
+        .get_mut(Path::new("/fixture/file1"))
+        .unwrap()
+        .identity = Some(FileIdentity::Unix {
+        device: 1,
+        inode: 99,
+    });
+    let report = execute(&mut session, &FakeJournal::default());
+    assert_eq!(report.record.items[0].state, ItemState::Skipped);
+    assert_eq!(
+        report.record.items[0].reason.as_deref(),
+        Some("resource_changed")
+    );
+    assert_eq!(session.platform.effects, [PathBuf::from("/fixture/file2")]);
+}
+
+#[test]
+fn approval_is_one_shot_and_model_contract_cannot_execute() {
+    let (mut session, _) = setup();
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal::default();
+    session
+        .execute(&preview, &approval, &Cancellation::default(), &journal)
+        .unwrap();
+    assert!(
+        session
+            .execute(&preview, &approval, &Cancellation::default(), &journal)
+            .is_err()
+    );
+    let mut forged = preview;
+    forged.contract = ExecutionContract::ModelOnly;
+    assert!(
+        session
+            .execute(&forged, &approval, &Cancellation::default(), &journal)
+            .is_err()
+    );
+    assert_eq!(session.platform.effects.len(), 2);
+}
+
+#[test]
+fn expiry_at_final_native_boundary_stops_effect_after_intent() {
+    let (mut session, clock) = setup();
+    session.platform.before_effect = Some(Box::new(move || {
+        clock.0.set(UNIX_EPOCH + Duration::from_secs(160))
+    }));
+    let report = execute(&mut session, &FakeJournal::default());
+    assert!(session.platform.effects.is_empty());
+    assert!(
+        report
+            .record
+            .items
+            .iter()
+            .all(|item| item.state == ItemState::Skipped)
+    );
+    assert_eq!(
+        report.record.items[0].reason.as_deref(),
+        Some("expired_plan")
+    );
+}
+
+#[test]
+fn cancellation_at_final_native_boundary_is_not_success() {
+    let (mut session, _) = setup();
+    let cancellation = Cancellation::default();
+    let trigger = cancellation.clone();
+    session.platform.before_effect = Some(Box::new(move || trigger.cancel()));
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let report = session
+        .execute(&preview, &approval, &cancellation, &FakeJournal::default())
+        .unwrap();
+    assert!(session.platform.effects.is_empty());
+    assert_eq!(report.exit_code(), 130);
+}

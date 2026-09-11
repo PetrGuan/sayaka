@@ -1,8 +1,10 @@
 # Implementation work packages and ownership
 
 Status: M0, the M1 in-memory core and M2 macOS read-only scanning are implemented;
-the remaining packages are planned. These do not establish native mutation,
-persistent journaling or Windows runtime behavior. See [SCANNING.md](SCANNING.md)
+M3 adds the initial native Trash/approval/journal slice under
+[the revised execution contract](EXECUTION.md). Native system acceptance remains
+separate; the remaining packages are planned. These do not establish Windows
+runtime behavior. See [SCANNING.md](SCANNING.md)
 for implemented M2 scope, local budgets and unavailable native environments.
 This document describes public technical responsibilities, not staffing or dates.
 
@@ -69,10 +71,12 @@ completeness on a versioned fixture. Fix numerical performance targets in its
 implementation issue after a baseline measurement and before milestone acceptance.
 Do not invent benchmark results or universal latency guarantees for blocked OS I/O.
 
-For T3, the feasibility review precedes write implementation. It must identify the
-OS mutation primitive and its identity-binding limits. If no safe primitive
-supports the proposed operation/threat model, keep that operation unavailable
-and return the scope decision to the Architect rather than weakening the gate.
+For T3, feasibility review precedes write implementation. The original atomic
+identity/scope gate was blocked and returned for a scope decision. The maintainer
+explicitly approved `revalidated_trash_v1` with its residual race disclosed.
+Future actions still require their own feasibility and scope review; this
+decision is not permission to bypass observed changes, expand targets, or
+claim atomic source binding.
 
 ## Definition of done
 
@@ -94,7 +98,8 @@ scope after seeing results, or substitute simulated users for usability evidence
 ## Outstanding decisions
 
 Minimum supported macOS/Windows versions and CPU architectures, the Windows
-execution host, initial rule categories, state-store details, concrete mutation
-primitives, native binding tools, and binary distribution/signing channels remain
-unselected. Decide each before its dependent gate, not by silently assuming the
-developer's current machine represents the support matrix.
+execution host, initial rule categories, native binding tools, and binary
+distribution/signing channels remain unselected. Initial M3 uses Foundation Trash
+and the bounded journal described in [EXECUTION.md](EXECUTION.md); other action
+primitives still need their own decisions. Do not assume the developer's current
+machine represents a broader support matrix.

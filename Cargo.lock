@@ -294,6 +294,8 @@ dependencies = [
  "libc",
  "rustix",
  "sayaka-platform-macos",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 
@@ -301,6 +303,7 @@ dependencies = [
 name = "sayaka-platform-macos"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "objc2",
 ]
 

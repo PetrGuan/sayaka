@@ -29,6 +29,7 @@ unsafe extern "C" {
     static kCFURLVolumeIsInternalKey: *const c_void;
     static kCFURLVolumeIsRemovableKey: *const c_void;
     static kCFURLVolumeIsEjectableKey: *const c_void;
+    static kCFURLIsPackageKey: *const c_void;
 }
 
 struct OwnedCf(NonNull<c_void>);
@@ -51,6 +52,7 @@ enum Flag {
     Internal,
     Removable,
     Ejectable,
+    Package,
 }
 
 fn boolean(url: &OwnedCf, flag: Flag) -> io::Result<bool> {
@@ -61,6 +63,7 @@ fn boolean(url: &OwnedCf, flag: Flag) -> io::Result<bool> {
             Flag::Internal => (kCFURLVolumeIsInternalKey, "internal"),
             Flag::Removable => (kCFURLVolumeIsRemovableKey, "removable"),
             Flag::Ejectable => (kCFURLVolumeIsEjectableKey, "ejectable"),
+            Flag::Package => (kCFURLIsPackageKey, "package"),
         }
     };
     let mut value = ptr::null();
@@ -91,10 +94,19 @@ fn boolean(url: &OwnedCf, flag: Flag) -> io::Result<bool> {
 
 /// Reads all four native flags without collapsing unavailable properties to false.
 pub fn volume_info(path: &Path) -> io::Result<VolumeInfo> {
+    with_policy(|| read_volume_info(path))
+}
+
+/// Uses the native package resource property, not filename suffix inference.
+pub(crate) fn is_package(path: &Path) -> io::Result<bool> {
+    with_policy(|| boolean(&directory_url(path)?, Flag::Package))
+}
+
+fn with_policy<T>(action: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     let policy = ReadOnlyPolicy::enter()?;
     // CFURL resource queries may create internal autoreleased Objective-C
     // temporaries. Only owned Rust flags/errors escape this pool.
-    let result = objc2::rc::autoreleasepool(|_| read_volume_info(path));
+    let result = objc2::rc::autoreleasepool(|_| action());
     let restored = policy.restore();
     match (result, restored) {
         (Ok(info), Ok(())) => Ok(info),
@@ -106,6 +118,16 @@ pub fn volume_info(path: &Path) -> io::Result<VolumeInfo> {
 }
 
 fn read_volume_info(path: &Path) -> io::Result<VolumeInfo> {
+    let url = directory_url(path)?;
+    Ok(VolumeInfo {
+        local: boolean(&url, Flag::Local)?,
+        internal: boolean(&url, Flag::Internal)?,
+        removable: boolean(&url, Flag::Removable)?,
+        ejectable: boolean(&url, Flag::Ejectable)?,
+    })
+}
+
+fn directory_url(path: &Path) -> io::Result<OwnedCf> {
     let bytes = path.as_os_str().as_bytes();
     if !path.is_absolute() || bytes.contains(&0) {
         return Err(io::Error::new(
@@ -123,12 +145,7 @@ fn read_volume_info(path: &Path) -> io::Result<VolumeInfo> {
         NonNull::new(url.cast_mut())
             .ok_or_else(|| io::Error::other("could not create native volume URL"))?,
     );
-    Ok(VolumeInfo {
-        local: boolean(&url, Flag::Local)?,
-        internal: boolean(&url, Flag::Internal)?,
-        removable: boolean(&url, Flag::Removable)?,
-        ejectable: boolean(&url, Flag::Ejectable)?,
-    })
+    Ok(url)
 }
 
 #[cfg(test)]

@@ -1,8 +1,9 @@
 # Core architecture
 
 Status: M1's in-memory contracts and M2's macOS read-only scanner are implemented.
-Effects, journal persistence, interactive CLI workflows and bindings remain planned.
-Later-stage names describe responsibilities, not APIs that already exist.
+M3 adds explicit-file native Trash sessions and durable local records, described
+in [EXECUTION.md](EXECUTION.md). Full TUI workflows and bindings remain planned.
+The M1 APIs below remain model-only; native execution is a separate session.
 
 ## Implemented M1 contract
 
@@ -32,8 +33,9 @@ protected-path list. A verified boundary/protection assertion must come from a
 real native adapter before any future effect; the test probes do not establish
 filesystem identity, case/alias safety, permissions or TOCTOU guarantees.
 
-Plans contain only the currently modeled ordinary-file `MoveToTrash` candidate;
-there is no method that executes it. Size is a logical-byte estimate, not
+M1 plans contain only the modeled ordinary-file `MoveToTrash` candidate;
+there is no method that executes an M1 plan. M3 plans use a distinct
+`RevalidatedMoveToTrash` action and versioned execution contract. Size is a logical-byte estimate, not
 reclaimable capacity. Unknown counts remain explicit and sums fail on overflow.
 Trash recovery is platform-dependent, not promised.
 
@@ -61,7 +63,8 @@ receipt, even when an item is in `ready`.
 Registry entries and plans are immutable and session-local. To refresh changed
 observations, start a new discovery session for now. There is no persistence,
 serialization, resource replacement, automatic replay, or cross-process approval.
-The later M3 executor must re-establish evidence at the actual effect boundary.
+M3 owns its native evidence and performs a final revalidation; it cannot turn
+preflight into an atomic filesystem compare-and-Trash operation.
 
 The full public-API fixture round trip is in
 [`in_memory_flow.rs`](../crates/engine/tests/in_memory_flow.rs); decision, injected
@@ -119,12 +122,11 @@ must belong to the active authorized scope. Reject unknown, expired, overlapping
 or incompatible inputs with stable reasons; do not broaden matches to succeed.
 Revalidation may only reduce the approved set, never rescan into a larger set.
 
-M1 uses an in-memory registry with an injectable clock and ID source. Before M3,
-decide how the CLI retains versioned plans across invocations. If persisted, keep
-them in a user-owned application state directory and validate schema, integrity,
-scope, expiry, and semantics on load. An arbitrary imported JSON document is not
-an executable authorization. A content digest binds content; it does not by
-itself authenticate a caller or establish user consent.
+M1 uses an in-memory registry with an injectable clock and ID source. M3 keeps
+discovery, preview, approval and execution in one process. Plans/approvals are not
+persisted for later execution. Private journal records survive for audit and
+read-only reconciliation only. An arbitrary imported JSON document is not an
+executable authorization. A digest alone cannot authenticate user consent.
 
 The trusted client must show the specific plan and obtain explicit confirmation.
 No unattended approve-all flag is part of the initial interface. Approval UX is
@@ -144,8 +146,10 @@ The mutation adapter accepts a validated action and retained resource evidence,
 not a general `delete(path)` or `run(command)` API. Its contract must describe
 object/ancestor identity binding, links, volume boundaries, and the actual
 guarantees of each OS operation. Check-then-use pathname sequences cannot be
-advertised as race-free. If the required guarantee is unavailable, report an
-unsupported action and leave the object untouched.
+advertised as race-free. The M3 `revalidated_trash_v1` profile explicitly accepts
+the residual race after final revalidation, following a product-level contract
+revision. Observed changes and unsupported capabilities still refuse the effect;
+the stronger atomic-binding guarantee remains unavailable.
 
 No permanent-delete fallback for trash errors, permission escalation on failure,
 shell interpolation, or implicit user-data cleanup. External tools are deferred;
@@ -172,9 +176,10 @@ without automatic destructive replay.
 
 Durably record intent before effects. If that write fails, do not act. If outcome
 recording fails after an effect, stop further mutations and surface the ambiguity.
-Choose journal storage in M3 (SQLite is a candidate, not a filesystem transaction).
-Specify schema evolution, retention, local export, and recovery-information
-handling before shipping persistent records.
+M3 uses bounded versioned JSON snapshots with an exclusive process lock, file
+full-sync and directory synchronization before considering publication durable.
+See [EXECUTION.md](EXECUTION.md) for crash interpretation, retention, privacy and
+export. Neither this journal nor a database is a filesystem transaction.
 
 ## Accounting and recovery
 

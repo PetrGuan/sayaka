@@ -60,6 +60,7 @@ pub struct Planner<C = SystemClock, I = SequentialIds> {
     observations: HashMap<ResourceId, Observation>,
     paths: HashSet<PathBuf>,
     plans: HashMap<PlanId, PlanRecord>,
+    contract: ExecutionContract,
 }
 
 impl Planner {
@@ -86,6 +87,7 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             observations: HashMap::new(),
             paths: HashSet::new(),
             plans: HashMap::new(),
+            contract: ExecutionContract::ModelOnly,
         })
     }
 
@@ -121,6 +123,7 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
         Ok(Finding {
             observation,
             refusal,
+            contract: self.contract,
         })
     }
 
@@ -203,6 +206,7 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             }
             items.push(PlanItem {
                 observation: observation.clone(),
+                contract: self.contract,
             });
         }
         let plan = Plan {
@@ -219,6 +223,7 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             excluded: excluded.to_vec(),
             rejected,
             bytes,
+            contract: self.contract,
         };
         self.plans.insert(
             plan.id,
@@ -250,7 +255,7 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
     }
 
     /// One-shot, read-only preflight. Never enumerates new targets or mutates
-    /// files; a future executor cannot treat this report as an effect permit.
+    /// files; a native executor cannot treat this report as an effect permit.
     pub fn validate(
         &mut self,
         preview: &Plan,
@@ -313,6 +318,19 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             .get(&plan)
             .map(|record| record.state)
             .ok_or_else(|| Error::new(ReasonCode::UnknownPlan))
+    }
+
+    pub(crate) fn for_revalidated_trash(mut self) -> Self {
+        self.contract = ExecutionContract::RevalidatedTrashV1;
+        self
+    }
+
+    pub(crate) fn stop_reason(
+        &mut self,
+        plan: &Plan,
+        cancellation: &Cancellation,
+    ) -> Option<ReasonCode> {
+        self.preflight_stop(plan, cancellation)
     }
 
     /// Every semantic change permanently invalidates older plans, even if a

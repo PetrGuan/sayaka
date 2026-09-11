@@ -106,6 +106,12 @@ partial scan or an incomplete fixture is a failure, not a performance result.
 
 ## Required case inventory
 
+The initial M3 default suite adds executor fault injection, bounded private
+journal storage, child-process crash interpretation and preview/refusal CLI
+checks. These do not run real Trash actions. See [EXECUTION.md](EXECUTION.md)
+for the approved revalidation contract: the residual final path race is disclosed,
+not a native safety property that a happy-path test can certify.
+
 | Area | Cases that cannot be omitted |
 | --- | --- |
 | Selection/policy | Unknown IDs, expired plans, version changes, excluded/protected roots, parent/child overlaps, malformed approval |
