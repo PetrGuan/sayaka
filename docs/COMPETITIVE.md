@@ -1,8 +1,9 @@
 # Mole CLI comparison and acceptance contract
 
 Status: development objective and measurement protocol, not a superiority claim.
-Sayaka currently has only a scaffold. No comparative runtime, usability, or full
-installation-footprint benchmark has been executed.
+Sayaka currently has an M1 in-memory core and a help/version-only CLI. No
+comparative runtime, usability, or full installation-footprint benchmark has
+been executed.
 
 ## Objective and scope
 

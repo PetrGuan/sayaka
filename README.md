@@ -2,9 +2,10 @@
 
 An open-source local maintenance engine and CLI, targeting macOS and Windows.
 
-**Status: initial scaffold.** Sayaka does not yet scan, clean, uninstall, or
-modify files. The CLI currently exposes only help and version information.
-The engine and bindings crates are placeholders, not usable APIs.
+**Status: M1 in-memory core.** The engine supports deterministic observations,
+plans, exact-preview approval, read-only preflight, and a receipt state model.
+Sayaka does not yet scan, clean, uninstall, or modify files. The CLI still exposes
+only help and version information; native adapters and bindings remain unimplemented.
 
 ## Direction
 
@@ -27,7 +28,7 @@ should require AI or an online account.
 
 | Crate | Purpose |
 | --- | --- |
-| `sayaka-engine` | Shared maintenance engine; implementation pending |
+| `sayaka-engine` | In-memory planning, approval, read-only preflight and receipt contracts |
 | `sayaka-cli` | Command-line entry point, installed as `sayaka` |
 | `sayaka-bindings` | Reserved for native-client bindings; no ABI exported yet |
 
@@ -67,8 +68,16 @@ See the [roadmap](ROADMAP.md), [core architecture](docs/ARCHITECTURE.md),
 These describe intended work, not currently available features.
 
 Local automated unit, integration, and appropriately isolated system tests are
-part of development. The current scaffold has no substantive tests yet; testable
-design and a green build are not claims of complete platform validation.
+part of development. M1 includes deterministic decision/state tests, compile-fail
+API checks, and an isolated fixture/child-process round trip. These validate the
+model, not actual OS trash behavior, filesystem race guarantees, or Windows support.
+
+```sh
+cargo test -p sayaka-engine --locked
+```
+
+See the [implemented M1 contract](docs/ARCHITECTURE.md#implemented-m1-contract)
+for the trusted probe boundary and the distinction between preflight and execution.
 
 ## Contributing
 

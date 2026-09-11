@@ -20,9 +20,18 @@ validate TUI mechanics without creating native GUI test targets.
 
 ## Current baseline
 
-The repository currently has a buildable scaffold and no substantive automated
-tests. Do not interpret a zero-test `cargo test` result as engine validation.
-The first real implementation must add its tests with the code.
+M1 includes deterministic model/plan tests, compile-fail API privacy checks, and
+isolated fixture/owned-child integration tests. The latter verify a public-API
+round trip, child failure reporting, timeout termination and explicit cleanup.
+Fixtures contain only synthetic files, and their probes supply synthetic identity
+and capability evidence; these are not native trash or authorization tests.
+
+Clock changes, ID collisions/exhaustion, probe failures and cancellation are
+injected deterministically. The short process wait loop is only a bounded child
+lifecycle mechanism, not a timing assumption for model correctness.
+CLI and bindings still have no substantive test cases. Their zero-test results
+must not be reported as implemented feature validation. Windows-native runtime
+evidence is still unavailable.
 
 Existing workspace commands:
 
