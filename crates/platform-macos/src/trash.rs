@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: MPL-2.0
+
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeFileInfo {
+    pub device: u64,
+    pub inode: u64,
+    pub logical_bytes: u64,
+    pub modified_at: SystemTime,
+}
+
+#[derive(Debug)]
+pub enum NativeTrashOutcome {
+    Moved {
+        destination: PathBuf,
+    },
+    Refused(String),
+    Failed(String),
+    Unknown {
+        message: String,
+        evidence: NativeRecoveryEvidence,
+    },
+}
+
+/// Recovery observations, never authorization to restore, retry, or delete.
+/// `returned_destination` is an UNVERIFIED Foundation pathname hint, not proof
+/// of an approved object. Held-source observations describe the retained
+/// descriptor at observation time and may differ from the approved snapshot.
+#[derive(Debug, Clone)]
+pub struct NativeRecoveryEvidence {
+    pub approved: NativeFileInfo,
+    pub returned_destination: Option<PathBuf>,
+    pub held_source: Option<NativeFileInfo>,
+    pub held_source_path: Option<PathBuf>,
+    pub observation_errors: Vec<String>,
+}
+
+#[cfg(target_os = "macos")]
+impl NativeRecoveryEvidence {
+    fn record_error(&mut self, mut error: String) {
+        if let Some((boundary, _)) = error.char_indices().nth(1024) {
+            error.truncate(boundary);
+            error.push_str(" [truncated]");
+        }
+        if self.observation_errors.len() < 8 {
+            self.observation_errors.push(error);
+        } else if let Some(last) = self.observation_errors.last_mut() {
+            *last = "additional observation errors omitted at the eight-error bound".into();
+        }
+    }
+}
+
+/// Retained evidence for an explicitly selected file, not a race-free capability.
+///
+/// Descriptors prevent inode reuse while retained, but Foundation acts on a URL.
+/// Another process can replace that path after the final check. Never replay an
+/// interrupted call, retry an ambiguous outcome, or roll back an unverified URL.
+/// Targets retain full file metadata. Ancestry/protections retain identity,
+/// physical path, kind, owner/group, mode, flags, creation time and exact ACLs;
+/// unrelated directory content timestamps, size and link counts are not approval
+/// inputs. This permits sibling changes without refreshing the selected target.
+pub struct TrashCandidate {
+    #[cfg(target_os = "macos")]
+    native: native::Candidate,
+    #[cfg(not(target_os = "macos"))]
+    unavailable: std::convert::Infallible,
+}
+
+impl TrashCandidate {
+    /// Captures at most 64 ancestor/protection handles and paths of at most
+    /// 4096 bytes. Requires ordinary user authority, a single-link regular file,
+    /// and a local internal writable APFS volume. Links, dataless objects,
+    /// unknown extended attributes, writable/untrusted ancestry, system roots,
+    /// hidden paths, Library, native package boundaries, and recognized app/cloud
+    /// roots are excluded. Unknown native package classification is an error.
+    /// Supplied protections must resolve to existing inspectable objects.
+    /// These exclusions do not establish whether an application has a file open.
+    pub fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            native::Candidate::capture(scope, path, protected).map(|native| Self { native })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (scope, path, protected);
+            Err(unsupported())
+        }
+    }
+
+    pub fn info(&self) -> &NativeFileInfo {
+        #[cfg(target_os = "macos")]
+        {
+            &self.native.info
+        }
+        #[cfg(not(target_os = "macos"))]
+        match self.unavailable {}
+    }
+
+    pub fn path(&self) -> &Path {
+        #[cfg(target_os = "macos")]
+        {
+            &self.native.path
+        }
+        #[cfg(not(target_os = "macos"))]
+        match self.unavailable {}
+    }
+
+    pub fn revalidate(&self) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.revalidate()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(unsupported())
+        }
+    }
+
+    /// Matches overlap conservatively by spelling and by native identities.
+    /// Existing aliases are resolved by no-follow filesystem lookup, including
+    /// case/Unicode aliases understood by that volume. Missing unrelated paths
+    /// do not match; links, inaccessible paths and unknown evidence are errors.
+    /// Never refreshes the selected file or its retained ancestor identities.
+    pub fn matches_exclusion(&self, exclusion: &Path) -> io::Result<bool> {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.matches_exclusion(exclusion)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = exclusion;
+            Err(unsupported())
+        }
+    }
+
+    /// The caller must durably record intent before entering this method.
+    /// Cancellation is evaluated once after revalidation, immediately before the
+    /// sole synchronous Foundation call; it cannot cancel an already-entered call.
+    /// A candidate can be submitted only once, including refused/cancelled calls.
+    pub fn move_to_trash(&self, cancelled: impl FnOnce() -> bool) -> NativeTrashOutcome {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.move_to_trash(cancelled)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = cancelled;
+            NativeTrashOutcome::Refused(unsupported().to_string())
+        }
+    }
+}
+
+/// Requests Darwin F_FULLFSYNC, with no fsync-only durability fallback.
+pub fn full_sync(file: &std::fs::File) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: A borrowed live descriptor and an argument-free fcntl command.
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = file;
+        Err(unsupported())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn unsupported() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "native macOS Trash is unavailable",
+    )
+}
+
+#[cfg(target_os = "macos")]
+#[path = "trash/native.rs"]
+mod native;

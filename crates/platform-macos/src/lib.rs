@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Audited macOS I/O policy and volume metadata boundary. No filesystem maintenance.
+//! Audited macOS I/O policy, metadata, and revalidated Foundation Trash boundary.
+//! Path-based Trash retains a last-check/path-replacement race; it is not atomic.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -12,6 +13,14 @@ use std::rc::Rc;
 mod volume;
 #[cfg(target_os = "macos")]
 pub use volume::volume_info;
+
+mod trash;
+pub use trash::{
+    NativeFileInfo, NativeRecoveryEvidence, NativeTrashOutcome, TrashCandidate, full_sync,
+};
+
+mod acl;
+pub use acl::has_extended_acl;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeInfo {

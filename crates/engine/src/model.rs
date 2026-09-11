@@ -221,7 +221,8 @@ pub enum ResourceKind {
     Other,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(tag = "platform", rename_all = "snake_case")]
 pub enum FileIdentity {
     Unix {
         device: u64,
@@ -234,7 +235,7 @@ pub enum FileIdentity {
 }
 
 /// Facts supplied by a trusted probe. Metadata equality is not proof against
-/// filesystem races; a future executor must establish its own effect binding.
+/// filesystem races; native execution needs its own explicitly bounded contract.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub identity: Option<FileIdentity>,
@@ -256,8 +257,33 @@ pub trait Probe {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     MoveToTrash,
+    RevalidatedMoveToTrash,
 }
 
+/// A pre-call check is not an atomic filesystem identity predicate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionContract {
+    ModelOnly,
+    RevalidatedTrashV1,
+}
+
+impl ExecutionContract {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ModelOnly => "model_only",
+            Self::RevalidatedTrashV1 => "revalidated_trash_v1",
+        }
+    }
+
+    pub const fn warning(self) -> &'static str {
+        match self {
+            Self::ModelOnly => "Read-only model; no native execution is authorized.",
+            Self::RevalidatedTrashV1 => {
+                "A file or ancestor replaced after the last check could cause a different file to be moved. Trash does not free space or guarantee restoration."
+            }
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Recovery {
     PlatformDependentTrash,
@@ -413,6 +439,7 @@ impl Observation {
 pub struct Finding {
     pub(crate) observation: Observation,
     pub(crate) refusal: Option<ReasonCode>,
+    pub(crate) contract: ExecutionContract,
 }
 
 impl Finding {
@@ -426,7 +453,10 @@ impl Finding {
         self.refusal
     }
     pub fn action(&self) -> Option<Action> {
-        self.refusal.is_none().then_some(Action::MoveToTrash)
+        self.refusal.is_none().then_some(match self.contract {
+            ExecutionContract::ModelOnly => Action::MoveToTrash,
+            ExecutionContract::RevalidatedTrashV1 => Action::RevalidatedMoveToTrash,
+        })
     }
 }
 
@@ -446,6 +476,7 @@ impl ByteEstimate {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlanItem {
     pub(crate) observation: Observation,
+    pub(crate) contract: ExecutionContract,
 }
 
 impl PlanItem {
@@ -456,7 +487,10 @@ impl PlanItem {
         &self.observation
     }
     pub fn action(&self) -> Action {
-        Action::MoveToTrash
+        match self.contract {
+            ExecutionContract::ModelOnly => Action::MoveToTrash,
+            ExecutionContract::RevalidatedTrashV1 => Action::RevalidatedMoveToTrash,
+        }
     }
     pub fn reason(&self) -> FindingReason {
         FindingReason::ExplicitSelection
@@ -501,6 +535,7 @@ pub struct Plan {
     pub(crate) excluded: Vec<ResourceId>,
     pub(crate) rejected: Vec<Rejection>,
     pub(crate) bytes: ByteEstimate,
+    pub(crate) contract: ExecutionContract,
 }
 
 impl Plan {
@@ -508,7 +543,13 @@ impl Plan {
         self.id
     }
     pub fn schema_version(&self) -> u32 {
-        1
+        match self.contract {
+            ExecutionContract::ModelOnly => 1,
+            ExecutionContract::RevalidatedTrashV1 => 2,
+        }
+    }
+    pub fn execution_contract(&self) -> ExecutionContract {
+        self.contract
     }
     pub fn scope(&self) -> &Path {
         &self.scope

@@ -96,7 +96,7 @@ fn count(value: impl fmt::Display) -> String {
     result
 }
 
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     if bytes < 1024 {
         return format!("{bytes} B");

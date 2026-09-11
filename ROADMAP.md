@@ -2,8 +2,10 @@
 
 This is a development plan, not a list of supported features or promised dates.
 M0, the M1 in-memory core and the M2 macOS read-only scanner/CLI are present.
-Execution, persistent journaling, Windows-native scanning and bindings remain
-unimplemented. Read-only/model tests do not satisfy native mutation gates.
+M3 now has an initial explicit-file Trash session and durable journal under the
+approved revalidation contract. Native Trash/recovery environment acceptance
+remains separately gated; it does not satisfy the former atomic-binding proposal.
+Windows-native scanning and bindings remain unimplemented.
 
 ## Product objective
 
@@ -81,10 +83,12 @@ trash on a supported local volume, with ordinary user permissions. Recursive
 directory mutation, permanent deletion, broad cache clearing, and uninstallers
 are excluded from this milestone.
 
-An API that checks an object and then mutates an unbound pathname is not sufficient
-proof against replacement races. Unsupported guarantees must block that operation
-or keep it read-only, not be waived to finish a milestone. Review and document the
-supported threat model and remaining OS guarantees before enabling writes.
+The original atomic source-and-ancestor binding proposal remains unsupported.
+The revised, explicitly approved `revalidated_trash_v1` contract requires exact
+approval and immediate native revalidation, while disclosing that replacement
+after the final check can still move a different object. This is a substantive
+scope decision, not proof that path races were eliminated. See
+[EXECUTION.md](docs/EXECUTION.md) for the implementation and remaining native gates.
 
 Persist execution intent before effects, record per-item outcomes afterward,
 and preserve `Unknown` across ambiguous crashes. Never automatically replay

@@ -1,7 +1,9 @@
 # Mole CLI comparison and acceptance contract
 
 Status: development objective and measurement protocol, not a superiority claim.
-Sayaka currently has an M1 in-memory core and M2 macOS read-only scanning/CLI.
+Sayaka has an M1 in-memory core, M2 macOS read-only scanning/CLI, and an initial
+M3 explicit-file Trash/receipt workflow under the revised revalidation contract.
+Native Trash/recovery acceptance remains a separate gate.
 The local M2 fixture is measured, but no comparative runtime, usability, or full
 installation-footprint benchmark against Mole has been executed.
 
@@ -45,7 +47,7 @@ GitHub release metadata reports these artifact sizes:
 These are published asset sizes, not a measured full installation. Mole also
 uses scripts and support files. Do not add an archive to its extracted contents,
 equate the two-Go-artifact sum with the whole tool, or compare these figures to
-Sayaka's current help-only executable. Complete footprint is still unmeasured.
+Sayaka's current feature-subset executable. Complete footprint is still unmeasured.
 No competitor installer or maintenance command was executed for this document.
 
 ## Capability ledger
@@ -53,8 +55,9 @@ No competitor installer or maintenance command was executed for this document.
 This is a command-family inventory, not yet an exhaustive rule/subcommand audit.
 C0 must expand each row into version-pinned task cases, supported platforms,
 eligible targets, expected effects, exclusions, and evidence before parity is
-accepted. Read-only scan/JSON and basic help/version are partially implemented;
-interactive exploration and the other complete task families remain unimplemented.
+accepted. Read-only scan/JSON, explicit-file previews/confirmation and local
+receipt export implement only parts of the ledger; interactive exploration
+and the other complete task families remain unimplemented.
 
 | Mole capability | Required Sayaka user outcome | Delivery |
 | --- | --- | --- |

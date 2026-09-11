@@ -3,7 +3,7 @@
 ## Scope
 
 Sayaka contains an MPL-2.0 Rust in-memory planning core, a macOS read-only scanner
-and CLI, and future native bindings. Native effects are not implemented. Follow [ROADMAP.md](ROADMAP.md)
+and CLI, explicit M3 native Trash sessions, and future native bindings. Follow [ROADMAP.md](ROADMAP.md)
 and the contracts in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Do not report a planned feature as implemented.
 
@@ -15,7 +15,11 @@ win a benchmark. Native graphical applications are a separate comparison.
 
 M1's `Probe` is a trusted read-only embedding interface. Its snapshot assertions
 and `ValidationReport::ready` are not proof that a filesystem mutation is safe.
-Preserve the no-effects boundary until an action-specific native executor exists.
+Do not feed it to an executor. Only the separately owned `TrashSession` can
+execute its own approved `revalidated_trash_v1` plan. Follow
+[docs/EXECUTION.md](docs/EXECUTION.md): this approved contract explicitly retains
+a last-check/path-replacement race and must never be described as race-free.
+Preserve the no-effects boundary of existing M1 and scanning APIs.
 
 ## Implementation
 

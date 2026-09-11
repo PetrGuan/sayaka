@@ -2,6 +2,7 @@
 
 mod human;
 mod output;
+mod trash;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use sayaka_engine::model::Cancellation;
@@ -85,9 +86,11 @@ fn command() -> Command {
         .bin_name("sayaka")
         .version(env!("CARGO_PKG_VERSION"))
         .about("An open-source local maintenance engine and CLI")
-        .after_help("Examples:\n  sayaka scan .          Readable report for the current directory\n  sayaka scan . --json   Machine-readable report\n\nUse an existing physical directory. Nothing is deleted.")
+        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and Trash previews never modify targets. Trash requires --execute and terminal confirmation.")
         .arg_required_else_help(true)
         .subcommand(scan)
+        .subcommand(trash::command())
+        .subcommand(trash::receipt_command())
 }
 
 fn limits(args: &ArgMatches) -> ScanLimits {
@@ -221,6 +224,8 @@ fn run() -> io::Result<u8> {
     };
     match args.subcommand() {
         Some(("scan", args)) => run_scan(args),
+        Some(("trash", args)) => trash::run(args),
+        Some(("receipt", args)) => trash::receipt(args),
         _ => Ok(2),
     }
 }
