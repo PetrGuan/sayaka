@@ -1,13 +1,13 @@
 # Core architecture
 
-Status: M1's in-memory contracts are implemented as described below. Native
-scanning, effects, journal persistence, CLI workflows and bindings remain planned.
+Status: M1's in-memory contracts and M2's macOS read-only scanner are implemented.
+Effects, journal persistence, interactive CLI workflows and bindings remain planned.
 Later-stage names describe responsibilities, not APIs that already exist.
 
 ## Implemented M1 contract
 
-`model`, `plan`, and `receipt` are the only engine modules currently implemented.
-The normal dependency graph is standard-library-only; `tempfile` is test-only.
+M1 implements `model`, `plan`, and `receipt` using the standard library. M2 adds
+`scan`, with targeted native dependencies. `tempfile` remains test-only.
 
 | API | Behavior |
 | --- | --- |
@@ -81,7 +81,10 @@ model -> scan / rules -> plan -> approval -> execute -> journal
      OS APIs and filesystem
 ```
 
-Keep three crates initially. Within `sayaka-engine`, use `model`, `scan`, `rules`,
+The M2 implementation adds the deliberately isolated `sayaka-platform-macos`
+crate for native policy/volume FFI; `sayaka-engine` retains `forbid(unsafe_code)`.
+See [SCANNING.md](SCANNING.md) for the actual read-only contract. Within
+`sayaka-engine`, use `model`, `scan`, `rules`,
 `plan`, `execute`, `journal`, and `platform` modules when their implementations
 arrive. Do not create empty module trees, services, or general plugin frameworks
 in advance. Use direct calls and concrete types; introduce narrow effect

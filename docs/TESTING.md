@@ -29,9 +29,9 @@ and capability evidence; these are not native trash or authorization tests.
 Clock changes, ID collisions/exhaustion, probe failures and cancellation are
 injected deterministically. The short process wait loop is only a bounded child
 lifecycle mechanism, not a timing assumption for model correctness.
-CLI and bindings still have no substantive test cases. Their zero-test results
-must not be reported as implemented feature validation. Windows-native runtime
-evidence is still unavailable.
+M2 adds bounded-scanner fault matrices, macOS metadata fixtures and CLI process
+tests. Native binding tests and Windows scanning evidence are still unavailable.
+See [SCANNING.md](SCANNING.md) for the precise scope and missing environments.
 
 Existing workspace commands:
 
@@ -98,6 +98,11 @@ prerequisites, fixture lifecycle, and cleanup procedure in the same change.
 An explicit opt-in is required before executing ignored/destructive-environment
 cases. A missing prerequisite is recorded as skipped or blocked, not a silent
 successful return. Do not run all ignored tests indiscriminately.
+
+The dedicated [M2 benchmark runner](../scripts/check_m2_benchmark.py) uses only
+generated fixtures and validates byte/count truth before accepting timing. Its
+[versioned budgets](../benchmarks/m2-v1.json) are local regression gates; a fast
+partial scan or an incomplete fixture is a failure, not a performance result.
 
 ## Required case inventory
 

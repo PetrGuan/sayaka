@@ -1,8 +1,9 @@
 # Implementation work packages and ownership
 
-Status: M0 and the M1 in-memory core are implemented; the remaining packages are
-planned. M1 validation covers the model and isolated test harness, not native
-execution, persistent journaling or Windows runtime behavior.
+Status: M0, the M1 in-memory core and M2 macOS read-only scanning are implemented;
+the remaining packages are planned. These do not establish native mutation,
+persistent journaling or Windows runtime behavior. See [SCANNING.md](SCANNING.md)
+for implemented M2 scope, local budgets and unavailable native environments.
 This document describes public technical responsibilities, not staffing or dates.
 
 ## Work packages
@@ -28,8 +29,9 @@ own tests and error behavior, not a reason to land an entire speculative engine.
 T4 investigation starts early. Public APIs should remain cheap to change until
 both platforms have exercised their semantics.
 
-T7-T12 expand the original foundation into full CLI competition. They remain in
-the same three-crate architecture unless evidence establishes a better boundary.
+T7-T12 expand the original foundation into full CLI competition. M2 established
+a fourth, narrowly scoped native FFI crate; do not add further splits without
+a demonstrated boundary.
 T6 bindings and native GUI work must not inflate or block the CLI comparison
 profile. C0 spans all packages; C1 is the final acceptance gate, not another
 feature implementation. See [COMPETITIVE.md](COMPETITIVE.md) for the ledger and

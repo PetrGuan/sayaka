@@ -1,9 +1,9 @@
 # Mole CLI comparison and acceptance contract
 
 Status: development objective and measurement protocol, not a superiority claim.
-Sayaka currently has an M1 in-memory core and a help/version-only CLI. No
-comparative runtime, usability, or full installation-footprint benchmark has
-been executed.
+Sayaka currently has an M1 in-memory core and M2 macOS read-only scanning/CLI.
+The local M2 fixture is measured, but no comparative runtime, usability, or full
+installation-footprint benchmark against Mole has been executed.
 
 ## Objective and scope
 
@@ -53,7 +53,8 @@ No competitor installer or maintenance command was executed for this document.
 This is a command-family inventory, not yet an exhaustive rule/subcommand audit.
 C0 must expand each row into version-pinned task cases, supported platforms,
 eligible targets, expected effects, exclusions, and evidence before parity is
-accepted. Every row is currently unimplemented except basic Sayaka help/version.
+accepted. Read-only scan/JSON and basic help/version are partially implemented;
+interactive exploration and the other complete task families remain unimplemented.
 
 | Mole capability | Required Sayaka user outcome | Delivery |
 | --- | --- | --- |

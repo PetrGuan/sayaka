@@ -1,0 +1,17 @@
+{
+  "fixture": "m2-v1",
+  "unique_files": 8242,
+  "file_entries": 8370,
+  "logical_bytes": 67636228,
+  "runs": 5,
+  "max_elapsed_ms": 500,
+  "max_first_result_ms": 100,
+  "max_cancel_latency_us": 100000,
+  "max_peak_rss_bytes": 67108864,
+  "max_workers": 4,
+  "max_queued_dirs": 64,
+  "max_open_dirs": 128,
+  "max_pending_events": 128,
+  "max_retained_path_bytes": 33554432,
+  "scope": "Local macOS regression gate after fixture creation; OS cache state is uncontrolled, not an OS-cold benchmark or a Mole comparison."
+}
