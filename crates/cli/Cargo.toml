@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "sayaka-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Command-line interface for Sayaka"
+
+[[bin]]
+name = "sayaka"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+sayaka-engine.workspace = true

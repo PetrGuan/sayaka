@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MPL-2.0
+
+[workspace]
+members = ["crates/engine", "crates/cli", "crates/bindings"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+repository = "https://github.com/PetrGuan/sayaka"
+publish = false
+
+[workspace.dependencies]
+sayaka-engine = { path = "crates/engine" }
+clap = "4.5"
