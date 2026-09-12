@@ -325,6 +325,8 @@ fn status_json_measures_a_counter_window_and_exposes_capability_gaps() {
     assert!(value["gpu_utilization_percent"]["value"].is_null());
     assert_eq!(value["temperature_celsius"]["state"], "unsupported");
     assert!(value["temperature_celsius"]["value"].is_null());
+    assert_eq!(value["process_top"]["state"], "unsupported");
+    assert!(value["process_top"]["value"].is_null());
     assert!(!result.stdout.contains(&0x1b));
 }
 
@@ -378,11 +380,151 @@ fn status_rejects_invalid_interval_and_nonfinite_thresholds() {
         vec!["status", "--cpu-warn", "NaN"],
         vec!["status", "--memory-warn", "101"],
         vec!["status", "--count", "2"],
+        vec!["status", "--top-sort", "cpu"],
+        vec!["status", "--top", "0"],
+        vec!["status", "--top", "33"],
     ] {
         let mut command = fixture.command();
         command.args(args);
         assert_eq!(capture(command).status.code(), Some(2));
     }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn status_top_json_is_opt_in_and_reports_structured_rows() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args([
+        "status",
+        "--json",
+        "--top",
+        "2",
+        "--top-sort",
+        "cpu",
+        "--interval-ms",
+        "1000",
+    ]);
+    let result = capture(command);
+    assert!(
+        matches!(result.status.code(), Some(0 | 3)),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert!(matches!(
+        value["process_top"]["state"].as_str(),
+        Some("fresh" | "warming_up")
+    ));
+    assert_eq!(value["process_top"]["value"]["top_schema_version"], 1);
+    assert_eq!(value["process_top"]["value"]["limit"], 2);
+    assert_eq!(value["process_top"]["value"]["sort"], "cpu");
+    assert!(value["process_top"]["value"]["probed"].as_u64().unwrap() > 0);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn status_top_watch_ndjson_reaches_second_top_generation() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args([
+        "status",
+        "--watch",
+        "--json",
+        "--top",
+        "2",
+        "--count",
+        "7",
+        "--interval-ms",
+        "1000",
+    ]);
+    let result = capture(command);
+    assert!(
+        matches!(result.status.code(), Some(0 | 3)),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let snapshots: Vec<Value> = String::from_utf8(result.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(snapshots.len(), 7);
+    let top_states: Vec<_> = snapshots
+        .iter()
+        .map(|s| s["process_top"]["state"].as_str().unwrap())
+        .collect();
+    assert!(top_states.contains(&"fresh") || top_states.contains(&"warming_up"));
+    let rows = snapshots
+        .iter()
+        .filter_map(|s| s["process_top"]["value"]["rows"].as_array())
+        .flat_map(|rows| rows.iter())
+        .collect::<Vec<_>>();
+    assert!(!rows.is_empty());
+    assert!(
+        rows.iter()
+            .all(|row| row["name"].as_str().is_some() && row["identity"]["pid"].is_u64())
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn status_top_tracks_owned_child_pid_without_stale_reuse() {
+    let fixture = Fixture::new();
+    let mut worker = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import time\nend=time.time()+9\nx=0\nwhile time.time()<end:\n x+=1\nprint(x)\n",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let owned_pid = worker.id();
+    let mut command = fixture.command();
+    command.args([
+        "status",
+        "--watch",
+        "--json",
+        "--top",
+        "32",
+        "--top-sort",
+        "cpu",
+        "--count",
+        "7",
+        "--interval-ms",
+        "1000",
+    ]);
+    let result = capture(command);
+    let _ = worker.kill();
+    let _ = worker.wait();
+    assert!(
+        matches!(result.status.code(), Some(0 | 3)),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let snapshots: Vec<Value> = String::from_utf8(result.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let mut seen_owned = false;
+    let mut measured_owned = false;
+    for sample in snapshots {
+        if let Some(rows) = sample["process_top"]["value"]["rows"].as_array() {
+            for row in rows {
+                if row["pid"].as_u64() == Some(u64::from(owned_pid)) {
+                    seen_owned = true;
+                    if row["cpu_percent_one_core"].is_number() {
+                        measured_owned = true;
+                    }
+                }
+            }
+        }
+    }
+    assert!(seen_owned, "owned process not present in top rows");
+    assert!(measured_owned, "owned process never received measured CPU");
 }
 
 #[test]

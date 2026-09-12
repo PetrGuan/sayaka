@@ -14,10 +14,77 @@ import time
 from check_m7_benchmark import ANSI, Fixture, REPO, TerminalProcess
 
 
-def stream_run(binary, fixture, budget):
+def classify_top_generation_samples(all_samples, warmup_samples):
+    if not (0 <= warmup_samples < len(all_samples)):
+        raise AssertionError("invalid warmup/steady sample split")
+    slow_indices = []
+    last_observed = None
+    for sample in all_samples[:warmup_samples]:
+        observed = sample["process_top"]["observed_unix_ms"]
+        if observed is not None:
+            last_observed = observed
+    for index, sample in enumerate(all_samples[warmup_samples:]):
+        observed = sample["process_top"]["observed_unix_ms"]
+        if observed is None:
+            continue
+        if observed != last_observed:
+            slow_indices.append(index)
+            last_observed = observed
+    return slow_indices
+
+
+def enforce_collection_budgets(all_samples, warmup_samples, budget, top_enabled):
+    steady_samples = all_samples[warmup_samples:]
+    if not steady_samples:
+        raise AssertionError("missing steady samples")
+    if not top_enabled:
+        latency = max(sample["collection_ms"] for sample in steady_samples)
+        upper = latency + 1
+        assert upper <= budget["max_steady_collection_ms"], "collection duration upper bound exceeded budget"
+        return {
+            "max_collection_ms": latency,
+            "collection_ms_upper_bound": upper,
+            "max_fast_collection_ms": latency,
+            "max_fast_collection_ms_upper_bound": upper,
+            "max_slow_collection_ms": 0,
+            "max_slow_collection_ms_upper_bound": 0,
+            "slow_generation_count": 0,
+            "fast_sample_count": len(steady_samples),
+        }
+
+    slow_indices = classify_top_generation_samples(all_samples, warmup_samples)
+    if len(slow_indices) < 2:
+        raise AssertionError("missing slow/top generations in steady samples")
+    slow = [steady_samples[index]["collection_ms"] for index in slow_indices]
+    slow_set = set(slow_indices)
+    fast = [sample["collection_ms"] for index, sample in enumerate(steady_samples) if index not in slow_set]
+    if not fast:
+        raise AssertionError("missing fast steady samples")
+    fast_max = max(fast)
+    fast_upper = fast_max + 1
+    slow_max = max(slow)
+    slow_upper = slow_max + 1
+    assert fast_upper <= budget["max_steady_collection_ms"], "fast collection duration upper bound exceeded budget"
+    assert slow_upper <= budget["max_top_collection_ms"], "slow/top collection duration upper bound exceeded budget"
+    return {
+        "max_collection_ms": max(sample["collection_ms"] for sample in steady_samples),
+        "collection_ms_upper_bound": max(sample["collection_ms"] for sample in steady_samples) + 1,
+        "max_fast_collection_ms": fast_max,
+        "max_fast_collection_ms_upper_bound": fast_upper,
+        "max_slow_collection_ms": slow_max,
+        "max_slow_collection_ms_upper_bound": slow_upper,
+        "slow_generation_count": len(slow_indices),
+        "fast_sample_count": len(fast),
+    }
+
+
+def stream_run(binary, fixture, budget, top_enabled):
+    args = [str(binary), "status", "--watch", "--json", "--count", str(budget["samples"]),
+            "--interval-ms", str(budget["interval_ms"])]
+    if top_enabled:
+        args.extend(["--top", str(budget["top_limit"]), "--top-sort", budget["top_sort"]])
     result = subprocess.run(
-        [str(binary), "status", "--watch", "--json", "--count", str(budget["samples"]),
-         "--interval-ms", str(budget["interval_ms"])],
+        args,
         cwd=fixture.base, env=fixture.env(), capture_output=True,
         timeout=budget["samples"] * budget["interval_ms"] / 1000 + 15,
     )
@@ -33,26 +100,48 @@ def stream_run(binary, fixture, budget):
             assert sample["sequence"] > samples[index - 1]["sequence"]
         for name in ["memory", "network", "disk", "sampler_process"]:
             assert sample[name]["state"] == "fresh", "%s not fresh" % name
-        for name in ["temperature_celsius", "gpu_utilization_percent", "process_top"]:
+        for name in ["temperature_celsius", "gpu_utilization_percent"]:
             assert sample[name]["state"] == "unsupported"
             assert sample[name]["value"] is None
+        if top_enabled:
+            assert sample["process_top"]["state"] in {"fresh", "warming_up", "stale", "unavailable"}
+            if sample["process_top"]["value"] is not None:
+                top = sample["process_top"]["value"]
+                assert top["top_schema_version"] == 1
+                assert top["sort"] == budget["top_sort"]
+                assert top["limit"] == budget["top_limit"]
+                assert top["probe_cap"] == budget["top_probe_cap"]
+                assert top["collection_budget_ms"] == budget["top_collection_budget_ms"]
+        else:
+            assert sample["process_top"]["state"] == "unsupported"
+            assert sample["process_top"]["value"] is None
     steady = samples[budget["warmup_samples"]:]
     cpu = [sample["sampler_process"]["value"]["cpu_percent_one_core"] for sample in steady]
     assert all(value is not None for value in cpu)
     rss = max(sample["sampler_process"]["value"]["resident_bytes"] for sample in steady)
-    latency = max(sample["collection_ms"] for sample in steady)
+    collection = enforce_collection_budgets(samples, budget["warmup_samples"], budget, top_enabled)
     assert max(cpu) <= budget["max_steady_cpu_percent_one_core"], "steady sampler CPU exceeded budget: %r" % cpu
     assert rss <= budget["max_resident_bytes"]
-    assert latency + 1 <= budget["max_steady_collection_ms"], "collection duration upper bound exceeded budget"
     assert any(sample["disk"]["age_ms"] > 0 for sample in steady), "slow observations were not cached"
     return {"max_cpu_percent_one_core": max(cpu), "max_resident_bytes": rss,
-            "max_collection_ms": latency, "collection_ms_upper_bound": latency + 1, "emitted_samples": len(samples),
+            "max_collection_ms": collection["max_collection_ms"],
+            "collection_ms_upper_bound": collection["collection_ms_upper_bound"],
+            "max_fast_collection_ms": collection["max_fast_collection_ms"],
+            "max_fast_collection_ms_upper_bound": collection["max_fast_collection_ms_upper_bound"],
+            "max_slow_collection_ms": collection["max_slow_collection_ms"],
+            "max_slow_collection_ms_upper_bound": collection["max_slow_collection_ms_upper_bound"],
+            "slow_generation_count": collection["slow_generation_count"],
+            "fast_sample_count": collection["fast_sample_count"],
+            "emitted_samples": len(samples),
             "coalesced_samples": sum(sample["coalesced_samples"] for sample in samples)}
 
 
-def panel_run(binary, fixture, budget):
+def panel_run(binary, fixture, budget, top_enabled):
+    arguments = ["status", "--watch", "--interval-ms", str(budget["interval_ms"])]
+    if top_enabled:
+        arguments.extend(["--top", str(budget["top_limit"]), "--top-sort", budget["top_sort"]])
     terminal = TerminalProcess(binary, fixture, columns=200, rows=40,
-        arguments=["status", "--watch", "--interval-ms", str(budget["interval_ms"])])
+        arguments=arguments)
     try:
         first = terminal.wait_for(b"Sayaka / System status")
         terminal.wait_for(("Sample %d |" % budget["samples"]).encode(),
@@ -103,18 +192,35 @@ def main():
     if platform.system() != "Darwin":
         raise SystemExit("BLOCKED: native status baseline requires macOS")
     binary = args.binary.resolve(strict=True)
-    budget = json.loads((REPO / "benchmarks/t11-v1.json").read_text())
+    default_budget = json.loads((REPO / "benchmarks/t11-v1.json").read_text())
+    top_budget = json.loads((REPO / "benchmarks/t11-top-v1.json").read_text())
     fixture = Fixture(file_count=0)
     try:
-        stream = stream_run(binary, fixture, budget)
-        panel = panel_run(binary, fixture, budget)
+        stream = stream_run(binary, fixture, default_budget, top_enabled=False)
+        panel = panel_run(binary, fixture, default_budget, top_enabled=False)
+        top_stream = stream_run(binary, fixture, top_budget, top_enabled=True)
+        top_panel = panel_run(binary, fixture, top_budget, top_enabled=True)
         signals = {
-            "sigint_ms": signal_run(binary, fixture, budget, signal.SIGINT, 130),
-            "sigterm_ms": signal_run(binary, fixture, budget, signal.SIGTERM, 143),
+            "sigint_ms": signal_run(binary, fixture, default_budget, signal.SIGINT, 130),
+            "sigterm_ms": signal_run(binary, fixture, default_budget, signal.SIGTERM, 143),
         }
         fixture.verify_payload()
-        result = {"fixture": budget["fixture"], "os": platform.mac_ver()[0], "arch": platform.machine(),
-                  "scope": budget["scope"], "ndjson": stream, "terminal": panel, "signals": signals}
+        result = {"os": platform.mac_ver()[0], "arch": platform.machine(),
+                  "profiles": {
+                      "count_only_t11_v1": {
+                          "fixture": default_budget["fixture"],
+                          "scope": default_budget["scope"],
+                          "ndjson": stream,
+                          "terminal": panel,
+                      },
+                      "top10_cpu_t11_top_v1": {
+                          "fixture": top_budget["fixture"],
+                          "scope": top_budget["scope"],
+                          "ndjson": top_stream,
+                          "terminal": top_panel,
+                      },
+                  },
+                  "signals": signals}
     finally:
         fixture.close()
     result["cleanup"] = "passed"

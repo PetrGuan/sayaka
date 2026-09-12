@@ -35,7 +35,11 @@ struct Fake {
     bad_memory: bool,
     calls: Rc<RefCell<Vec<&'static str>>>,
     slow_calls: Rc<Cell<usize>>,
+    top_calls: Rc<Cell<usize>>,
     cancel_after_cpu: Option<Cancellation>,
+    top_rows: Vec<ProcessTopCounters>,
+    top_collection: ProcessTopCollection,
+    top_error: bool,
 }
 
 impl Fake {
@@ -59,7 +63,30 @@ impl Fake {
             bad_memory: false,
             calls: Rc::new(RefCell::new(Vec::new())),
             slow_calls: Rc::new(Cell::new(0)),
+            top_calls: Rc::new(Cell::new(0)),
             cancel_after_cpu: None,
+            top_rows: vec![ProcessTopCounters {
+                identity: ProcessIdentity {
+                    pid: 1234,
+                    start_unix_sec: 100,
+                    start_unix_usec: 1,
+                },
+                name: "worker".into(),
+                resident_bytes: 8192,
+                total_cpu_time_ns: 5_000_000,
+            }],
+            top_collection: ProcessTopCollection {
+                visible_processes: 42,
+                candidate_cap: 65_536,
+                probe_cap: 4096,
+                probed: 12,
+                denied: 1,
+                disappeared: 2,
+                invalid: 0,
+                truncated: false,
+                partial: false,
+            },
+            top_error: false,
         }
     }
     fn advance_counters(&mut self) {
@@ -69,6 +96,10 @@ impl Fake {
         for interface in &mut self.interfaces {
             interface.received_bytes += 1024;
             interface.transmitted_bytes += 512;
+        }
+        for row in &mut self.top_rows {
+            row.total_cpu_time_ns += 100_000_000;
+            row.resident_bytes += 128;
         }
     }
 }
@@ -126,6 +157,25 @@ impl Provider for Fake {
     }
     fn processes(&mut self) -> io::Result<u64> {
         Ok(42)
+    }
+    fn processes_top(
+        &mut self,
+        _: usize,
+        _: ProcessTopSort,
+        _: usize,
+        _: u64,
+    ) -> io::Result<ProcessTopSnapshot> {
+        self.top_calls.set(self.top_calls.get() + 1);
+        if self.top_error {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected top refusal",
+            ));
+        }
+        Ok(ProcessTopSnapshot {
+            rows: self.top_rows.clone(),
+            collection: self.top_collection.clone(),
+        })
     }
     fn power(&mut self) -> io::Result<Power> {
         Ok(Power {
@@ -387,6 +437,247 @@ fn json_shapes_have_null_unsupported_values_and_current_threshold_states() {
     assert_eq!(value["cpu"]["state"], "fresh");
     assert_eq!(value["gpu_utilization_percent"]["state"], "unsupported");
     assert!(value["gpu_utilization_percent"]["value"].is_null());
+    assert_eq!(value["process_top"]["state"], "unsupported");
+    assert!(value["process_top"]["value"].is_null());
     assert!(value["power"]["value"]["battery_percent"].is_null());
     assert_eq!(value["sequence"], 2);
+}
+
+#[test]
+fn process_top_is_opt_in_and_disabled_by_default() {
+    let (mut sampler, clock) = setup();
+    sampler.sample(&Cancellation::default()).unwrap();
+    let snapshot = tick(&mut sampler, &clock);
+    assert_eq!(snapshot.process_top.state, State::Unsupported);
+    assert_eq!(sampler.provider.top_calls.get(), 0);
+}
+
+#[test]
+fn process_top_collects_on_slow_cadence_and_warms_then_rates() {
+    let clock = ManualClock::new();
+    let config = Config {
+        process_top: Some(ProcessTopConfig {
+            limit: 4,
+            sort: ProcessTopSort::Cpu,
+        }),
+        ..Config::default()
+    };
+    let mut sampler = Sampler::with_clock(Fake::new(), config, clock.clone()).unwrap();
+    let first = sampler.sample(&Cancellation::default()).unwrap();
+    assert_eq!(first.process_top.state, State::Fresh);
+    assert_eq!(sampler.provider.top_calls.get(), 1);
+    assert_eq!(
+        first.process_top.value.as_ref().unwrap().rows[0].state,
+        State::WarmingUp
+    );
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let second = sampler.sample(&Cancellation::default()).unwrap();
+    assert_eq!(sampler.provider.top_calls.get(), 2);
+    let top = second.process_top.value.unwrap();
+    assert_eq!(top.rows.len(), 1);
+    assert!(top.rows[0].cpu_percent_one_core.unwrap() > 0.0);
+    assert_eq!(top.rows[0].cpu_window_ms, Some(5000));
+}
+
+#[test]
+fn process_top_pid_reuse_and_counter_decrease_reset_cpu_rate() {
+    let clock = ManualClock::new();
+    let config = Config {
+        process_top: Some(ProcessTopConfig {
+            limit: 4,
+            sort: ProcessTopSort::Cpu,
+        }),
+        ..Config::default()
+    };
+    let mut sampler = Sampler::with_clock(Fake::new(), config, clock.clone()).unwrap();
+    sampler.sample(&Cancellation::default()).unwrap();
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let rated = sampler.sample(&Cancellation::default()).unwrap();
+    assert!(
+        rated.process_top.value.unwrap().rows[0]
+            .cpu_percent_one_core
+            .unwrap()
+            > 0.0
+    );
+    sampler.provider.top_rows[0].identity.start_unix_usec += 1;
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let reused = sampler.sample(&Cancellation::default()).unwrap();
+    let row = &reused.process_top.value.unwrap().rows[0];
+    assert!(row.cpu_percent_one_core.is_none());
+    assert_eq!(row.reason.as_deref(), Some("first_sample"));
+    sampler.provider.top_rows[0].total_cpu_time_ns = 1;
+    clock.advance(5);
+    let decreased = sampler.sample(&Cancellation::default()).unwrap();
+    let row = &decreased.process_top.value.unwrap().rows[0];
+    assert!(row.cpu_percent_one_core.is_none());
+    assert_eq!(row.reason.as_deref(), Some("counter_decreased"));
+}
+
+#[test]
+fn process_top_sorting_keeps_known_cpu_before_unknown_and_respects_memory_mode() {
+    let clock = ManualClock::new();
+    let mut fake = Fake::new();
+    fake.top_rows = vec![
+        ProcessTopCounters {
+            identity: ProcessIdentity {
+                pid: 1,
+                start_unix_sec: 100,
+                start_unix_usec: 1,
+            },
+            name: "zeta".into(),
+            resident_bytes: 1024,
+            total_cpu_time_ns: 1_000_000,
+        },
+        ProcessTopCounters {
+            identity: ProcessIdentity {
+                pid: 2,
+                start_unix_sec: 100,
+                start_unix_usec: 2,
+            },
+            name: "alpha".into(),
+            resident_bytes: 2048,
+            total_cpu_time_ns: 2_000_000,
+        },
+    ];
+    let config = Config {
+        process_top: Some(ProcessTopConfig {
+            limit: 4,
+            sort: ProcessTopSort::Cpu,
+        }),
+        ..Config::default()
+    };
+    let mut sampler = Sampler::with_clock(fake, config, clock.clone()).unwrap();
+    sampler.sample(&Cancellation::default()).unwrap();
+    sampler.provider.top_rows[0].total_cpu_time_ns += 50_000_000;
+    clock.advance(5);
+    let cpu_sorted = sampler.sample(&Cancellation::default()).unwrap();
+    let rows = cpu_sorted.process_top.value.unwrap().rows;
+    assert_eq!(rows[0].pid, 1);
+    assert!(rows[0].cpu_percent_one_core.is_some());
+    assert_eq!(rows[1].cpu_percent_one_core, Some(0.0));
+    sampler.config.process_top = Some(ProcessTopConfig {
+        limit: 4,
+        sort: ProcessTopSort::Memory,
+    });
+    clock.advance(5);
+    let memory_sorted = sampler.sample(&Cancellation::default()).unwrap();
+    let rows = memory_sorted.process_top.value.unwrap().rows;
+    assert_eq!(rows[0].pid, 2);
+}
+
+#[test]
+fn process_top_failure_breaks_continuity_until_second_renewed_generation() {
+    let clock = ManualClock::new();
+    let config = Config {
+        process_top: Some(ProcessTopConfig {
+            limit: 4,
+            sort: ProcessTopSort::Cpu,
+        }),
+        ..Config::default()
+    };
+    let mut sampler = Sampler::with_clock(Fake::new(), config, clock.clone()).unwrap();
+    sampler.sample(&Cancellation::default()).unwrap();
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let first_rate = sampler.sample(&Cancellation::default()).unwrap();
+    let row = &first_rate.process_top.value.as_ref().unwrap().rows[0];
+    assert!(row.cpu_percent_one_core.is_some());
+    assert_eq!(row.cpu_window_ms, Some(5000));
+
+    sampler.provider.top_error = true;
+    clock.advance(5);
+    let failed = sampler.sample(&Cancellation::default()).unwrap();
+    assert_eq!(failed.process_top.state, State::Stale);
+    assert_eq!(
+        failed
+            .process_top
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("permission_denied")
+    );
+
+    sampler.provider.top_error = false;
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let after_failure = sampler.sample(&Cancellation::default()).unwrap();
+    let row = &after_failure.process_top.value.as_ref().unwrap().rows[0];
+    assert!(row.cpu_percent_one_core.is_none());
+    assert!(row.cpu_window_ms.is_none());
+    assert_eq!(row.reason.as_deref(), Some("first_sample"));
+
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let renewed = sampler.sample(&Cancellation::default()).unwrap();
+    let row = &renewed.process_top.value.as_ref().unwrap().rows[0];
+    assert!(row.cpu_percent_one_core.unwrap() >= 0.0);
+    assert_eq!(row.cpu_window_ms, Some(5000));
+}
+
+#[test]
+fn process_top_missing_rows_reset_identity_baseline_and_keep_partial_metadata() {
+    let clock = ManualClock::new();
+    let config = Config {
+        process_top: Some(ProcessTopConfig {
+            limit: 4,
+            sort: ProcessTopSort::Cpu,
+        }),
+        ..Config::default()
+    };
+    let mut fake = Fake::new();
+    fake.top_rows.push(ProcessTopCounters {
+        identity: ProcessIdentity {
+            pid: 4321,
+            start_unix_sec: 101,
+            start_unix_usec: 2,
+        },
+        name: "helper".into(),
+        resident_bytes: 4096,
+        total_cpu_time_ns: 9_000_000,
+    });
+    fake.top_collection.partial = true;
+    let mut sampler = Sampler::with_clock(fake, config, clock.clone()).unwrap();
+    sampler.sample(&Cancellation::default()).unwrap();
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let initial = sampler.sample(&Cancellation::default()).unwrap();
+    assert_eq!(initial.process_top.value.as_ref().unwrap().rows.len(), 2);
+
+    sampler
+        .provider
+        .top_rows
+        .retain(|row| row.identity.pid != 4321);
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let missing = sampler.sample(&Cancellation::default()).unwrap();
+    assert_eq!(missing.process_top.value.as_ref().unwrap().rows.len(), 1);
+    assert!(missing.process_top.value.as_ref().unwrap().partial);
+
+    sampler.provider.top_rows.push(ProcessTopCounters {
+        identity: ProcessIdentity {
+            pid: 4321,
+            start_unix_sec: 101,
+            start_unix_usec: 2,
+        },
+        name: "helper".into(),
+        resident_bytes: 4500,
+        total_cpu_time_ns: 10_000_000,
+    });
+    sampler.provider.advance_counters();
+    clock.advance(5);
+    let reappeared = sampler.sample(&Cancellation::default()).unwrap();
+    let helper = reappeared
+        .process_top
+        .value
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .find(|row| row.pid == 4321)
+        .unwrap();
+    assert!(helper.cpu_percent_one_core.is_none());
+    assert_eq!(helper.reason.as_deref(), Some("first_sample"));
 }

@@ -56,6 +56,47 @@ impl Provider for NativeProvider {
     fn processes(&mut self) -> io::Result<u64> {
         native::processes()
     }
+    fn processes_top(
+        &mut self,
+        limit: usize,
+        sort: ProcessTopSort,
+        probe_cap: usize,
+        collection_budget_ms: u64,
+    ) -> io::Result<ProcessTopSnapshot> {
+        let native_sort = match sort {
+            ProcessTopSort::Cpu => native::ProcessTopSort::Cpu,
+            ProcessTopSort::Memory => native::ProcessTopSort::Memory,
+        };
+        native::processes_top(limit, native_sort, probe_cap, collection_budget_ms).map(|snapshot| {
+            ProcessTopSnapshot {
+                rows: snapshot
+                    .rows
+                    .into_iter()
+                    .map(|row| ProcessTopCounters {
+                        identity: ProcessIdentity {
+                            pid: row.identity.pid,
+                            start_unix_sec: row.identity.start_unix_sec,
+                            start_unix_usec: row.identity.start_unix_usec,
+                        },
+                        name: row.name,
+                        resident_bytes: row.resident_bytes,
+                        total_cpu_time_ns: row.total_cpu_time_ns,
+                    })
+                    .collect(),
+                collection: ProcessTopCollection {
+                    visible_processes: snapshot.collection.visible_processes,
+                    candidate_cap: snapshot.collection.candidate_cap,
+                    probe_cap: snapshot.collection.probe_cap,
+                    probed: snapshot.collection.probed,
+                    denied: snapshot.collection.denied,
+                    disappeared: snapshot.collection.disappeared,
+                    invalid: snapshot.collection.invalid,
+                    truncated: snapshot.collection.truncated,
+                    partial: snapshot.collection.partial,
+                },
+            }
+        })
+    }
     fn power(&mut self) -> io::Result<Power> {
         native::power().map(|value| Power {
             on_ac: value.on_ac,

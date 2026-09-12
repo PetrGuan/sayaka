@@ -45,6 +45,46 @@ pub struct SamplerCounters {
     pub resident_bytes: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessTopSort {
+    Cpu,
+    Memory,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub start_unix_sec: u64,
+    pub start_unix_usec: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcessTopCounters {
+    pub identity: ProcessIdentity,
+    pub name: String,
+    pub resident_bytes: u64,
+    pub total_cpu_time_ns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessTopCollection {
+    pub visible_processes: u64,
+    pub candidate_cap: usize,
+    pub probe_cap: usize,
+    pub probed: usize,
+    pub denied: usize,
+    pub disappeared: usize,
+    pub invalid: usize,
+    pub truncated: bool,
+    pub partial: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcessTopSnapshot {
+    pub rows: Vec<ProcessTopCounters>,
+    pub collection: ProcessTopCollection,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PowerCounters {
     pub on_ac: bool,
@@ -63,7 +103,7 @@ pub enum ThermalState {
 #[cfg(target_os = "macos")]
 mod native;
 #[cfg(target_os = "macos")]
-pub use native::{cpu, disk, memory, network, power, processes, sampler, thermal};
+pub use native::{cpu, disk, memory, network, power, processes, processes_top, sampler, thermal};
 
 #[cfg(not(target_os = "macos"))]
 macro_rules! unsupported {
@@ -86,6 +126,7 @@ unsupported! {
     disk -> DiskCounters,
     sampler -> SamplerCounters,
     processes -> u64,
+    processes_top -> ProcessTopSnapshot,
     power -> PowerCounters,
     thermal -> ThermalState,
 }
@@ -103,6 +144,7 @@ mod tests {
             disk().unwrap_err(),
             sampler().unwrap_err(),
             processes().unwrap_err(),
+            processes_top(1, ProcessTopSort::Cpu, 1, 1).unwrap_err(),
             power().unwrap_err(),
             thermal().unwrap_err(),
         ];
