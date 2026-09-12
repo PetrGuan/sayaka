@@ -1,0 +1,17 @@
+{
+  "fixture": "m7-v1",
+  "unique_files": 1024,
+  "file_entries": 1040,
+  "logical_bytes": 1048576,
+  "hardlink_aliases": 16,
+  "nested_empty_depth": 8,
+  "runs": 3,
+  "input_samples_per_run": 10,
+  "max_first_frame_ms": 150,
+  "max_first_usable_snapshot_ms": 1500,
+  "max_index_ms": 250,
+  "max_input_response_ms": 100,
+  "max_shutdown_ms": 1000,
+  "max_peak_rss_bytes": 134217728,
+  "scope": "Local fixture-only macOS PTY regression: fresh CLI process, uncontrolled OS cache after fixture creation. Includes scan/tree readiness, name filtering, selection and exact-plan cancellation, never Trash execution or system viewers. Not a Mole comparison or human usability study."
+}

@@ -2,7 +2,7 @@
 
 An open-source local maintenance engine and CLI, targeting macOS and Windows.
 
-**Status: M2 scanner, M1 planning core, and an initial M3 Trash workflow.** macOS scanning supports
+**Status: bounded scanning, native Trash, and an initial terminal browser.** macOS scanning supports
 explicit roots, bounded resources, cancellation and structured output. The
 in-memory core supports plans, exact-preview approval and read-only preflight.
 Scanning never modifies files. The separate `trash` command previews explicitly
@@ -11,6 +11,17 @@ This native action uses a [revalidation contract](docs/EXECUTION.md), not an
 atomic guarantee against path replacement. It records durable per-item intent
 and results. Broad cleaning, uninstall, Windows execution and bindings remain
 unimplemented. Native Trash/recovery acceptance is a separate opt-in gate.
+
+An initial [terminal disk browser](docs/BROWSING.md) adds directory summaries,
+navigation, filtering, multiselect and exact M3 preview/confirmation:
+
+```sh
+sayaka browse .
+sayaka browse . --plain
+```
+
+The root must be explicit. Browsing and selecting do not modify files; directories
+remain read-only. Non-terminal output automatically uses the plain snapshot report.
 
 ## Direction
 

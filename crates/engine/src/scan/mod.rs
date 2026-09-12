@@ -3,6 +3,8 @@
 //! Bounded read-only traversal. Results describe observations, not a filesystem
 //! snapshot or authorization to perform maintenance.
 
+pub mod index;
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(any(target_os = "macos", test))]
@@ -303,6 +305,34 @@ pub struct ScanReport {
 
 pub fn display_path(path: &Path) -> String {
     format!("{:?}", path.as_os_str())
+}
+
+/// Read-only freshness check for an explicit external-viewer request. This is
+/// not an atomic handoff to the viewer and never authorizes filesystem mutation.
+pub fn verify_entry(scope: &ScanEntry, entry: &ScanEntry) -> Result<(), ScanError> {
+    if scope.kind != ResourceKind::Directory
+        || !crate::model::valid_absolute_path(&scope.path)
+        || scope.path.parent().is_none()
+        || !crate::model::valid_absolute_path(&entry.path)
+        || !entry.path.starts_with(&scope.path)
+    {
+        return Err(ScanError::new(
+            ScanCode::InvalidRoot,
+            "invalid observation scope",
+        ));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::verify_entry(scope, entry)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = entry;
+        Err(ScanError::new(
+            ScanCode::UnsupportedPlatform,
+            "native viewing requires macOS",
+        ))
+    }
 }
 
 /// Synchronous result collection with bounded worker/descriptor/event budgets.

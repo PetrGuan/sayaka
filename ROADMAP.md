@@ -6,6 +6,9 @@ M3 now has an initial explicit-file Trash session and durable journal under the
 approved revalidation contract. Native Trash/recovery environment acceptance
 remains separately gated; it does not satisfy the former atomic-binding proposal.
 Windows-native scanning and bindings remain unimplemented.
+M7 now provides an initial terminal browser, independent directory summaries and
+M3 plan integration. See [BROWSING.md](docs/BROWSING.md) for its current limits
+and local mechanical performance evidence; this is not full CLI parity.
 
 ## Product objective
 

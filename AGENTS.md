@@ -30,6 +30,12 @@ at client boundaries, explicit capability/error states, and one shared policy
 path. No arbitrary commands, approval booleans, privilege escalation fallbacks,
 or permanent deletion after a failed trash operation.
 
+The browser's terminal, input and worker lifecycle belongs in `sayaka-cli`;
+the immutable scan tree and directory accounting stay in the engine. Follow
+[docs/BROWSING.md](docs/BROWSING.md). Keep generations and exact preview identity
+bound, restore the terminal and join owned work on exit, and never turn a directory
+selection or refresh into additional native Trash targets.
+
 Follow [docs/SCANNING.md](docs/SCANNING.md). Do not weaken no-follow opens,
 materialization policy, native volume classification or budget/error semantics
 to make a scan or benchmark pass. Unavailable native metadata is not permission.
