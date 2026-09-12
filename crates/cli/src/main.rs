@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 mod browser;
+mod completions;
+mod history;
 mod human;
+mod lifecycle;
 mod output;
 mod status;
 mod terminal;
@@ -96,6 +99,10 @@ fn command() -> Command {
         .subcommand(trash::receipt_command())
         .subcommand(browser::command())
         .subcommand(status::command())
+        .subcommand(history::command())
+        .subcommand(completions::command())
+        .subcommand(lifecycle::install_command())
+        .subcommand(lifecycle::remove_command())
 }
 
 fn limits(args: &ArgMatches) -> ScanLimits {
@@ -233,6 +240,10 @@ fn run() -> io::Result<u8> {
         Some(("receipt", args)) => trash::receipt(args),
         Some(("browse" | "analyze", args)) => browser::run(args),
         Some(("status", args)) => status::run(args),
+        Some(("history", args)) => history::run(args),
+        Some(("completions", args)) => completions::run(args),
+        Some(("install", args)) => lifecycle::run(args, true),
+        Some(("remove", args)) => lifecycle::run(args, false),
         _ => Ok(2),
     }
 }

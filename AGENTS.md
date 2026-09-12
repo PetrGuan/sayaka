@@ -41,6 +41,12 @@ platform boundary, rates/freshness in the engine, and output in the CLI. Never
 replace failed probes with zero, use stale data to clear alerts, or introduce
 maintenance actions/privileged collectors into the read-only sampler.
 
+Local lifecycle work follows [docs/LOCAL_LIFECYCLE.md](docs/LOCAL_LIFECYCLE.md).
+History filters must preserve pending evidence and complete operation outcomes.
+Installation/removal is restricted to verified dedicated prefixes; never modify
+shell startup files, overwrite unowned artifacts, erase history or auto-clean
+staging by name. Validate only in explicitly owned temporary prefixes.
+
 Follow [docs/SCANNING.md](docs/SCANNING.md). Do not weaken no-follow opens,
 materialization policy, native volume classification or budget/error semantics
 to make a scan or benchmark pass. Unavailable native metadata is not permission.

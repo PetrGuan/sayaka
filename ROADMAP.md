@@ -12,6 +12,9 @@ and local mechanical performance evidence; this is not full CLI parity.
 The initial T11 macOS status sampler adds read-only metrics, freshness-aware
 JSON/watch output and a terminal panel. See [STATUS.md](docs/STATUS.md) for its
 source ledger and explicit temperature/GPU/top-process gaps.
+The initial T12 slice adds history queries, generated completions and a verified
+dedicated local installation lifecycle; [LOCAL_LIFECYCLE.md](docs/LOCAL_LIFECYCLE.md)
+lists the separate online distribution, authentication and Windows gates.
 
 ## Product objective
 

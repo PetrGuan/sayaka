@@ -10,6 +10,8 @@
 #![forbid(unsafe_code)]
 
 pub mod execute;
+pub mod history;
+pub mod installation;
 pub mod journal;
 pub mod model;
 pub mod plan;

@@ -12,6 +12,261 @@ use tempfile::TempDir;
 
 const DEADLINE: Duration = Duration::from_secs(30);
 
+#[cfg(target_os = "macos")]
+fn history_fixture(fixture: &Fixture) -> PathBuf {
+    use sayaka_engine::journal::{ItemRecord, ItemState, NativePath, Record, Store};
+    use std::os::unix::fs::OpenOptionsExt;
+    let state = fixture.base.join("history-journal");
+    drop(Store::open(&state, true).unwrap());
+    for (id, created, item_state) in [
+        ("a", 1000, ItemState::Started),
+        ("b", 2000, ItemState::Failed),
+        ("c", 3000, ItemState::Succeeded),
+    ] {
+        let mut record = Record {
+            schema_version: 1,
+            plan_schema_version: 2,
+            engine_version: 2,
+            rules_version: 1,
+            operation_id: id.into(),
+            contract: "revalidated_trash_v1".into(),
+            scope: NativePath::from_path(std::path::Path::new("/fixture")),
+            created_unix_ms: created,
+            items: vec![ItemRecord {
+                path: NativePath::from_path(&std::path::Path::new("/fixture").join(id)),
+                device: 1,
+                inode: 2,
+                logical_bytes: 1,
+                destination: (item_state == ItemState::Succeeded)
+                    .then(|| NativePath::from_path(std::path::Path::new("/fixture-trash/item"))),
+                state: item_state,
+                reason: None,
+                recovery_evidence: None,
+                updated_unix_ms: created,
+            }],
+        };
+        record.validate().unwrap();
+        let write = |name: &str, record: &Record| {
+            let file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(state.join(name))
+                .unwrap();
+            serde_json::to_writer(file, record).unwrap();
+        };
+        write(&format!("{id}.json"), &record);
+        if id == "c" {
+            record.items[0].state = ItemState::Unknown;
+            record.items[0].reason = Some("outcome_publication_not_confirmed".into());
+            write("c.pending", &record);
+        }
+    }
+    state
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn history_filters_whole_reconciled_records_and_retains_global_pending() {
+    let fixture = Fixture::new();
+    let state = history_fixture(&fixture);
+    let before = fs::read(state.join("c.pending")).unwrap();
+    let mut command = fixture.command();
+    command
+        .args(["history", "--json", "--state", "unknown", "--limit", "1"])
+        .arg("--state-dir")
+        .arg(&state);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(3));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["history"]["total_records"], 3);
+    assert_eq!(value["history"]["matched_records"], 2);
+    assert_eq!(value["history"]["records"][0]["operation_id"], "c");
+    assert_eq!(
+        value["history"]["records"][0]["items"][0]["state"],
+        "unknown"
+    );
+    assert_eq!(value["history"]["uncommitted_snapshots"][0], "c.pending");
+    let mut command = fixture.command();
+    command
+        .args([
+            "history",
+            "--json",
+            "--id",
+            "b",
+            "--since",
+            "1970-01-01T00:00:02Z",
+            "--until",
+            "1970-01-01T00:00:03Z",
+        ])
+        .arg("--state-dir")
+        .arg(&state);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(3));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["history"]["matched_records"], 1);
+    assert_eq!(value["history"]["records"][0]["operation_id"], "b");
+    assert_eq!(value["history"]["uncommitted_snapshots"][0], "c.pending");
+    assert_eq!(fs::read(state.join("c.pending")).unwrap(), before);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn history_never_filters_away_corrupt_records_or_creates_missing_state() {
+    let fixture = Fixture::new();
+    let state = history_fixture(&fixture);
+    fs::write(state.join("b.json"), b"{").unwrap();
+    let mut command = fixture.command();
+    command
+        .args(["history", "--json", "--id", "a"])
+        .arg("--state-dir")
+        .arg(&state);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["status"], "failed");
+    let missing = fixture.base.join("missing-history");
+    let mut command = fixture.command();
+    command
+        .args(["history", "--json"])
+        .arg("--state-dir")
+        .arg(&missing);
+    assert!(!capture(command).status.success());
+    assert!(!missing.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn history_preserves_fractional_boundaries_beyond_nanosecond_precision() {
+    let fixture = Fixture::new();
+    let state = history_fixture(&fixture);
+    for (flag, expected) in [("--until", 1), ("--since", 2)] {
+        let mut command = fixture.command();
+        command
+            .args(["history", "--json", flag, "1970-01-01T00:00:01.0000000001Z"])
+            .arg("--state-dir")
+            .arg(&state);
+        let result = capture(command);
+        assert_eq!(result.status.code(), Some(3));
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["history"]["matched_records"], expected);
+    }
+    let missing = fixture.base.join("missing-state");
+    let mut command = fixture.command();
+    command
+        .args([
+            "history",
+            "--since",
+            "1970-01-01T00:00:01.0000000001Z",
+            "--until",
+            "1970-01-01T00:00:01Z",
+        ])
+        .arg("--state-dir")
+        .arg(&missing);
+    assert_eq!(capture(command).status.code(), Some(2));
+    assert!(!missing.exists());
+}
+
+#[test]
+fn completion_is_stdout_only_and_covers_current_commands() {
+    let fixture = Fixture::new();
+    for shell in ["bash", "zsh", "fish"] {
+        let mut command = fixture.command();
+        command.args(["completions", shell]);
+        let result = capture(command);
+        assert!(result.status.success());
+        let script = String::from_utf8(result.stdout).unwrap();
+        for name in ["history", "status", "browse", "install", "remove"] {
+            assert!(script.contains(name));
+        }
+        assert!(result.stderr.is_empty());
+    }
+    assert!(!fixture.base.join("home/.zshrc").exists());
+    assert!(!fixture.base.join("home/.bashrc").exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn local_install_preview_execute_and_owned_remove_preserve_user_state() {
+    let fixture = Fixture::new();
+    let prefix = fixture.base.join("managed-prefix");
+    let history = fixture.base.join("state/preserve-history");
+    fs::write(&history, b"not an installation artifact").unwrap();
+    let mut command = fixture.command();
+    command
+        .args(["install", "--json"])
+        .arg("--prefix")
+        .arg(&prefix);
+    let result = capture(command);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["effects_performed"], false);
+    assert_eq!(value["plan"]["sha256"].as_str().unwrap().len(), 64);
+    assert!(!prefix.exists());
+    let mut command = fixture.command();
+    command
+        .args(["install", "--execute", "--json"])
+        .arg("--prefix")
+        .arg(&prefix);
+    let result = capture(command);
+    assert!(
+        result.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(prefix.join("bin/sayaka").is_file());
+    let mut installed = Command::new(prefix.join("bin/sayaka"));
+    fixture.isolate(&mut installed);
+    installed.arg("--version");
+    assert!(capture(installed).status.success());
+    let mut command = fixture.command();
+    command
+        .args(["remove", "--json"])
+        .arg("--prefix")
+        .arg(&prefix);
+    let result = capture(command);
+    assert!(result.status.success());
+    assert!(prefix.join("bin/sayaka").is_file());
+    let mut command = Command::new(prefix.join("bin/sayaka"));
+    fixture.isolate(&mut command);
+    command
+        .args(["remove", "--execute", "--json"])
+        .arg("--prefix")
+        .arg(&prefix);
+    let result = capture(command);
+    assert!(
+        result.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!prefix.join("bin/sayaka").exists());
+    assert_eq!(fs::read(history).unwrap(), b"not an installation artifact");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn local_install_and_remove_refuse_unowned_prefix_contents() {
+    let fixture = Fixture::new();
+    let prefix = fixture.base.join("unowned");
+    fs::create_dir(&prefix).unwrap();
+    fs::write(prefix.join("keep"), b"user-owned data").unwrap();
+    for action in ["install", "remove"] {
+        let mut command = fixture.command();
+        command
+            .args([action, "--execute", "--json"])
+            .arg("--prefix")
+            .arg(&prefix);
+        assert!(!capture(command).status.success());
+        assert_eq!(fs::read(prefix.join("keep")).unwrap(), b"user-owned data");
+    }
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn status_json_measures_a_counter_window_and_exposes_capability_gaps() {
