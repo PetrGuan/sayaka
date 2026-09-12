@@ -42,7 +42,8 @@ sys.exit(code if code >= 0 else 128 - code)
 
 
 class Fixture:
-    def __init__(self):
+    def __init__(self, file_count=1024):
+        self.file_count = file_count
         self.base = Path(tempfile.mkdtemp(prefix="sayaka-m7-bench-", dir=REPO / "crates/cli"))
         self.directories = []
         self.files = []
@@ -55,9 +56,9 @@ class Fixture:
         deep = self.mkdir(self.root / "deep")
         for index in range(8):
             deep = self.mkdir(deep / ("level-%d" % index))
-        for index in range(1024):
+        for index in range(file_count):
             self.write(self.blocks / ("file-%04d.dat" % index), b"x" * 1024)
-        for index in range(16):
+        for index in range(min(16, file_count)):
             path = self.aliases / ("alias-%04d.dat" % index)
             os.link(self.blocks / ("file-%04d.dat" % index), path)
             self.remember_file(path)
@@ -102,7 +103,7 @@ class Fixture:
 
     def verify_payload(self):
         assert not self.state.exists(), "preview/cancel must not create journal state"
-        for index in range(1024):
+        for index in range(self.file_count):
             assert (self.blocks / ("file-%04d.dat" % index)).read_bytes() == b"x" * 1024
         for path, identity in self.files:
             assert self.identity(path) == identity, "owned fixture identity changed"
@@ -152,7 +153,7 @@ def controlling_terminal():
 
 
 class TerminalProcess:
-    def __init__(self, binary, fixture, columns=100, rows=30):
+    def __init__(self, binary, fixture, columns=100, rows=30, arguments=None):
         self.master, self.slave = pty.openpty()
         self.before = termios.tcgetattr(self.slave)
         self.resize(columns, rows)
@@ -164,9 +165,10 @@ class TerminalProcess:
         self.status_buffer = bytearray()
         self.status_read, status_write = os.pipe()
         acknowledge_read, self.acknowledge_write = os.pipe()
+        arguments = arguments if arguments is not None else ["browse", str(fixture.root), "--state-dir", str(fixture.state)]
         self.process = subprocess.Popen(
             [sys.executable, "-c", BROKER, str(status_write), str(acknowledge_read),
-             str(binary), "browse", str(fixture.root), "--state-dir", str(fixture.state)],
+             str(binary)] + arguments,
             stdin=self.slave, stdout=self.slave, stderr=self.slave,
             cwd=fixture.base, env=fixture.env(), close_fds=True,
             preexec_fn=controlling_terminal, pass_fds=(status_write, acknowledge_read),
@@ -223,7 +225,7 @@ class TerminalProcess:
         assert b"\x1b[?1049h" in self.transcript, "alternate screen was never entered"
         assert b"\x1b[?1049l" in self.transcript, "alternate screen was not restored"
         assert b"\x1b[?25h" in self.transcript, "cursor was not restored"
-        assert not re.search(rb"\x1b\[(?:38|48);", self.transcript), "NO_COLOR emitted color"
+        assert not re.search(rb"\x1b\[(?:[0-9]+;)*(?:38|48);[0-9;]*m", self.transcript), "NO_COLOR emitted color"
 
     def close(self):
         if self.closed:

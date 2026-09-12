@@ -36,6 +36,11 @@ the immutable scan tree and directory accounting stay in the engine. Follow
 bound, restore the terminal and join owned work on exit, and never turn a directory
 selection or refresh into additional native Trash targets.
 
+System status follows [docs/STATUS.md](docs/STATUS.md): keep native reads in the
+platform boundary, rates/freshness in the engine, and output in the CLI. Never
+replace failed probes with zero, use stale data to clear alerts, or introduce
+maintenance actions/privileged collectors into the read-only sampler.
+
 Follow [docs/SCANNING.md](docs/SCANNING.md). Do not weaken no-follow opens,
 materialization policy, native volume classification or budget/error semantics
 to make a scan or benchmark pass. Unavailable native metadata is not permission.

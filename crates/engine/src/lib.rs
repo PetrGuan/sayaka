@@ -15,5 +15,6 @@ pub mod model;
 pub mod plan;
 pub mod receipt;
 pub mod scan;
+pub mod status;
 
 pub use plan::{Clock, IdSource, Planner, SequentialIds, SystemClock};

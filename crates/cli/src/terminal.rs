@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use super::render::{Line, Style};
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     execute, queue,
@@ -12,6 +11,21 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Style {
+    Normal,
+    Header,
+    Muted,
+    Selected,
+    Warning,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Line {
+    pub text: String,
+    pub style: Style,
+}
 
 pub struct Signals {
     interrupt: Arc<AtomicBool>,
@@ -195,7 +209,7 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         if let Err(error) = self.restore() {
-            eprintln!("browser terminal restoration failed: {error}");
+            eprintln!("terminal restoration failed: {error}");
         }
     }
 }

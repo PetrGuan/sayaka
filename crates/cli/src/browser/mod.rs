@@ -3,7 +3,7 @@
 mod jobs;
 mod model;
 mod render;
-mod terminal;
+use crate::terminal;
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
 

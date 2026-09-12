@@ -14,6 +14,134 @@ const DEADLINE: Duration = Duration::from_secs(30);
 
 #[test]
 #[cfg(target_os = "macos")]
+fn status_json_measures_a_counter_window_and_exposes_capability_gaps() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args(["status", "--json", "--interval-ms", "1000"]);
+    let result = capture(command);
+    assert!(
+        result.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert!(value["sequence"].as_u64().unwrap() >= 2);
+    assert_eq!(
+        value["cpu"]["state"], "fresh",
+        "CPU={} collection={}",
+        value["cpu"], value["collection_ms"]
+    );
+    assert!((0.0..=100.0).contains(&value["cpu"]["value"]["busy_percent"].as_f64().unwrap()));
+    assert!(value["cpu"]["value"]["window_ms"].as_u64().unwrap() > 0);
+    assert_eq!(value["memory"]["state"], "fresh");
+    assert!(value["memory"]["value"]["physical_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(value["gpu_utilization_percent"]["state"], "unsupported");
+    assert!(value["gpu_utilization_percent"]["value"].is_null());
+    assert_eq!(value["temperature_celsius"]["state"], "unsupported");
+    assert!(value["temperature_celsius"]["value"].is_null());
+    assert!(!result.stdout.contains(&0x1b));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn status_watch_pipe_is_bounded_ndjson_with_stable_sampler_identity() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args(["status", "--watch", "--count", "3", "--interval-ms", "250"]);
+    let result = capture(command);
+    assert!(
+        matches!(result.status.code(), Some(0 | 3)),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = String::from_utf8(result.stdout).unwrap();
+    let snapshots: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(snapshots.len(), 3);
+    for pair in snapshots.windows(2) {
+        assert_eq!(pair[0]["sampler_id"], pair[1]["sampler_id"]);
+        assert!(pair[1]["sequence"].as_u64().unwrap() > pair[0]["sequence"].as_u64().unwrap());
+    }
+    assert_eq!(snapshots[0]["cpu"]["state"], "warming_up");
+    assert!(snapshots[0]["cpu"]["value"].is_null());
+    for sample in &snapshots[1..] {
+        match sample["cpu"]["state"].as_str().unwrap() {
+            "fresh" => assert!(
+                (0.0..=100.0).contains(&sample["cpu"]["value"]["busy_percent"].as_f64().unwrap())
+            ),
+            "warming_up" => {
+                assert!(sample["cpu"]["value"].is_null());
+                assert!(sample["cpu"]["error"]["code"].is_string());
+            }
+            "stale" => assert!(sample["cpu"]["error"]["code"].is_string()),
+            state => panic!(
+                "unexpected native counter state: {state}; {}",
+                sample["cpu"]
+            ),
+        }
+    }
+}
+
+#[test]
+fn status_rejects_invalid_interval_and_nonfinite_thresholds() {
+    let fixture = Fixture::new();
+    for args in [
+        vec!["status", "--interval-ms", "249"],
+        vec!["status", "--cpu-warn", "NaN"],
+        vec!["status", "--memory-warn", "101"],
+        vec!["status", "--count", "2"],
+    ] {
+        let mut command = fixture.command();
+        command.args(args);
+        assert_eq!(capture(command).status.code(), Some(2));
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn status_broken_pipe_exits_without_leaving_the_sampler_running() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command
+        .args(["status", "--watch", "--json", "--interval-ms", "250"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = OwnedChild {
+        process: command.spawn().unwrap(),
+        reaped: false,
+    };
+    drop(child.process.stdout.take().unwrap());
+    let deadline = Instant::now() + DEADLINE;
+    let status = loop {
+        if let Some(status) = child.process.try_wait().unwrap() {
+            child.reaped = true;
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "status did not stop after broken pipe"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(status.code(), Some(1));
+    let mut error = String::new();
+    child
+        .process
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut error)
+        .unwrap();
+    assert!(error.to_lowercase().contains("broken pipe"), "{error}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
 fn browse_plain_counts_hardlinks_independently_in_siblings() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.root.join("left")).unwrap();

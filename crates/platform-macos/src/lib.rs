@@ -22,6 +22,8 @@ pub use trash::{
 mod acl;
 pub use acl::has_extended_acl;
 
+pub mod status;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeInfo {
     pub local: bool,
