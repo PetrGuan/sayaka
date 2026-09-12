@@ -7,8 +7,10 @@ pub mod index;
 
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", windows, test))]
 mod walk;
+#[cfg(windows)]
+mod windows;
 
 use crate::model::{Cancellation, FileIdentity, ResourceKind};
 use std::fmt;
@@ -17,6 +19,39 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+
+    #[test]
+    fn windows_roots_preserve_native_strings_and_reject_unsafe_forms() {
+        let mut units: Vec<u16> = r"C:\sayaka-fixture\".encode_utf16().collect();
+        units.push(0xd800);
+        let native = PathBuf::from(OsString::from_wide(&units));
+        let limits = ScanLimits::default();
+        assert_eq!(
+            walk::normalize_roots(std::slice::from_ref(&native), &limits).unwrap(),
+            vec![native]
+        );
+        for path in [
+            r"C:\",
+            r"C:relative",
+            r"\relative",
+            r"C:\fixture\..\outside",
+        ] {
+            assert_eq!(
+                walk::normalize_roots(&[PathBuf::from(path)], &limits)
+                    .unwrap_err()
+                    .code,
+                ScanCode::InvalidRoot,
+                "{path:?}"
+            );
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ScanTaskId {
@@ -105,6 +140,7 @@ pub enum ScanCode {
     UnsupportedVolume,
     VolumeUnknown,
     PermissionDenied,
+    Busy,
     NotFound,
     LinkSkipped,
     MountBoundary,
@@ -135,6 +171,7 @@ impl ScanCode {
             Self::UnsupportedVolume => "unsupported_volume",
             Self::VolumeUnknown => "volume_unknown",
             Self::PermissionDenied => "permission_denied",
+            Self::Busy => "busy",
             Self::NotFound => "not_found",
             Self::LinkSkipped => "link_skipped",
             Self::MountBoundary => "mount_boundary",
@@ -181,12 +218,18 @@ impl ScanError {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn io(error: std::io::Error) -> Self {
         let code = match error.kind() {
             std::io::ErrorKind::PermissionDenied => ScanCode::PermissionDenied,
             std::io::ErrorKind::NotFound => ScanCode::NotFound,
             _ => ScanCode::Io,
+        };
+        #[cfg(windows)]
+        let code = match error.raw_os_error() {
+            Some(32 | 33) => ScanCode::Busy,
+            Some(267) => ScanCode::InvalidRoot,
+            _ => code,
         };
         Self {
             code,
@@ -350,12 +393,17 @@ pub fn scan(
         let roots = walk::normalize_roots(roots, limits)?;
         macos::scan_native(roots, limits, cancellation, task_id, progress)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        let roots = walk::normalize_roots(roots, limits)?;
+        windows::scan_native(roots, limits, cancellation, task_id, progress)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (roots, cancellation, task_id, progress);
         Err(ScanError::new(
             ScanCode::UnsupportedPlatform,
-            "native scanning currently requires macOS",
+            "native scanning requires macOS or Windows",
         ))
     }
 }

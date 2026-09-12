@@ -1028,6 +1028,10 @@ impl Fixture {
             .env("TMPDIR", self.base.join("temp"))
             .env("TMP", self.base.join("temp"))
             .env("TEMP", self.base.join("temp"));
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system_root);
+        }
     }
 
     fn command(&self) -> Command {
@@ -1286,13 +1290,163 @@ fn semantic_limits_are_fatal_json_but_syntax_errors_are_clap_diagnostics() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 #[test]
 fn native_scanning_is_explicitly_unsupported() {
     let fixture = Fixture::new();
     let value = json(&fixture.scan(&["--json"]), 1);
     assert_eq!(value["issues"][0]["code"], "unsupported_platform");
     assert_eq!(value["complete"], false);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_scan_cli_keeps_native_paths_metrics_and_progress_contract() {
+    use std::os::windows::ffi::OsStringExt;
+    let fixture = Fixture::new();
+    let name = std::ffi::OsString::from_wide(&[0x0061, 0xd800, 0x0062]);
+    fs::write(fixture.root.join(&name), b"native").unwrap();
+    let result = fixture.scan(&["--json", "--progress"]);
+    let value = json(&result, 0);
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["status"], "complete");
+    assert_eq!(value["complete"], true);
+    assert_eq!(value["totals"]["logical_bytes_known"], 6);
+    assert_eq!(value["totals"]["unique_files"], 1);
+    let entry = value["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["kind"] == "file")
+        .unwrap();
+    assert_eq!(entry["identity"]["variant"], "windows");
+    assert_eq!(entry["identity"]["file_id"].as_array().unwrap().len(), 16);
+    assert_eq!(entry["path"]["encoding"], "windows_utf16_hex");
+    assert!(entry["path"]["raw"].as_str().unwrap().contains("d800"));
+    let progress: Vec<Value> = String::from_utf8(result.stderr)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(!progress.is_empty());
+    assert!(
+        progress
+            .iter()
+            .all(|event| event["task_id"] == value["task_id"])
+    );
+    assert_eq!(fs::read(fixture.root.join(name)).unwrap(), b"native");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_scan_cli_mixed_roots_are_partial_not_empty_success() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("readable"), b"1234").unwrap();
+    let mut command = fixture.command();
+    command
+        .arg("scan")
+        .arg(&fixture.root)
+        .arg(fixture.base.join("missing"))
+        .arg("--json");
+    let value = json(&capture(command), 3);
+    assert_eq!(value["status"], "partial");
+    assert_eq!(value["complete"], false);
+    assert_eq!(value["totals"]["logical_bytes_known"], 4);
+    assert!(
+        value["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue["code"] == "not_found")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_trash_preview_is_refused_without_effects_or_journal_creation() {
+    let fixture = Fixture::new();
+    let file = fixture.root.join("selected.txt");
+    fs::write(&file, b"untouched").unwrap();
+    let state = fixture.base.join("journal");
+    let mut command = fixture.command();
+    command
+        .arg("trash")
+        .arg("--scope")
+        .arg(&fixture.root)
+        .arg(&file)
+        .arg("--state-dir")
+        .arg(&state)
+        .arg("--json");
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["schema_version"], 1);
+    assert!(value.get("items").is_none());
+    assert_eq!(fs::read(&file).unwrap(), b"untouched");
+    assert!(!state.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_scan_cli_reports_real_acl_denial_and_restores_fixture_permissions() {
+    struct PermissionReset<'a> {
+        fixture: &'a Fixture,
+        directory: PathBuf,
+        tool: PathBuf,
+    }
+    impl PermissionReset<'_> {
+        fn invoke(&self, args: &[&str]) -> Captured {
+            let mut command = Command::new(&self.tool);
+            self.fixture.isolate(&mut command);
+            command.arg(&self.directory).args(args);
+            capture(command)
+        }
+    }
+    impl Drop for PermissionReset<'_> {
+        fn drop(&mut self) {
+            let result = self.invoke(&["/remove:d", "*S-1-1-0"]);
+            if !result.status.success() {
+                eprintln!("owned ACL fixture restoration failed");
+                if !thread::panicking() {
+                    panic!("owned ACL fixture restoration failed");
+                }
+            }
+        }
+    }
+    let fixture = Fixture::new();
+    let denied = fixture.root.join("denied");
+    fs::create_dir(&denied).unwrap();
+    fs::write(denied.join("unseen"), b"owned ACL fixture").unwrap();
+    fs::write(fixture.root.join("visible"), b"1234").unwrap();
+    let reset = PermissionReset {
+        fixture: &fixture,
+        directory: denied.clone(),
+        tool: PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/icacls.exe"),
+    };
+    assert!(reset.invoke(&["/deny", "*S-1-1-0:(RD)"]).status.success());
+    let precondition = fs::read_dir(&denied).is_err();
+    let result = fixture.scan(&["--json"]);
+    drop(reset);
+    assert!(
+        fs::read_dir(&denied).is_ok(),
+        "ACL restoration did not restore access"
+    );
+    assert!(precondition, "owned ACL fixture did not deny enumeration");
+    let value = json(&result, 3);
+    assert_eq!(value["complete"], false);
+    assert_eq!(value["totals"]["logical_bytes_known"], 4);
+    assert!(
+        value["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue["code"] == "permission_denied")
+    );
+    assert_eq!(
+        fs::read(denied.join("unseen")).unwrap(),
+        b"owned ACL fixture"
+    );
 }
 
 #[cfg(target_os = "macos")]

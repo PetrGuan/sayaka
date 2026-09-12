@@ -71,6 +71,10 @@ pub(crate) enum Effect {
 
 trait Platform: Probe {
     fn effect(&mut self, path: &Path, stop: &mut dyn FnMut() -> bool) -> Effect;
+
+    fn journal_path(&self, path: &Path) -> NativePath {
+        NativePath::from_path(path)
+    }
 }
 
 trait Journal {
@@ -124,7 +128,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                     .logical_bytes
                     .ok_or_else(|| journal::invalid("native size is unknown"))?;
                 Ok(ItemRecord {
-                    path: NativePath::from_path(item.observation().path()),
+                    path: self.platform.journal_path(item.observation().path()),
                     device,
                     inode,
                     logical_bytes,
@@ -144,7 +148,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                 rules_version: preview.versions().rules,
                 operation_id: journal.new_id()?,
                 contract: preview.execution_contract().as_str().into(),
-                scope: NativePath::from_path(preview.scope()),
+                scope: self.platform.journal_path(preview.scope()),
                 created_unix_ms: now,
                 items,
             },
@@ -199,7 +203,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                 match effect {
                     Effect::Moved(destination) => {
                         row.state = ItemState::Succeeded;
-                        row.destination = Some(NativePath::from_path(&destination));
+                        row.destination = Some(self.platform.journal_path(&destination));
                     }
                     Effect::Refused(message) => {
                         row.state = ItemState::Skipped;

@@ -314,7 +314,11 @@ fn explanation(code: ScanCode) -> (&'static str, &'static str) {
         ),
         ScanCode::PermissionDenied => (
             "Access denied",
-            "Check the folder's permissions and macOS privacy access.",
+            "Check folder permissions and platform privacy restrictions.",
+        ),
+        ScanCode::Busy => (
+            "Folder is in use",
+            "Another handle prevents access. Close the owning application and scan again.",
         ),
         ScanCode::LinkSkipped => (
             "Symbolic link skipped",
@@ -322,11 +326,11 @@ fn explanation(code: ScanCode) -> (&'static str, &'static str) {
         ),
         ScanCode::UnsupportedPlatform => (
             "Scanning is unavailable on this platform",
-            "Native scanning currently requires macOS.",
+            "Native scanning requires macOS or Windows.",
         ),
         ScanCode::UnsupportedVolume => (
             "Volume not supported",
-            "This version scans local internal volumes only.",
+            "Use a supported local volume: internal on macOS, fixed NTFS on Windows.",
         ),
         ScanCode::VolumeUnknown => (
             "Could not identify the volume safely",

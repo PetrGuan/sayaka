@@ -6,6 +6,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn fixture_path(path: &str) -> PathBuf {
+    if cfg!(windows) {
+        Path::new(r"C:\").join(path.strip_prefix('/').expect("absolute fixture path"))
+    } else {
+        PathBuf::from(path)
+    }
+}
+
 #[derive(Clone)]
 struct TestClock(Rc<Cell<SystemTime>>);
 impl Clock for TestClock {
@@ -16,6 +24,7 @@ impl Clock for TestClock {
 
 struct FakePlatform {
     snapshots: HashMap<PathBuf, Snapshot>,
+    journal_paths: HashMap<PathBuf, NativePath>,
     effects: Vec<PathBuf>,
     next_unknown: bool,
     unknown_evidence: Option<journal::RecoveryEvidence>,
@@ -44,8 +53,15 @@ impl Platform for FakePlatform {
                 evidence: self.unknown_evidence.take().map(Box::new),
             }
         } else {
-            Effect::Moved(Path::new("/fixture-trash").join(path.file_name().unwrap()))
+            Effect::Moved(fixture_path("/fixture-trash").join(path.file_name().unwrap()))
         }
+    }
+
+    fn journal_path(&self, path: &Path) -> NativePath {
+        self.journal_paths
+            .get(path)
+            .expect("registered virtual filesystem path")
+            .clone()
     }
 }
 
@@ -77,7 +93,7 @@ impl Journal for FakeJournal {
 fn setup() -> (Session<FakePlatform, TestClock>, TestClock) {
     let clock = TestClock(Rc::new(Cell::new(UNIX_EPOCH + Duration::from_secs(100))));
     let mut planner = Planner::with_sources(
-        Scope::new(PathBuf::from("/fixture"), vec![]).unwrap(),
+        Scope::new(fixture_path("/fixture"), vec![]).unwrap(),
         Versions {
             engine: 2,
             rules: 1,
@@ -89,6 +105,10 @@ fn setup() -> (Session<FakePlatform, TestClock>, TestClock) {
     .for_revalidated_trash();
     let mut platform = FakePlatform {
         snapshots: HashMap::new(),
+        journal_paths: HashMap::from([(
+            fixture_path("/fixture"),
+            NativePath::unix_fixture("/fixture"),
+        )]),
         effects: Vec::new(),
         next_unknown: false,
         unknown_evidence: None,
@@ -96,7 +116,16 @@ fn setup() -> (Session<FakePlatform, TestClock>, TestClock) {
     };
     let mut selected = Vec::new();
     for index in 1..=2 {
-        let path = PathBuf::from(format!("/fixture/file{index}"));
+        let wire_path = format!("/fixture/file{index}");
+        let path = fixture_path(&wire_path);
+        platform
+            .journal_paths
+            .insert(path.clone(), NativePath::unix_fixture(&wire_path));
+        let destination = format!("/fixture-trash/file{index}");
+        platform.journal_paths.insert(
+            fixture_path(&destination),
+            NativePath::unix_fixture(&destination),
+        );
         platform.snapshots.insert(
             path.clone(),
             Snapshot {
@@ -164,6 +193,15 @@ fn exact_versioned_approval_and_intent_precede_every_effect() {
     let journal = FakeJournal::default();
     let report = execute(&mut session, &journal);
     assert_eq!(report.exit_code(), 0);
+    assert_eq!(report.record.scope, NativePath::unix_fixture("/fixture"));
+    assert_eq!(
+        report.record.items[0].path,
+        NativePath::unix_fixture("/fixture/file1")
+    );
+    assert_eq!(
+        report.record.items[0].destination,
+        Some(NativePath::unix_fixture("/fixture-trash/file1"))
+    );
     assert_eq!(report.record.handled_bytes(), Some(14));
     let records = journal.durable.borrow();
     assert_eq!(records.len(), 5);
@@ -271,9 +309,9 @@ fn unverified_native_destination_and_held_evidence_survive_journaling() {
     };
     let evidence = journal::RecoveryEvidence {
         approved: approved.clone(),
-        returned_destination: Some(NativePath::from_path(Path::new("/fixture-trash/reported"))),
+        returned_destination: Some(NativePath::unix_fixture("/fixture-trash/reported")),
         held_source: Some(approved),
-        held_source_path: Some(NativePath::from_path(Path::new("/fixture/held"))),
+        held_source_path: Some(NativePath::unix_fixture("/fixture/held")),
         observation_errors: vec!["destination verification failed".into()],
     };
     session.platform.next_unknown = true;
@@ -302,7 +340,7 @@ fn changed_target_is_skipped_without_expanding_approval() {
     session
         .platform
         .snapshots
-        .get_mut(Path::new("/fixture/file1"))
+        .get_mut(&fixture_path("/fixture/file1"))
         .unwrap()
         .identity = Some(FileIdentity::Unix {
         device: 1,
@@ -314,7 +352,7 @@ fn changed_target_is_skipped_without_expanding_approval() {
         report.record.items[0].reason.as_deref(),
         Some("resource_changed")
     );
-    assert_eq!(session.platform.effects, [PathBuf::from("/fixture/file2")]);
+    assert_eq!(session.platform.effects, [fixture_path("/fixture/file2")]);
 }
 
 #[test]

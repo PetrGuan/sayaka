@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "sayaka-platform-windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Read-only Windows handle boundary for Sayaka"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_Security", "Win32_System_WindowsProgramming"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+tempfile = "3"
+windows-sys = { version = "0.61", features = ["Win32_System_Ioctl"] }
