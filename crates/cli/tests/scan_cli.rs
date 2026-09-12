@@ -12,6 +12,77 @@ use tempfile::TempDir;
 
 const DEADLINE: Duration = Duration::from_secs(30);
 
+#[test]
+#[cfg(target_os = "macos")]
+fn browse_plain_counts_hardlinks_independently_in_siblings() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.root.join("left")).unwrap();
+    fs::create_dir(fixture.root.join("right")).unwrap();
+    fs::write(fixture.root.join("left/data"), [0u8; 100]).unwrap();
+    fs::hard_link(
+        fixture.root.join("left/data"),
+        fixture.root.join("right/alias"),
+    )
+    .unwrap();
+    let state = fixture.base.join("browser-journal");
+    let mut command = fixture.command();
+    command
+        .arg("browse")
+        .arg(&fixture.root)
+        .arg("--plain")
+        .arg("--state-dir")
+        .arg(&state);
+    let result = capture(command);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = String::from_utf8(result.stdout).unwrap();
+    assert!(!text.contains('\x1b'));
+    assert!(text.contains("Root unique files: 1"), "{text}");
+    assert!(
+        text.contains("Root logical subtotal: 100 bytes; unknown files: 0; complete: true"),
+        "{text}"
+    );
+    for directory in ["left", "right"] {
+        assert!(
+            text.lines().any(|line| line.contains("(known_bytes=100)")
+                && line.ends_with(&format!("/{directory}\""))),
+            "{text}"
+        );
+    }
+    assert!(!state.exists());
+}
+
+#[test]
+fn browse_requires_a_root_and_does_not_implicitly_scan() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.arg("browse");
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("snapshot"));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn browse_pipe_fallback_and_alias_are_read_only_and_missing_scope_fails() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("kept.txt"), b"kept").unwrap();
+    let mut command = fixture.command();
+    command.arg("analyze").arg(&fixture.root);
+    let result = capture(command);
+    assert!(result.status.success());
+    assert!(!result.stdout.contains(&0x1b));
+    assert_eq!(fs::read(fixture.root.join("kept.txt")).unwrap(), b"kept");
+    let mut command = fixture.command();
+    command.arg("browse").arg(fixture.root.join("missing"));
+    let result = capture(command);
+    assert!(!result.status.success());
+    assert!(!result.stdout.contains(&0x1b));
+}
+
 #[cfg(target_os = "macos")]
 fn exclusion_preview(
     fixture: &Fixture,

@@ -181,6 +181,14 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let store = Store::open(&state_directory(args)?, true)?;
     let report = session.execute(&plan, &approval, &cancellation, &store)?;
+    print_execution_report(&report)?;
+    let code = report.exit_code();
+    Ok(if code == 0 && rejected > 0 { 3 } else { code })
+}
+
+pub(crate) fn print_execution_report(
+    report: &sayaka_engine::execute::ExecutionReport,
+) -> io::Result<()> {
     writeln!(
         io::stdout().lock(),
         "\nOperation {}",
@@ -223,8 +231,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
             "Journal failure; no further operations were started: {error:?}"
         )?;
     }
-    let code = report.exit_code();
-    Ok(if code == 0 && rejected > 0 { 3 } else { code })
+    Ok(())
 }
 
 fn confirmed(answer: &str, expected: &str) -> bool {

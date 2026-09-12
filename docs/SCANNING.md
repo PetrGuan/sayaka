@@ -3,7 +3,8 @@
 The scanner observes explicitly supplied directories. It does not delete,
 restore, uninstall, hydrate file contents, or create executable maintenance plans.
 Native scanning currently targets macOS; other platforms return an explicit
-unsupported-platform error. This is not yet the interactive disk explorer.
+unsupported-platform error. The separate [disk browser](BROWSING.md) consumes
+these observations without changing this command or its JSON v1 contract.
 
 ## CLI contract
 
@@ -110,8 +111,10 @@ when an explicit nested root is later encountered beneath another root.
 Invalid/unavailable values are null and increase the corresponding unknown-file
 count. A zero-byte file is different from an unmeasured file. Overflow stops
 collection with an explicit issue instead of wrapping or saturating byte totals.
-Directory entries currently have null byte measurements; M2 provides global
-deduplicated subtotals and per-file measurements, not per-directory rollups.
+Directory entries in M2 JSON retain null byte measurements. The separate immutable
+`scan::index::ScanTree` computes per-subtree rollups for the browser; it does not
+rewrite M2's global attribution. See [BROWSING.md](BROWSING.md) for non-additive
+hardlink accounting, unknown measurements and conservative incomplete coverage.
 
 The result is not an atomic filesystem snapshot. Changed directory metadata,
 inconsistent hard-link measurements, failed probes, and omitted subtrees make

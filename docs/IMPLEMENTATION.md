@@ -6,6 +6,9 @@ M3 adds the initial native Trash/approval/journal slice under
 separate; the remaining packages are planned. These do not establish Windows
 runtime behavior. See [SCANNING.md](SCANNING.md)
 for implemented M2 scope, local budgets and unavailable native environments.
+M7's initial terminal browser and directory accounting are described in
+[BROWSING.md](BROWSING.md); broader task-family coverage and human usability
+acceptance remain separate.
 This document describes public technical responsibilities, not staffing or dates.
 
 ## Work packages

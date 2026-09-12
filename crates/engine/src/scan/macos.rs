@@ -48,6 +48,70 @@ fn directory_flags() -> OFlags {
         | OFlags::from_bits_retain(0x2000_0000)
 }
 
+pub(super) fn verify_entry(scope: &ScanEntry, entry: &ScanEntry) -> Result<(), ScanError> {
+    let policy = ReadOnlyPolicy::enter().map_err(policy_error)?;
+    let result = (|| {
+        let root = MacBackend.open_root(&scope.path)?;
+        if root.metadata().identity != scope.identity {
+            return Err(ScanError::new(
+                ScanCode::ChangedEntry,
+                "scope identity changed; refresh before viewing",
+            ));
+        }
+        let current = if entry.path == scope.path {
+            root.metadata()
+        } else {
+            let parent = entry
+                .path
+                .parent()
+                .ok_or_else(|| ScanError::new(ScanCode::InvalidRoot, "entry has no parent"))?;
+            let name = entry
+                .path
+                .file_name()
+                .ok_or_else(|| ScanError::new(ScanCode::InvalidRoot, "entry has no name"))?;
+            let fd = fs::open(parent, directory_flags(), Mode::empty()).map_err(native_error)?;
+            let parent_info = from_stat(&fs::fstat(&fd).map_err(native_error)?);
+            let FileIdentity::Unix { device, .. } = scope.identity else {
+                return Err(ScanError::new(
+                    ScanCode::UnsupportedPlatform,
+                    "invalid native scope identity",
+                ));
+            };
+            if !matches!(parent_info.identity, FileIdentity::Unix { device: current, .. } if current == device)
+            {
+                return Err(ScanError::new(
+                    ScanCode::MountBoundary,
+                    "entry moved to another volume",
+                ));
+            }
+            from_stat(&fs::statat(&fd, name, AtFlags::SYMLINK_NOFOLLOW).map_err(native_error)?)
+        };
+        if current.identity != entry.identity
+            || current.kind != entry.kind
+            || current.dataless
+            || entry.dataless
+            || !matches!(current.kind, ResourceKind::File | ResourceKind::Directory)
+            || (entry.kind == ResourceKind::File
+                && entry
+                    .logical_bytes
+                    .is_some_and(|size| current.logical_bytes != Some(size)))
+        {
+            return Err(ScanError::new(
+                ScanCode::ChangedEntry,
+                "entry changed or cannot be viewed without materialization; refresh first",
+            ));
+        }
+        Ok(())
+    })();
+    match policy.restore() {
+        Ok(()) => result,
+        Err(error) => Err(ScanError::new(
+            ScanCode::PolicyFailure,
+            format!("view validation policy restoration failed: {error}; validation: {result:?}"),
+        )),
+    }
+}
+
 fn native_error(error: rustix::io::Errno) -> ScanError {
     if error == rustix::io::Errno::LOOP {
         ScanError::new(

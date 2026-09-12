@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
+mod browser;
 mod human;
 mod output;
 mod trash;
@@ -91,6 +92,7 @@ fn command() -> Command {
         .subcommand(scan)
         .subcommand(trash::command())
         .subcommand(trash::receipt_command())
+        .subcommand(browser::command())
 }
 
 fn limits(args: &ArgMatches) -> ScanLimits {
@@ -226,6 +228,7 @@ fn run() -> io::Result<u8> {
         Some(("scan", args)) => run_scan(args),
         Some(("trash", args)) => trash::run(args),
         Some(("receipt", args)) => trash::receipt(args),
+        Some(("browse" | "analyze", args)) => browser::run(args),
         _ => Ok(2),
     }
 }
