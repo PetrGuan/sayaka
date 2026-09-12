@@ -57,7 +57,7 @@ fn absolute(path: &Path) -> io::Result<PathBuf> {
     std::path::absolute(path)
 }
 
-fn state_directory(args: &ArgMatches) -> io::Result<PathBuf> {
+pub(crate) fn state_directory(args: &ArgMatches) -> io::Result<PathBuf> {
     match args.get_one::<PathBuf>("state-dir") {
         Some(path) => absolute(path),
         None => journal::default_directory(),
@@ -311,21 +311,7 @@ pub fn receipt(args: &ArgMatches) -> io::Result<u8> {
                 writeln!(out, "No committed operation records.")?;
             }
             for record in &snapshot.records {
-                writeln!(
-                    out,
-                    "Operation {} ({})",
-                    record.operation_id, record.contract
-                )?;
-                for item in &record.items {
-                    writeln!(
-                        out,
-                        "  {:?} {}  {:?}",
-                        item.state, item.path.display, item.reason
-                    )?;
-                    if let Some(evidence) = &item.recovery_evidence {
-                        show_recovery_evidence(&mut out, evidence)?;
-                    }
-                }
+                write_record(&mut out, record)?;
             }
             for pending in &snapshot.uncommitted_snapshots {
                 writeln!(
@@ -341,6 +327,25 @@ pub fn receipt(args: &ArgMatches) -> io::Result<u8> {
         })
     })();
     render_error(result, args.get_flag("json"), "receipt")
+}
+
+pub(crate) fn write_record(out: &mut impl Write, record: &journal::Record) -> io::Result<()> {
+    writeln!(
+        out,
+        "Operation {} ({})",
+        record.operation_id, record.contract
+    )?;
+    for item in &record.items {
+        writeln!(
+            out,
+            "  {:?} {}  {:?}",
+            item.state, item.path.display, item.reason
+        )?;
+        if let Some(evidence) = &item.recovery_evidence {
+            show_recovery_evidence(out, evidence)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_json(value: &serde_json::Value) -> io::Result<()> {

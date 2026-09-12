@@ -11,6 +11,9 @@ M7's initial terminal browser and directory accounting are described in
 acceptance remain separate.
 The initial T11 macOS read-only sampler and its remaining capability gaps are
 documented in [STATUS.md](STATUS.md); it is not complete cross-platform telemetry.
+Initial T12 history/completion/local-prefix behavior is described in
+[LOCAL_LIFECYCLE.md](LOCAL_LIFECYCLE.md); online distribution and authentication
+integration remain separate.
 This document describes public technical responsibilities, not staffing or dates.
 
 ## Work packages

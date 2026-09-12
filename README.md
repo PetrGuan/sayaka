@@ -35,6 +35,11 @@ sayaka status --watch --json --count 12
 Status never optimizes the system or installs a daemon. Unsupported temperature,
 GPU and top-process capabilities are marked explicitly, not filled with zeroes.
 
+Initial [local CLI lifecycle tools](docs/LOCAL_LIFECYCLE.md) provide filtered
+`history`, generated `completions`, and preview-first `install` / `remove` for a
+dedicated user prefix. They do not download updates, edit shell startup files
+or remove operation history.
+
 ## Direction
 
 Sayaka aims to make local maintenance explainable, previewable, and auditable:
