@@ -63,6 +63,8 @@ mod tests {
                 "history",
                 "completions",
                 "install",
+                "update",
+                "recover",
                 "remove",
             ] {
                 assert!(output.contains(name), "{shell}: {name}");

@@ -102,6 +102,8 @@ fn command() -> Command {
         .subcommand(history::command())
         .subcommand(completions::command())
         .subcommand(lifecycle::install_command())
+        .subcommand(lifecycle::update_command())
+        .subcommand(lifecycle::recover_command())
         .subcommand(lifecycle::remove_command())
 }
 
@@ -242,8 +244,10 @@ fn run() -> io::Result<u8> {
         Some(("status", args)) => status::run(args),
         Some(("history", args)) => history::run(args),
         Some(("completions", args)) => completions::run(args),
-        Some(("install", args)) => lifecycle::run(args, true),
-        Some(("remove", args)) => lifecycle::run(args, false),
+        Some(("install", args)) => lifecycle::run(args, "install"),
+        Some(("update", args)) => lifecycle::run(args, "update"),
+        Some(("recover", args)) => lifecycle::run(args, "recover"),
+        Some(("remove", args)) => lifecycle::run(args, "remove"),
         _ => Ok(2),
     }
 }

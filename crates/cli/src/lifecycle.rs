@@ -2,7 +2,9 @@
 
 use crate::terminal::Signals;
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
-use sayaka_engine::installation::{InstallPlan, Outcome, OutcomeState, Preview, RemovePlan};
+use sayaka_engine::installation::{
+    InstallPlan, Outcome, OutcomeState, Preview, RecoverPlan, RemovePlan, UpdatePlan, UpdatePolicy,
+};
 use sayaka_engine::model::Cancellation;
 use serde::Serialize;
 use std::io::{self, Write};
@@ -22,6 +24,30 @@ pub fn remove_command() -> Command {
         "Preview removal of a verified Sayaka installation; history is preserved",
     )
 }
+pub fn update_command() -> Command {
+    command(
+        "update",
+        "Preview updating a verified installation from the running local executable",
+    )
+    .arg(
+        Arg::new("allow-downgrade")
+            .long("allow-downgrade")
+            .action(ArgAction::SetTrue)
+            .help("Allow replacing the installed image with an older SemVer version"),
+    )
+    .arg(
+        Arg::new("allow-same-version-replace")
+            .long("allow-same-version-replace")
+            .action(ArgAction::SetTrue)
+            .help("Allow replacing same-version bytes when hashes differ"),
+    )
+}
+pub fn recover_command() -> Command {
+    command(
+        "recover",
+        "Inspect or explicitly recover a pending local update lifecycle state",
+    )
+}
 
 fn command(name: &'static str, about: &'static str) -> Command {
     Command::new(name).about(about)
@@ -29,11 +55,11 @@ fn command(name: &'static str, about: &'static str) -> Command {
             .help("Dedicated physical prefix (default: ~/.local/share/sayaka); parent must exist"))
         .arg(Arg::new("execute").long("execute").action(ArgAction::SetTrue).help("Explicitly apply this owned-prefix operation"))
         .arg(Arg::new("json").long("json").action(ArgAction::SetTrue))
-        .after_help("No downloads, overwrite/update fallback, privilege escalation, PATH/shellrc edits or history deletion.\nOnly a private dedicated installation is supported. Unknown, modified or extra files cause refusal.")
+        .after_help("No downloads, privilege escalation, PATH/shellrc edits or history deletion.\nOnly a private dedicated installation is supported. Unknown, modified or extra files cause refusal.")
 }
 
-pub fn run(args: &ArgMatches, install: bool) -> io::Result<u8> {
-    let result = run_inner(args, install);
+pub fn run(args: &ArgMatches, action: &str) -> io::Result<u8> {
+    let result = run_inner(args, action);
     match result {
         Ok(code) => Ok(code),
         Err(error) => {
@@ -57,7 +83,7 @@ pub fn run(args: &ArgMatches, install: bool) -> io::Result<u8> {
     }
 }
 
-fn run_inner(args: &ArgMatches, install: bool) -> io::Result<u8> {
+fn run_inner(args: &ArgMatches, action: &str) -> io::Result<u8> {
     let prefix = match args.get_one::<PathBuf>("prefix") {
         Some(path) => path.clone(),
         None => {
@@ -91,12 +117,40 @@ fn run_inner(args: &ArgMatches, install: bool) -> io::Result<u8> {
     let prefix = std::path::absolute(prefix)?;
     let apply = args.get_flag("execute");
     let json_output = args.get_flag("json");
-    if install {
+    if action == "install" {
         let plan = InstallPlan::prepare(
             &prefix,
             &std::env::current_exe()?,
             env!("CARGO_PKG_VERSION"),
         )?;
+        if !apply || !json_output {
+            preview(plan.preview(), json_output)?;
+        }
+        if apply {
+            execute(move |cancel| plan.execute(cancel), json_output)
+        } else {
+            Ok(0)
+        }
+    } else if action == "update" {
+        let plan = UpdatePlan::prepare(
+            &prefix,
+            &std::env::current_exe()?,
+            env!("CARGO_PKG_VERSION"),
+            UpdatePolicy {
+                allow_downgrade: args.get_flag("allow-downgrade"),
+                allow_same_version_replace: args.get_flag("allow-same-version-replace"),
+            },
+        )?;
+        if !apply || !json_output {
+            preview(plan.preview(), json_output)?;
+        }
+        if apply {
+            execute(move |cancel| plan.execute(cancel), json_output)
+        } else {
+            Ok(0)
+        }
+    } else if action == "recover" {
+        let plan = RecoverPlan::prepare(&prefix)?;
         if !apply || !json_output {
             preview(plan.preview(), json_output)?;
         }
@@ -146,6 +200,29 @@ fn preview(plan: &Preview, machine: bool) -> io::Result<()> {
         writeln!(
             out,
             "The installed image is already verified; no replacement is needed."
+        )?;
+    }
+    if let Some(current) = &plan.current {
+        writeln!(
+            out,
+            "Current: version {:?}, {}, arch {}, minOS {:?}",
+            current.version, current.target_os, current.target_arch, current.min_macos
+        )?;
+    }
+    if let Some(candidate) = &plan.candidate {
+        writeln!(
+            out,
+            "Candidate: version {:?}, {}, arch {}, minOS {:?}",
+            candidate.version, candidate.target_os, candidate.target_arch, candidate.min_macos
+        )?;
+    }
+    if let Some(decision) = &plan.decision {
+        writeln!(out, "Decision: {decision}")?;
+    }
+    if !plan.can_execute {
+        writeln!(
+            out,
+            "Execution is refused until policy/compatibility issues are resolved."
         )?;
     }
     writeln!(
@@ -258,7 +335,7 @@ fn show_outcome(outcome: &Outcome) -> io::Result<()> {
     )?;
     if matches!(
         outcome.status,
-        OutcomeState::Installed | OutcomeState::AlreadyInstalled
+        OutcomeState::Installed | OutcomeState::AlreadyInstalled | OutcomeState::Updated
     ) {
         writeln!(out, "Add the verified bin directory to PATH manually.")?;
         writeln!(out, "Generate completion with sayaka completions SHELL.")?;

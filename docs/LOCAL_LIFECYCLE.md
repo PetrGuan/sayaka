@@ -79,6 +79,10 @@ installer action. Add `--execute` only after checking the preview.
 ```sh
 sayaka install
 sayaka install --execute
+sayaka update
+sayaka update --execute
+sayaka recover
+sayaka recover --execute
 sayaka remove
 sayaka remove --execute
 ```
@@ -97,11 +101,37 @@ The layout is private and ownership-checked. Source identity/content are checked
 across bounded SHA-256 copying. A complete staged layout is synchronized before
 no-replace publication. Unknown or conflicting existing prefixes are refused;
 verified identical installations can be reported without replacing files.
-There is no overwrite, local-update or download fallback.
+`update` uses only the explicitly running local executable as candidate input.
+Execution requires verifiable Mach-O target metadata for the running candidate;
+non-Mach-O compatibility guessing is refused.
+No URL/download source, publisher authentication claim, or automatic rollback is
+performed. Downgrade and same-version/different-hash replacement are refused by
+default and require explicit policy flags:
+
+```sh
+sayaka update --allow-downgrade --execute
+sayaka update --allow-same-version-replace --execute
+```
+
+`recover` is explicit and lock-preserving: it inspects one versioned lifecycle
+record path under the prefix parent, revalidates current/candidate identities,
+binds staged executable/manifest evidence by exact descriptor identity, mode,
+size, and SHA-256 digest before any unlink/rename,
+and either abandons pre-commit staging or finalizes/records post-commit update
+outcome. Unknown or ambiguous evidence fails closed with exact paths.
 An explicit execution retry also revalidates and synchronizes the owned package,
 its directories and its parent before returning already-installed. A visible
 prefix alone is not proof that a previous failed publication became durable;
 unconfirmed synchronization retains an incomplete result and exact recovery path.
+
+Pending or malformed lifecycle sidecar evidence blocks `install` and `remove`
+before any filesystem mutation, including when the managed prefix is currently
+absent. This prevents orphaning in-progress update evidence by reusing the same
+prefix name. Historical completed sidecars (`outcome_recorded`) are tolerated
+for future remove/reinstall so they do not permanently poison the prefix name.
+Interop note: old v1 clients do not read parent-side lifecycle sidecars, so
+cross-version safety still depends on shared lock discipline during live
+operations and on v2 inventory checks inside the managed prefix.
 
 After a successful install, the user can add the verified `bin` directory to
 PATH manually. For the default prefix, that directory is
@@ -121,7 +151,8 @@ same-user namespace modification after a check. Observed changes are rejected.
 An ownership manifest is local bookkeeping, not cryptographic authorization
 against the user who owns and can rewrite it.
 
-Incomplete staging or removal reports exact recovery locations and errors.
+Incomplete staging, update, recovery, or removal reports exact recovery
+locations and errors.
 Do not discover recovery targets by glob or treat a matching name as ownership.
 No failed operation silently retries, deletes unknown leftovers or claims a
 completed removal. A crash may require explicit inspection/manual cleanup of

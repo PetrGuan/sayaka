@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::installation::{InstallPlan, RemovePlan};
+use crate::installation::{InstallPlan, RecoverPlan, RemovePlan, UpdatePlan, UpdatePolicy};
 use std::collections::BTreeMap;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt, symlink};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
 
 struct Fixture {
     base: PathBuf,
@@ -58,6 +58,11 @@ impl Fixture {
         self.base.join("source")
     }
 
+    fn set_source(&mut self, contents: &[u8]) {
+        std::fs::write(self.source(), contents).unwrap();
+        std::fs::set_permissions(self.source(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
     fn register(&mut self, path: PathBuf) {
         let m = std::fs::symlink_metadata(&path).unwrap();
         assert_eq!(m.uid(), rustix::process::geteuid().as_raw());
@@ -73,7 +78,7 @@ impl Fixture {
 
     // Only fixed artifacts of the exact operation path just created by this test.
     fn register_layout(&mut self, root: &Path) {
-        for relative in ["", "bin", "bin/sayaka", LOCK, MANIFEST] {
+        for relative in ["", "bin", "bin/sayaka", LOCK, MANIFEST, UPDATE_GUARD] {
             let path = root.join(relative);
             match std::fs::symlink_metadata(&path) {
                 Ok(_) => self.register(path),
@@ -83,11 +88,28 @@ impl Fixture {
         }
     }
 
-    fn install(&mut self) {
-        let plan = InstallPlan::prepare(&self.prefix(), &self.source(), "1.2.3").unwrap();
+    fn register_dynamic_installation_artifacts(&mut self) {
+        let entries = std::fs::read_dir(&self.base).unwrap();
+        for entry in entries {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            if (name.contains(".sayaka-lifecycle-v1.json") || name.starts_with(".sayaka-update-"))
+                && path.exists()
+            {
+                self.register(path);
+            }
+        }
+    }
+
+    fn install_with(&mut self, version: &str) {
+        let plan = InstallPlan::prepare(&self.prefix(), &self.source(), version).unwrap();
         let result = plan.execute(&Cancellation::default()).unwrap();
         assert_eq!(result.status, OutcomeState::Installed, "{result:?}");
         self.register_layout(&self.prefix());
+    }
+
+    fn install(&mut self) {
+        self.install_with("1.2.3");
     }
 
     fn cleanup(self) {
@@ -133,6 +155,52 @@ fn recovery(result: &Outcome) -> PathBuf {
     use std::os::unix::ffi::OsStringExt;
     assert_eq!(result.recovery_paths.len(), 1);
     PathBuf::from(OsString::from_vec(result.recovery_paths[0].bytes.clone()))
+}
+
+fn digest(path: &Path) -> String {
+    format!("{:x}", Sha256::digest(std::fs::read(path).unwrap()))
+}
+
+fn manifest_contains_version(prefix: &Path, version: &str) -> bool {
+    std::fs::read_to_string(prefix.join(MANIFEST))
+        .unwrap()
+        .contains(&format!("\"version\":\"{version}\""))
+}
+
+fn lifecycle_path(prefix: &Path) -> PathBuf {
+    let parent = Parent::open(prefix).unwrap();
+    parent.path.join(parent.lifecycle_name())
+}
+
+fn lifecycle_next_path(prefix: &Path) -> PathBuf {
+    let path = lifecycle_path(prefix);
+    let name = path.file_name().unwrap().to_string_lossy().to_string() + ".next";
+    path.parent().unwrap().join(name)
+}
+
+fn synthetic_macho(tag: u8) -> Vec<u8> {
+    let cputype: i32 = match std::env::consts::ARCH {
+        "aarch64" => 0x0100_000c,
+        "x86_64" => 0x0100_0007,
+        other => panic!("unsupported test arch for synthetic Mach-O fixture: {other}"),
+    };
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0xfeedfacfu32.to_le_bytes());
+    bytes.extend_from_slice(&cputype.to_le_bytes());
+    bytes.extend_from_slice(&3i32.to_le_bytes());
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0x32u32.to_le_bytes());
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&0x000d_0000u32.to_le_bytes());
+    bytes.extend_from_slice(&0x000d_0000u32.to_le_bytes());
+    bytes.extend_from_slice(b"sayaka-native-update-fixture");
+    bytes.push(tag);
+    bytes
 }
 
 #[test]
@@ -812,7 +880,614 @@ fn detached_extra_is_retained_and_stops_further_cleanup() {
 fn consumed_public_plans_can_move_to_an_owned_worker() {
     fn assert_send<T: Send>() {}
     assert_send::<InstallPlan>();
+    assert_send::<UpdatePlan>();
+    assert_send::<RecoverPlan>();
     assert_send::<RemovePlan>();
+}
+
+#[test]
+fn local_update_with_changed_candidate_commits_new_bytes_and_preserves_lock_identity() {
+    let mut f = Fixture::new();
+    f.set_source(&synthetic_macho(1));
+    f.install_with("1.2.3");
+    let lock_before = Identity::of(&File::open(f.prefix().join(LOCK)).unwrap()).unwrap();
+    let old_hash = digest(&f.prefix().join("bin/sayaka"));
+    let old_manifest = std::fs::read(f.prefix().join(MANIFEST)).unwrap();
+    f.set_source(&synthetic_macho(2));
+    let update =
+        UpdatePlan::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+    assert_eq!(update.preview().action, Action::Update);
+    assert!(!update.preview().already_installed);
+    assert!(update.preview().can_execute);
+    assert_eq!(
+        update.preview().decision.as_deref(),
+        Some("candidate is newer and compatible")
+    );
+    let result = update.execute(&Cancellation::default()).unwrap();
+    assert_eq!(result.status, OutcomeState::Updated, "{result:?}");
+    assert_eq!(
+        digest(&f.prefix().join("bin/sayaka")),
+        digest(&f.source()),
+        "installed executable must match candidate bytes"
+    );
+    assert_ne!(digest(&f.prefix().join("bin/sayaka")), old_hash);
+    let manifest = std::fs::read_to_string(f.prefix().join(MANIFEST)).unwrap();
+    assert!(manifest.contains("\"version\":\"1.2.4\""), "{manifest}");
+    assert_ne!(manifest.as_bytes(), old_manifest);
+    let lock_after = Identity::of(&File::open(f.prefix().join(LOCK)).unwrap()).unwrap();
+    assert_eq!(
+        lock_after, lock_before,
+        "update must preserve lock identity"
+    );
+    let recover = RecoverPlan::prepare(&f.prefix()).unwrap();
+    assert!(recover.preview().can_execute);
+    assert_eq!(
+        recover.preview().decision.as_deref(),
+        Some("lifecycle outcome already recorded; no further recovery action")
+    );
+    let recovered = recover.execute(&Cancellation::default()).unwrap();
+    assert_eq!(recovered.status, OutcomeState::Recovered, "{recovered:?}");
+    f.register_layout(&f.prefix());
+    f.register_dynamic_installation_artifacts();
+    f.cleanup();
+}
+
+#[test]
+fn local_update_recovery_finalizes_binary_committed_windows_without_permissive_statuses() {
+    for point in [Point::UpdateAfterBinaryRename, Point::UpdateAfterBinarySync] {
+        let mut f = Fixture::new();
+        f.set_source(&synthetic_macho(3));
+        f.install_with("1.2.3");
+        f.set_source(&synthetic_macho(4));
+        let (plan, preview) =
+            Update::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+        let result = plan
+            .execute_with(preview, &Cancellation::default(), |current, _| {
+                if current == point {
+                    return Err(fail());
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(result.status, OutcomeState::Incomplete, "{point:?}");
+        let recover = RecoverPlan::prepare(&f.prefix()).unwrap();
+        assert!(
+            recover.preview().can_execute,
+            "{:?}",
+            recover.preview().decision
+        );
+        assert_eq!(
+            recover.preview().decision.as_deref(),
+            Some("binary publish committed before lifecycle marker; recover can finalize manifest")
+        );
+        let recovered = recover.execute(&Cancellation::default()).unwrap();
+        assert_eq!(recovered.status, OutcomeState::Recovered, "{recovered:?}");
+        assert_eq!(digest(&f.prefix().join("bin/sayaka")), digest(&f.source()));
+        let manifest = std::fs::read_to_string(f.prefix().join(MANIFEST)).unwrap();
+        assert!(manifest.contains("\"version\":\"1.2.4\""), "{manifest}");
+        f.register_layout(&f.prefix());
+        f.register_dynamic_installation_artifacts();
+        f.cleanup();
+    }
+}
+
+#[test]
+fn local_update_recovery_revalidates_staged_identities_before_any_unlink_or_publish() {
+    let mut f = Fixture::new();
+    f.set_source(&synthetic_macho(5));
+    f.install_with("1.2.3");
+    let original_bytes = std::fs::read(f.prefix().join("bin/sayaka")).unwrap();
+    f.set_source(&synthetic_macho(6));
+    let (plan, preview) =
+        Update::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+    let result = plan
+        .execute_with(preview, &Cancellation::default(), |point, _| {
+            if point == Point::UpdateAfterManifestSync {
+                return Err(fail());
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(result.status, OutcomeState::Incomplete);
+    let recover = RecoverPlan::prepare(&f.prefix()).unwrap();
+    assert!(recover.preview().can_execute);
+    std::fs::write(f.prefix().join("bin/sayaka"), original_bytes).unwrap();
+    std::fs::set_permissions(
+        f.prefix().join("bin/sayaka"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    let recovered = recover.execute(&Cancellation::default()).unwrap();
+    assert_eq!(recovered.status, OutcomeState::Refused, "{recovered:?}");
+    let manifest = std::fs::read_to_string(f.prefix().join(MANIFEST)).unwrap();
+    assert!(manifest.contains("\"version\":\"1.2.4\""), "{manifest}");
+    f.register_layout(&f.prefix());
+    f.register_dynamic_installation_artifacts();
+    f.cleanup();
+}
+
+#[test]
+fn local_update_recovery_confirms_manifest_committed_windows() {
+    for point in [
+        Point::UpdateAfterManifestRename,
+        Point::UpdateAfterManifestSync,
+    ] {
+        let mut f = Fixture::new();
+        f.set_source(&synthetic_macho(8));
+        f.install_with("1.2.3");
+        f.set_source(&synthetic_macho(9));
+        let (plan, preview) =
+            Update::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+        let result = plan
+            .execute_with(preview, &Cancellation::default(), |current, _| {
+                if current == point {
+                    return Err(fail());
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(result.status, OutcomeState::Incomplete, "{point:?}");
+        let recover = RecoverPlan::prepare(&f.prefix()).unwrap();
+        assert!(recover.preview().can_execute);
+        assert_eq!(
+            recover.preview().decision.as_deref(),
+            Some("manifest already reflects candidate; recover can confirm outcome")
+        );
+        let recovered = recover.execute(&Cancellation::default()).unwrap();
+        assert_eq!(recovered.status, OutcomeState::Recovered, "{recovered:?}");
+        assert_eq!(digest(&f.prefix().join("bin/sayaka")), digest(&f.source()));
+        f.register_layout(&f.prefix());
+        f.register_dynamic_installation_artifacts();
+        f.cleanup();
+    }
+}
+
+#[test]
+fn local_recover_abandon_is_repeatable_after_success_and_partial_unlinks() {
+    for point in [
+        None,
+        Some(Point::RecoverAfterExecutableUnlink),
+        Some(Point::RecoverAfterManifestUnlink),
+    ] {
+        let mut f = Fixture::new();
+        f.set_source(&synthetic_macho(10));
+        f.install_with("1.2.3");
+        let lock_before = Identity::of(&File::open(f.prefix().join(LOCK)).unwrap()).unwrap();
+        let current_hash = digest(&f.prefix().join("bin/sayaka"));
+        f.set_source(&synthetic_macho(11));
+        let (update, update_preview) =
+            Update::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+        let update_result = update
+            .execute_with(update_preview, &Cancellation::default(), |p, _| {
+                if p == Point::UpdateStagedRecorded {
+                    return Err(fail());
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(update_result.status, OutcomeState::Incomplete);
+
+        let (recover, preview) = Recover::prepare(&f.prefix()).unwrap();
+        assert!(preview.can_execute);
+        let first = recover
+            .execute_with(preview, &Cancellation::default(), |p, _| {
+                if Some(p) == point {
+                    return Err(fail());
+                }
+                Ok(())
+            })
+            .unwrap();
+        if point.is_none() {
+            assert_eq!(first.status, OutcomeState::Recovered, "{first:?}");
+        } else {
+            assert_eq!(first.status, OutcomeState::Incomplete, "{first:?}");
+        }
+        let repeat = RecoverPlan::prepare(&f.prefix()).unwrap();
+        assert!(
+            repeat.preview().can_execute,
+            "{:?}",
+            repeat.preview().decision
+        );
+        let second = repeat.execute(&Cancellation::default()).unwrap();
+        assert_eq!(second.status, OutcomeState::Recovered, "{second:?}");
+        assert!(manifest_contains_version(&f.prefix(), "1.2.3"));
+        assert_eq!(digest(&f.prefix().join("bin/sayaka")), current_hash);
+        let lock_after = Identity::of(&File::open(f.prefix().join(LOCK)).unwrap()).unwrap();
+        assert_eq!(lock_after, lock_before);
+        let third = RecoverPlan::prepare(&f.prefix()).unwrap();
+        assert_eq!(
+            third.preview().decision.as_deref(),
+            Some("lifecycle abandon outcome already recorded; no further recovery action")
+        );
+        assert_eq!(
+            third.execute(&Cancellation::default()).unwrap().status,
+            OutcomeState::Recovered
+        );
+        f.register_layout(&f.prefix());
+        f.register_dynamic_installation_artifacts();
+        f.cleanup();
+    }
+}
+
+#[test]
+fn local_recover_finalize_is_repeatable_after_rename_sync_and_outcome_windows() {
+    for point in [
+        Some(Point::RecoverAfterManifestRename),
+        Some(Point::RecoverAfterManifestSync),
+        Some(Point::RecoverBeforeOutcomeRecord),
+        Some(Point::RecoverAfterOutcomeRecord),
+        None,
+    ] {
+        let mut f = Fixture::new();
+        f.set_source(&synthetic_macho(12));
+        f.install_with("1.2.3");
+        let lock_before = Identity::of(&File::open(f.prefix().join(LOCK)).unwrap()).unwrap();
+        f.set_source(&synthetic_macho(13));
+        let candidate_hash = digest(&f.source());
+        let (update, update_preview) =
+            Update::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+        let update_result = update
+            .execute_with(update_preview, &Cancellation::default(), |p, _| {
+                if p == Point::UpdateAfterBinaryRename {
+                    return Err(fail());
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(update_result.status, OutcomeState::Incomplete);
+
+        let (recover, preview) = Recover::prepare(&f.prefix()).unwrap();
+        assert!(preview.can_execute);
+        let first = recover
+            .execute_with(preview, &Cancellation::default(), |p, _| {
+                if Some(p) == point {
+                    return Err(fail());
+                }
+                Ok(())
+            })
+            .unwrap();
+        if point.is_none() {
+            assert_eq!(first.status, OutcomeState::Recovered, "{first:?}");
+        } else {
+            assert_eq!(first.status, OutcomeState::Incomplete, "{first:?}");
+        }
+        let repeat = RecoverPlan::prepare(&f.prefix()).unwrap();
+        assert!(
+            repeat.preview().can_execute,
+            "{:?}",
+            repeat.preview().decision
+        );
+        let second = repeat.execute(&Cancellation::default()).unwrap();
+        assert_eq!(second.status, OutcomeState::Recovered, "{second:?}");
+        assert!(manifest_contains_version(&f.prefix(), "1.2.4"));
+        assert_eq!(digest(&f.prefix().join("bin/sayaka")), candidate_hash);
+        let lock_after = Identity::of(&File::open(f.prefix().join(LOCK)).unwrap()).unwrap();
+        assert_eq!(lock_after, lock_before);
+        f.register_layout(&f.prefix());
+        f.register_dynamic_installation_artifacts();
+        f.cleanup();
+    }
+}
+
+#[test]
+fn pending_lifecycle_record_blocks_remove_and_install_until_explicit_recovery() {
+    let mut f = Fixture::new();
+    f.set_source(&synthetic_macho(14));
+    f.install_with("1.2.3");
+    let current_hash = digest(&f.prefix().join("bin/sayaka"));
+    f.set_source(&synthetic_macho(15));
+    let (update, preview) =
+        Update::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+    let update_result = update
+        .execute_with(preview, &Cancellation::default(), |point, _| {
+            if point == Point::UpdateStagedRecorded {
+                return Err(fail());
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(update_result.status, OutcomeState::Incomplete);
+    let recovery_path = lifecycle_path(&f.prefix());
+    assert!(recovery_path.exists());
+
+    f.set_source(&synthetic_macho(14));
+    let install = InstallPlan::prepare(&f.prefix(), &f.source(), "1.2.3").unwrap();
+    assert!(!install.preview().can_execute);
+    let install_result = install.execute(&Cancellation::default()).unwrap();
+    assert_eq!(install_result.status, OutcomeState::Refused);
+    assert_eq!(recovery(&install_result), recovery_path);
+    assert_eq!(digest(&f.prefix().join("bin/sayaka")), current_hash);
+
+    let remove = RemovePlan::prepare(&f.prefix()).unwrap();
+    assert!(!remove.preview().can_execute);
+    let remove_result = remove.execute(&Cancellation::default()).unwrap();
+    assert_eq!(remove_result.status, OutcomeState::Refused);
+    assert_eq!(recovery(&remove_result), recovery_path);
+    assert!(f.prefix().exists());
+
+    let recover = RecoverPlan::prepare(&f.prefix()).unwrap();
+    assert!(recover.preview().can_execute);
+    assert_eq!(
+        recover.execute(&Cancellation::default()).unwrap().status,
+        OutcomeState::Recovered
+    );
+
+    f.set_source(&synthetic_macho(15));
+    let updated = UpdatePlan::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default())
+        .unwrap()
+        .execute(&Cancellation::default())
+        .unwrap();
+    assert_eq!(updated.status, OutcomeState::Updated);
+    let removed = RemovePlan::prepare(&f.prefix())
+        .unwrap()
+        .execute(&Cancellation::default())
+        .unwrap();
+    assert_eq!(removed.status, OutcomeState::Removed);
+    f.register_dynamic_installation_artifacts();
+    f.cleanup();
+}
+
+#[test]
+fn stale_pending_lifecycle_blocks_absent_prefix_install_but_completed_record_does_not() {
+    let mut f = Fixture::new();
+    f.set_source(&synthetic_macho(16));
+    f.install_with("1.2.3");
+    f.set_source(&synthetic_macho(17));
+    let (update, preview) =
+        Update::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default()).unwrap();
+    let pending = update
+        .execute_with(preview, &Cancellation::default(), |point, _| {
+            if point == Point::UpdateStagedRecorded {
+                return Err(fail());
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(pending.status, OutcomeState::Incomplete);
+    let blocked_path = lifecycle_path(&f.prefix());
+    assert!(blocked_path.exists());
+
+    std::fs::remove_file(f.prefix().join("bin/sayaka")).unwrap();
+    std::fs::remove_dir(f.prefix().join("bin")).unwrap();
+    std::fs::remove_file(f.prefix().join(UPDATE_GUARD)).unwrap();
+    std::fs::remove_file(f.prefix().join(MANIFEST)).unwrap();
+    std::fs::remove_file(f.prefix().join(LOCK)).unwrap();
+    std::fs::remove_dir(f.prefix()).unwrap();
+
+    let install = InstallPlan::prepare(&f.prefix(), &f.source(), "1.2.4").unwrap();
+    assert!(!install.preview().can_execute);
+    let refused = install.execute(&Cancellation::default()).unwrap();
+    assert_eq!(refused.status, OutcomeState::Refused);
+    assert_eq!(recovery(&refused), blocked_path);
+    assert!(!f.prefix().exists());
+
+    std::fs::remove_file(&blocked_path).unwrap();
+    let install_ok = InstallPlan::prepare(&f.prefix(), &f.source(), "1.2.4").unwrap();
+    assert!(install_ok.preview().can_execute);
+    assert_eq!(
+        install_ok.execute(&Cancellation::default()).unwrap().status,
+        OutcomeState::Installed
+    );
+
+    let removed = RemovePlan::prepare(&f.prefix())
+        .unwrap()
+        .execute(&Cancellation::default())
+        .unwrap();
+    assert_eq!(removed.status, OutcomeState::Removed);
+    f.register_dynamic_installation_artifacts();
+    f.cleanup();
+}
+
+#[test]
+fn lifecycle_record_replaced_after_preview_refuses_before_mutation() {
+    let mut f = Fixture::new();
+    f.set_source(&synthetic_macho(18));
+    f.install_with("1.2.3");
+    let remove = RemovePlan::prepare(&f.prefix()).unwrap();
+    assert!(remove.preview().can_execute);
+    let next = lifecycle_next_path(&f.prefix());
+    std::fs::write(&next, b"pending").unwrap();
+    std::fs::set_permissions(&next, std::fs::Permissions::from_mode(0o600)).unwrap();
+    f.register(next.clone());
+    let remove_result = remove.execute(&Cancellation::default()).unwrap();
+    assert_eq!(remove_result.status, OutcomeState::Refused);
+    assert_eq!(recovery(&remove_result), lifecycle_path(&f.prefix()));
+    assert!(f.prefix().exists());
+
+    let mut g = Fixture::new();
+    g.set_source(&synthetic_macho(19));
+    let install = InstallPlan::prepare(&g.prefix(), &g.source(), "1.2.3").unwrap();
+    assert!(install.preview().can_execute);
+    let install_next = lifecycle_next_path(&g.prefix());
+    std::fs::write(&install_next, b"pending").unwrap();
+    std::fs::set_permissions(&install_next, std::fs::Permissions::from_mode(0o600)).unwrap();
+    g.register(install_next.clone());
+    let install_result = install.execute(&Cancellation::default()).unwrap();
+    assert_eq!(install_result.status, OutcomeState::Refused);
+    assert_eq!(recovery(&install_result), lifecycle_path(&g.prefix()));
+    assert!(!g.prefix().exists());
+    g.cleanup();
+    f.cleanup();
+}
+
+#[test]
+fn guard_created_before_record_crash_refuses_without_cleanup() {
+    let mut f = Fixture::new();
+    f.set_source(&synthetic_macho(20));
+    f.install_with("1.2.3");
+    let before_hash = digest(&f.prefix().join("bin/sayaka"));
+    f.set_source(&synthetic_macho(21));
+    let (update, preview) = Update::prepare(
+        &f.prefix(),
+        &f.source(),
+        "1.2.4",
+        UpdatePolicy {
+            allow_same_version_replace: true,
+            ..UpdatePolicy::default()
+        },
+    )
+    .unwrap();
+    let result = update
+        .execute_with(preview, &Cancellation::default(), |point, _| {
+            if point == Point::UpdateGuardCreated {
+                return Err(fail());
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(result.status, OutcomeState::Incomplete);
+    assert!(f.prefix().join(UPDATE_GUARD).exists());
+    assert!(!lifecycle_path(&f.prefix()).exists());
+    let remove = RemovePlan::prepare(&f.prefix()).unwrap();
+    assert!(!remove.preview().can_execute);
+    assert_eq!(
+        remove.execute(&Cancellation::default()).unwrap().status,
+        OutcomeState::Refused
+    );
+    f.set_source(&synthetic_macho(20));
+    let install = InstallPlan::prepare(&f.prefix(), &f.source(), "1.2.3").unwrap();
+    assert!(!install.preview().can_execute);
+    assert_eq!(
+        install.execute(&Cancellation::default()).unwrap().status,
+        OutcomeState::Refused
+    );
+    let recover = RecoverPlan::prepare(&f.prefix()).unwrap();
+    assert!(!recover.preview().can_execute);
+    assert_eq!(
+        recover.execute(&Cancellation::default()).unwrap().status,
+        OutcomeState::Refused
+    );
+    assert_eq!(digest(&f.prefix().join("bin/sayaka")), before_hash);
+    f.register_layout(&f.prefix());
+    f.register(f.prefix().join(UPDATE_GUARD));
+    f.cleanup();
+}
+
+#[test]
+fn completed_historical_sidecar_does_not_poison_recover_after_reinstall() {
+    let mut f = Fixture::new();
+    f.set_source(&synthetic_macho(22));
+    f.install_with("1.2.3");
+    f.set_source(&synthetic_macho(23));
+    assert_eq!(
+        UpdatePlan::prepare(&f.prefix(), &f.source(), "1.2.4", UpdatePolicy::default())
+            .unwrap()
+            .execute(&Cancellation::default())
+            .unwrap()
+            .status,
+        OutcomeState::Updated
+    );
+    assert_eq!(
+        RemovePlan::prepare(&f.prefix())
+            .unwrap()
+            .execute(&Cancellation::default())
+            .unwrap()
+            .status,
+        OutcomeState::Removed
+    );
+    f.set_source(&synthetic_macho(24));
+    assert_eq!(
+        InstallPlan::prepare(&f.prefix(), &f.source(), "1.2.5")
+            .unwrap()
+            .execute(&Cancellation::default())
+            .unwrap()
+            .status,
+        OutcomeState::Installed
+    );
+    let recover = RecoverPlan::prepare(&f.prefix()).unwrap();
+    assert_eq!(
+        recover.preview().decision.as_deref(),
+        Some("historical lifecycle outcome is not applicable to the current package")
+    );
+    assert_eq!(
+        recover.execute(&Cancellation::default()).unwrap().status,
+        OutcomeState::Recovered
+    );
+    assert_eq!(
+        UpdatePlan::prepare(
+            &f.prefix(),
+            &f.source(),
+            "1.2.5",
+            UpdatePolicy {
+                allow_same_version_replace: true,
+                ..UpdatePolicy::default()
+            }
+        )
+        .unwrap()
+        .execute(&Cancellation::default())
+        .unwrap()
+        .status,
+        OutcomeState::AlreadyInstalled
+    );
+    f.register_layout(&f.prefix());
+    f.register_dynamic_installation_artifacts();
+    f.cleanup();
+}
+
+#[test]
+#[ignore = "requires explicitly built baseline binary via SAYAKA_TEST_BASELINE_BINARY"]
+fn baseline_v1_remove_refuses_pending_guarded_update_state_opt_in() {
+    let baseline = PathBuf::from(
+        std::env::var_os("SAYAKA_TEST_BASELINE_BINARY")
+            .expect("SAYAKA_TEST_BASELINE_BINARY must be set for baseline-v1 interop test"),
+    );
+    let metadata = std::fs::metadata(&baseline)
+        .expect("SAYAKA_TEST_BASELINE_BINARY must point to an existing file");
+    assert!(
+        metadata.is_file(),
+        "SAYAKA_TEST_BASELINE_BINARY must point to a regular file"
+    );
+    let mut f = Fixture::new();
+    let install = std::process::Command::new(&baseline)
+        .args(["install", "--execute", "--json", "--prefix"])
+        .arg(f.prefix())
+        .output()
+        .unwrap();
+    assert!(
+        install.status.success(),
+        "baseline install failed: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    let original_hash = digest(&f.prefix().join("bin/sayaka"));
+    f.set_source(&synthetic_macho(25));
+    let (update, preview) = Update::prepare(
+        &f.prefix(),
+        &f.source(),
+        "0.1.0",
+        UpdatePolicy {
+            allow_same_version_replace: true,
+            ..UpdatePolicy::default()
+        },
+    )
+    .unwrap();
+    let pending = update
+        .execute_with(preview, &Cancellation::default(), |point, _| {
+            if point == Point::UpdateStagedRecorded {
+                return Err(fail());
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(pending.status, OutcomeState::Incomplete);
+    assert!(f.prefix().join(UPDATE_GUARD).exists());
+    let old_remove = std::process::Command::new(&baseline)
+        .args(["remove", "--execute", "--json", "--prefix"])
+        .arg(f.prefix())
+        .output()
+        .unwrap();
+    assert!(
+        !old_remove.status.success(),
+        "old v1 remove unexpectedly succeeded: {} {}",
+        String::from_utf8_lossy(&old_remove.stdout),
+        String::from_utf8_lossy(&old_remove.stderr)
+    );
+    assert!(f.prefix().exists());
+    assert_eq!(digest(&f.prefix().join("bin/sayaka")), original_hash);
+    assert!(f.prefix().join(UPDATE_GUARD).exists());
+    f.register_layout(&f.prefix());
+    f.register(f.prefix().join(UPDATE_GUARD));
+    f.register_dynamic_installation_artifacts();
+    f.cleanup();
 }
 
 #[test]
