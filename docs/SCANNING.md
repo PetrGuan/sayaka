@@ -2,8 +2,10 @@
 
 The scanner observes explicitly supplied directories. It does not delete,
 restore, uninstall, hydrate file contents, or create executable maintenance plans.
-Native scanning currently targets macOS; other platforms return an explicit
-unsupported-platform error. The separate [disk browser](BROWSING.md) consumes
+Native scanning targets macOS and an initial Windows local fixed-NTFS slice;
+other platforms return an explicit unsupported-platform error. See
+[Windows native scope and evidence](WINDOWS.md) for its restrictions and remaining
+acceptance gates. The separate [disk browser](BROWSING.md) consumes
 these observations without changing this command or its JSON v1 contract.
 
 ## CLI contract
@@ -106,6 +108,9 @@ but have `counted: false`. `regular_files` counts retained file entries, while
 `unique_files` and `duplicate_files` describe identity deduplication.
 
 Logical length and allocated blocks (512-byte units on Darwin) stay separate.
+Windows uses native allocation bytes, not Darwin's block conversion. Both
+measure the unnamed regular-file payload; Windows alternate data streams are
+not enumerated and these totals are not a complete file-footprint measurement.
 Directory entries are also retained only once per physical identity, including
 when an explicit nested root is later encountered beneath another root.
 Invalid/unavailable values are null and increase the corresponding unknown-file
@@ -170,8 +175,10 @@ control-character names. CLI subprocess tests validate wire output and exits.
 
 APFS on the current host rejects creation of arbitrary non-UTF-8 filenames.
 Synthetic path/serialization checks must not be called a native round trip.
-Actual File Provider, network/removable volume and Windows scenarios still need
-dedicated environments; simulated policy cases do not establish those results.
+Actual File Provider and network/removable volume scenarios still need dedicated
+environments; simulated policy cases do not establish those results. Initial
+Windows native evidence and remaining platform gates are recorded separately in
+[WINDOWS.md](WINDOWS.md).
 
 The versioned [m2-v1 fixture budget](../benchmarks/m2-v1.json) covers 8242 unique
 files, 8370 file entries and 67636228 logical bytes, including a 48-level tree,

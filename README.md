@@ -2,8 +2,10 @@
 
 An open-source local maintenance engine and CLI, targeting macOS and Windows.
 
-**Status: bounded scanning, native Trash, and an initial terminal browser.** macOS scanning supports
-explicit roots, bounded resources, cancellation and structured output. The
+**Status: bounded scanning, macOS native Trash, and an initial terminal browser.** macOS and
+initial Windows local fixed-NTFS scanning support explicit roots, bounded resources,
+cancellation and structured output. See [Windows scope and native evidence](docs/WINDOWS.md)
+for remaining acceptance gates and platform differences. The
 in-memory core supports plans, exact-preview approval and read-only preflight.
 Scanning never modifies files. The separate `trash` command previews explicitly
 selected ordinary files; `--execute` additionally requires terminal confirmation.
@@ -65,6 +67,7 @@ should require AI or an online account.
 | `sayaka-cli` | Command-line entry point, installed as `sayaka` |
 | `sayaka-bindings` | Reserved for native-client bindings; no ABI exported yet |
 | `sayaka-platform-macos` | Audited I/O policy, volume metadata and explicit native Trash boundary |
+| `sayaka-platform-windows` | Read-only NT handle, volume, identity and directory enumeration boundary |
 
 ## Build
 
@@ -131,8 +134,9 @@ These describe intended work, not currently available features.
 
 Local automated unit, integration, and appropriately isolated system tests are
 part of development. M1 validates the model; M2 adds native read-only fixtures,
-CLI subprocess checks and a versioned performance fixture. None of these
-establish atomic mutation race guarantees or Windows support. Default M3 checks
+CLI subprocess checks and a versioned performance fixture. The initial Windows
+slice adds native NTFS and CLI fixtures; it does not establish Windows write
+support or atomic mutation race guarantees. Default M3 checks
 exercise model failures, private journal persistence and read-only native
 admission. Real system Trash cases require explicit opt-in.
 

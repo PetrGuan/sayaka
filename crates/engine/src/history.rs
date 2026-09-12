@@ -133,7 +133,6 @@ pub fn query(read: JournalRead, query: &Query) -> io::Result<Page> {
 mod tests {
     use super::*;
     use crate::journal::{ItemRecord, NativePath};
-    use std::path::Path;
 
     fn record(id: &str, created: u64, state: ItemState) -> Record {
         Record {
@@ -143,10 +142,10 @@ mod tests {
             rules_version: 1,
             operation_id: id.into(),
             contract: "revalidated_trash_v1".into(),
-            scope: NativePath::from_path(Path::new("/fixture")),
+            scope: NativePath::unix_fixture("/fixture"),
             created_unix_ms: created,
             items: vec![ItemRecord {
-                path: NativePath::from_path(Path::new("/fixture/file")),
+                path: NativePath::unix_fixture("/fixture/file"),
                 device: 1,
                 inode: 2,
                 logical_bytes: 1,
@@ -193,7 +192,7 @@ mod tests {
     fn state_filter_reconciles_started_and_preserves_whole_operation() {
         let mut operation = record("a-1", 10, ItemState::Started);
         let mut second = operation.items[0].clone();
-        second.path = NativePath::from_path(Path::new("/fixture/other"));
+        second.path = NativePath::unix_fixture("/fixture/other");
         second.inode = 3;
         second.state = ItemState::Failed;
         operation.items.push(second);

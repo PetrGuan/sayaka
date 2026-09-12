@@ -42,6 +42,18 @@ pub struct NativePath {
 }
 
 impl NativePath {
+    #[cfg(test)]
+    pub(crate) fn unix_fixture(path: &str) -> Self {
+        assert!(path.is_ascii());
+        let value = Self {
+            display: format!("{path:?}"),
+            encoding: "unix_bytes".into(),
+            bytes: path.as_bytes().to_vec(),
+        };
+        value.validate().expect("valid Unix wire fixture");
+        value
+    }
+
     pub fn from_path(path: &Path) -> Self {
         Self {
             display: format!("{:?}", path.as_os_str()),
@@ -316,10 +328,10 @@ mod tests {
             rules_version: 1,
             operation_id: "a-1".into(),
             contract: "revalidated_trash_v1".into(),
-            scope: NativePath::from_path(Path::new("/fixture")),
+            scope: NativePath::unix_fixture("/fixture"),
             created_unix_ms: 1,
             items: vec![ItemRecord {
-                path: NativePath::from_path(Path::new("/fixture/file")),
+                path: NativePath::unix_fixture("/fixture/file"),
                 device: 1,
                 inode: 2,
                 logical_bytes: 5,
@@ -357,12 +369,30 @@ mod tests {
 
     #[test]
     fn evidence_preserves_pre_epoch_timestamps_without_fabricated_defaults() {
-        let time = NativeTime::from_system_time(UNIX_EPOCH - std::time::Duration::from_nanos(1));
+        let nanoseconds = if cfg!(windows) { 100 } else { 1 };
+        let before_epoch = UNIX_EPOCH - std::time::Duration::from_nanos(nanoseconds);
+        assert!(before_epoch < UNIX_EPOCH);
+        let time = NativeTime::from_system_time(before_epoch);
         assert!(time.before_unix_epoch);
         assert_eq!(time.seconds, 0);
-        assert_eq!(time.nanoseconds, 1);
+        assert_eq!(u64::from(time.nanoseconds), nanoseconds);
+        let restored: NativeTime =
+            serde_json::from_slice(&serde_json::to_vec(&time).unwrap()).unwrap();
+        assert_eq!(restored, time);
         let serialized = serde_json::to_vec(&record()).unwrap();
         let restored: Record = serde_json::from_slice(&serialized).unwrap();
         assert!(restored.items[0].recovery_evidence.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_display_paths_cannot_be_accepted_as_unix_journal_records() {
+        let mut value = record();
+        value.scope = NativePath::from_path(Path::new(r"C:\fixture"));
+        assert_eq!(value.scope.encoding, "display_only");
+        assert!(value.validate().is_err());
+        let mut value = record();
+        value.items[0].path = NativePath::from_path(Path::new(r"C:\fixture\file"));
+        assert!(value.validate().is_err());
     }
 }

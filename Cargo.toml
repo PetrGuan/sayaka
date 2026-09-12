@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 [workspace]
-members = ["crates/engine", "crates/cli", "crates/bindings", "crates/platform-macos"]
+members = ["crates/engine", "crates/cli", "crates/bindings", "crates/platform-macos", "crates/platform-windows"]
 resolver = "3"
 
 [workspace.package]
@@ -14,4 +14,5 @@ publish = false
 [workspace.dependencies]
 sayaka-engine = { path = "crates/engine" }
 sayaka-platform-macos = { path = "crates/platform-macos" }
+sayaka-platform-windows = { path = "crates/platform-windows" }
 clap = "4.5"

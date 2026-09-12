@@ -126,9 +126,21 @@ unsupported! {
     disk -> DiskCounters,
     sampler -> SamplerCounters,
     processes -> u64,
-    processes_top -> ProcessTopSnapshot,
     power -> PowerCounters,
     thermal -> ThermalState,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn processes_top(
+    _limit: usize,
+    _sort: ProcessTopSort,
+    _probe_cap: usize,
+    _collection_budget_ms: u64,
+) -> std::io::Result<ProcessTopSnapshot> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "macOS processes_top source is unavailable on this platform",
+    ))
 }
 
 #[cfg(all(test, not(target_os = "macos")))]
