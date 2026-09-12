@@ -1,0 +1,13 @@
+{
+  "fixture": "t11-v1",
+  "interval_ms": 1000,
+  "slow_interval_ms": 5000,
+  "samples": 12,
+  "warmup_samples": 2,
+  "max_steady_cpu_percent_one_core": 2.0,
+  "max_resident_bytes": 67108864,
+  "max_steady_collection_ms": 100,
+  "max_first_frame_ms": 150,
+  "max_shutdown_ms": 1000,
+  "scope": "Local macOS native status, 1 Hz fast probes / 5 s slow probes. NDJSON and terminal modes measured separately; first two samples excluded from steady-state CPU/collection checks. No process arguments, user file contents, privileged probes, system modifications or Mole comparison."
+}

@@ -3,6 +3,8 @@
 mod browser;
 mod human;
 mod output;
+mod status;
+mod terminal;
 mod trash;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
@@ -93,6 +95,7 @@ fn command() -> Command {
         .subcommand(trash::command())
         .subcommand(trash::receipt_command())
         .subcommand(browser::command())
+        .subcommand(status::command())
 }
 
 fn limits(args: &ArgMatches) -> ScanLimits {
@@ -229,6 +232,7 @@ fn run() -> io::Result<u8> {
         Some(("trash", args)) => trash::run(args),
         Some(("receipt", args)) => trash::receipt(args),
         Some(("browse" | "analyze", args)) => browser::run(args),
+        Some(("status", args)) => status::run(args),
         _ => Ok(2),
     }
 }

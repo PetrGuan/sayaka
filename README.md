@@ -23,6 +23,18 @@ sayaka browse . --plain
 The root must be explicit. Browsing and selecting do not modify files; directories
 remain read-only. Non-terminal output automatically uses the plain snapshot report.
 
+The initial [read-only system status](docs/STATUS.md) command adds native metrics,
+explicit freshness/error states and a bounded watch process:
+
+```sh
+sayaka status --json
+sayaka status --watch
+sayaka status --watch --json --count 12
+```
+
+Status never optimizes the system or installs a daemon. Unsupported temperature,
+GPU and top-process capabilities are marked explicitly, not filled with zeroes.
+
 ## Direction
 
 Sayaka aims to make local maintenance explainable, previewable, and auditable:

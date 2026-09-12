@@ -1,24 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::model::{App, Metric, Screen, kind};
+use crate::terminal::{Line, Style};
 use sayaka_engine::scan;
 use std::io;
 use unicode_width::UnicodeWidthChar;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Style {
-    Normal,
-    Header,
-    Muted,
-    Selected,
-    Warning,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Line {
-    pub text: String,
-    pub style: Style,
-}
 
 const HELP: &[&str] = &[
     "BROWSE / SELECT",

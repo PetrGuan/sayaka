@@ -9,6 +9,9 @@ Windows-native scanning and bindings remain unimplemented.
 M7 now provides an initial terminal browser, independent directory summaries and
 M3 plan integration. See [BROWSING.md](docs/BROWSING.md) for its current limits
 and local mechanical performance evidence; this is not full CLI parity.
+The initial T11 macOS status sampler adds read-only metrics, freshness-aware
+JSON/watch output and a terminal panel. See [STATUS.md](docs/STATUS.md) for its
+source ledger and explicit temperature/GPU/top-process gaps.
 
 ## Product objective
 
