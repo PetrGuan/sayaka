@@ -105,9 +105,12 @@ scope after seeing results, or substitute simulated users for usability evidence
 
 ## Outstanding decisions
 
-Minimum supported macOS/Windows versions and CPU architectures, the Windows
-execution host, initial rule categories, native binding tools, and binary
-distribution/signing channels remain unselected. Initial M3 uses Foundation Trash
+Windows product targets are Windows 11 or later on x64 and ARM64. The early
+read-only acceptance slice uses a real Windows 11 x64 host; ARM64 native acceptance
+is a separate maintainer-approved follow-up, not certified by cross-compilation.
+See [WINDOWS.md](WINDOWS.md) for supported scope and actual evidence.
+Minimum macOS versions/architectures, initial rule categories, native binding
+tools, and binary distribution/signing channels remain unselected. Initial M3 uses Foundation Trash
 and the bounded journal described in [EXECUTION.md](EXECUTION.md); other action
 primitives still need their own decisions. Do not assume the developer's current
 machine represents a broader support matrix.

@@ -234,6 +234,39 @@ fn execute(tree: Tree, limits: &ScanLimits) -> ScanReport {
 }
 
 #[test]
+fn reparse_refusal_after_directory_observation_is_a_gap_even_with_unchanged_parent() {
+    let mut tree = tree();
+    add_file(&mut tree, &root(), "readable", 2, Some(7));
+    let child = add_directory(&mut tree, &root(), "changed", 3);
+    tree.directories.get_mut(&child).unwrap().open_error = Some(ScanError::new(
+        ScanCode::LinkSkipped,
+        "injected reparse refusal",
+    ));
+    assert!(tree.directories[&root()].unchanged);
+    let backend = FakeBackend(Arc::new(tree));
+    let report = run(
+        &backend,
+        vec![root()],
+        &ScanLimits::default(),
+        &Cancellation::default(),
+        ScanTaskId::new().unwrap(),
+        Instant::now(),
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(report.status, ScanStatus::Partial);
+    assert!(!report.complete);
+    assert_eq!(report.totals.logical_bytes_known, 7);
+    assert!(
+        report.issues.iter().any(
+            |issue| issue.code == ScanCode::ChangedEntry && issue.path.as_ref() == Some(&child)
+        )
+    );
+    assert_eq!(backend.0.opened.lock().unwrap().as_slice(), &[root()]);
+    assert_eq!(backend.0.closed.load(Ordering::Acquire), 1);
+}
+
+#[test]
 fn normalization_preserves_distinct_explicit_roots_for_admission() {
     let limits = ScanLimits::default();
     let other = root().with_file_name("scan-fixture-other");

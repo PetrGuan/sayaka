@@ -36,14 +36,15 @@ pub struct Signals {
 
 impl Signals {
     pub fn new() -> io::Result<Self> {
-        let mut result = Self {
+        let result = Self {
             interrupt: Arc::new(AtomicBool::new(false)),
             terminate: Arc::new(AtomicBool::new(false)),
             #[cfg(unix)]
             registrations: Vec::new(),
         };
         #[cfg(unix)]
-        {
+        let result = {
+            let mut result = result;
             result.registrations.push(signal_hook::flag::register(
                 signal_hook::consts::SIGINT,
                 Arc::clone(&result.interrupt),
@@ -52,7 +53,8 @@ impl Signals {
                 signal_hook::consts::SIGTERM,
                 Arc::clone(&result.terminate),
             )?);
-        }
+            result
+        };
         Ok(result)
     }
     pub fn exit_code(&self) -> Option<u8> {

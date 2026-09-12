@@ -26,6 +26,7 @@ struct FakePlatform {
     snapshots: HashMap<PathBuf, Snapshot>,
     journal_paths: HashMap<PathBuf, NativePath>,
     effects: Vec<PathBuf>,
+    fail_on: Option<usize>,
     next_unknown: bool,
     unknown_evidence: Option<journal::RecoveryEvidence>,
     before_effect: Option<Box<dyn FnMut()>>,
@@ -47,7 +48,9 @@ impl Platform for FakePlatform {
             return Effect::Refused("stopped".into());
         }
         self.effects.push(path.to_owned());
-        if self.next_unknown {
+        if self.fail_on == Some(self.effects.len()) {
+            Effect::Failed("injected item failure".into())
+        } else if self.next_unknown {
             Effect::Unknown {
                 message: "injected ambiguous native result".into(),
                 evidence: self.unknown_evidence.take().map(Box::new),
@@ -110,6 +113,7 @@ fn setup() -> (Session<FakePlatform, TestClock>, TestClock) {
             NativePath::unix_fixture("/fixture"),
         )]),
         effects: Vec::new(),
+        fail_on: None,
         next_unknown: false,
         unknown_evidence: None,
         before_effect: None,
@@ -227,6 +231,45 @@ fn intent_failure_never_enters_native_effect() {
             .iter()
             .all(|item| item.state == ItemState::Skipped)
     );
+}
+
+#[test]
+fn item_failure_preserves_successful_results_without_retry_or_delete_fallback() {
+    for failed_index in 0..2 {
+        let (mut session, _) = setup();
+        session.platform.fail_on = Some(failed_index + 1);
+        let journal = FakeJournal::default();
+        let report = execute(&mut session, &journal);
+        assert_eq!(report.exit_code(), 3);
+        assert!(report.journal_error.is_none());
+        assert_eq!(report.record.handled_bytes(), Some(7));
+        let failed = &report.record.items[failed_index];
+        assert_eq!(failed.state, ItemState::Failed);
+        assert_eq!(failed.reason.as_deref(), Some("injected item failure"));
+        assert!(failed.destination.is_none());
+        assert_eq!(
+            report.record.items[1 - failed_index].state,
+            ItemState::Succeeded
+        );
+        assert_eq!(
+            session.platform.effects,
+            [
+                fixture_path("/fixture/file1"),
+                fixture_path("/fixture/file2")
+            ]
+        );
+        let records = journal.durable.borrow();
+        assert_eq!(records.len(), 5);
+        assert_eq!(
+            records.last().unwrap().items[failed_index].state,
+            ItemState::Failed
+        );
+        assert_eq!(
+            records.last().unwrap().items[1 - failed_index].state,
+            ItemState::Succeeded
+        );
+        records.last().unwrap().validate().unwrap();
+    }
 }
 
 #[test]

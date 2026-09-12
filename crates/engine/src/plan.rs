@@ -320,11 +320,13 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             .ok_or_else(|| Error::new(ReasonCode::UnknownPlan))
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn for_revalidated_trash(mut self) -> Self {
         self.contract = ExecutionContract::RevalidatedTrashV1;
         self
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn stop_reason(
         &mut self,
         plan: &Plan,

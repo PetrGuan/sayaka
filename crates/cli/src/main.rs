@@ -153,6 +153,15 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
             .get_many::<PathBuf>("roots")
             .ok_or_else(|| ScanError::new(ScanCode::InvalidRoot, "at least one root is required"))?
             .map(|root| {
+                if root
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+                {
+                    return Err(ScanError::new(
+                        ScanCode::InvalidRoot,
+                        "parent traversal is not accepted",
+                    ));
+                }
                 std::path::absolute(root)
                     .map_err(|error| ScanError::new(ScanCode::InvalidRoot, error.to_string()))
             })

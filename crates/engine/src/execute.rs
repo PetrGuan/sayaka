@@ -3,12 +3,18 @@
 //! Explicit native Trash sessions. The versioned contract discloses the residual
 //! check/use race; an M1 preflight report cannot be supplied as a mutation permit.
 
-use crate::journal::{self, ItemRecord, ItemState, NativePath, Record, Store};
+#[cfg(any(target_os = "macos", test))]
+use crate::journal::{self, ItemRecord};
+use crate::journal::{ItemState, NativePath, Record, Store};
 use crate::model::*;
+#[cfg(any(target_os = "macos", test))]
 use crate::{Clock, IdSource, Planner, SequentialIds, SystemClock};
 use serde::Serialize;
 use std::io;
-use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "macos", test))]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(any(target_os = "macos", test))]
 use std::time::Duration;
 
 #[derive(Clone, Debug, Serialize)]
@@ -59,6 +65,7 @@ impl ExecutionReport {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) enum Effect {
     Moved(PathBuf),
     Refused(String),
@@ -69,6 +76,7 @@ pub(crate) enum Effect {
     },
 }
 
+#[cfg(any(target_os = "macos", test))]
 trait Platform: Probe {
     fn effect(&mut self, path: &Path, stop: &mut dyn FnMut() -> bool) -> Effect;
 
@@ -77,6 +85,7 @@ trait Platform: Probe {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 trait Journal {
     fn new_id(&self) -> io::Result<String>;
     fn publish(&self, record: &Record, initial: bool) -> io::Result<journal::Publication>;
@@ -92,12 +101,14 @@ impl Journal for Store {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 struct Session<P, C = SystemClock, I = SequentialIds> {
     planner: Planner<C, I>,
     platform: P,
     preview: Plan,
 }
 
+#[cfg(any(target_os = "macos", test))]
 impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
     fn execute(
         &mut self,
@@ -262,6 +273,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn stop_for_journal_error(report: &mut ExecutionReport, index: usize, error: io::Error) {
     report.journal_error = Some(error.to_string());
     for item in &mut report.record.items[index + 1..] {
@@ -270,6 +282,7 @@ fn stop_for_journal_error(report: &mut ExecutionReport, index: usize, error: io:
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn model_error(error: Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, error)
 }

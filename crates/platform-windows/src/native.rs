@@ -415,6 +415,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn enumeration_parser_rejects_malformed_records_without_out_of_bounds_reads() {
+        let fixture =
+            crate::owned_temp::OwnedTempDir::new(&std::env::temp_dir(), "sayaka-windows-owned-")
+                .unwrap();
+        let mut directory = Directory::open_root(fixture.path()).unwrap();
+        for case in 0..=8 {
+            let mut record = FILE_ID_EXTD_DIR_INFO {
+                FileNameLength: 2,
+                FileName: [120],
+                FileId: FILE_ID_128 {
+                    Identifier: [1; 16],
+                },
+                ..Default::default()
+            };
+            directory.buffer.fill(0);
+            directory.offset = Some(0);
+            match case {
+                0 => record.NextEntryOffset = 1,
+                1 => record.NextEntryOffset = 65_537,
+                2 => record.FileNameLength = 1,
+                3 => record.FileNameLength = 65_536,
+                4 => record.FileId.Identifier = [0; 16],
+                5 => record.FileName = [0],
+                6 => record.FileNameLength = 0,
+                7 => directory.offset = Some(65_535),
+                _ => {}
+            }
+            unsafe {
+                ptr::write(
+                    directory
+                        .buffer
+                        .as_mut_ptr()
+                        .cast::<FILE_ID_EXTD_DIR_INFO>(),
+                    record,
+                )
+            };
+            if case == 8 {
+                assert_eq!(directory.parse_entry().unwrap().name, "x");
+            } else {
+                assert_eq!(
+                    directory.parse_entry().err().unwrap().kind(),
+                    io::ErrorKind::InvalidData,
+                    "case {case}"
+                );
+            }
+        }
+        drop(directory);
+        fixture.close().unwrap();
+    }
+
+    #[test]
     fn root_names_reject_devices_streams_and_traversal() {
         for path in [
             r"C:\",
@@ -457,10 +508,9 @@ mod tests {
         use windows_sys::Win32::System::IO::DeviceIoControl;
         use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
 
-        let fixture = tempfile::Builder::new()
-            .prefix("sayaka-windows-owned-")
-            .tempdir()
-            .unwrap();
+        let fixture =
+            crate::owned_temp::OwnedTempDir::new(&std::env::temp_dir(), "sayaka-windows-owned-")
+                .unwrap();
         std::fs::write(fixture.path().join("owner-marker"), b"owned sparse fixture").unwrap();
         let root = fixture.path().join("scan");
         std::fs::create_dir(&root).unwrap();

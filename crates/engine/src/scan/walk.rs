@@ -515,7 +515,13 @@ fn worker<B: Backend>(
             }
             let directory = match frame.directory.open_child(&item) {
                 Ok(directory) => directory,
-                Err(error) => {
+                Err(mut error) => {
+                    if error.code == ScanCode::LinkSkipped {
+                        error.code = ScanCode::ChangedEntry;
+                        error.message =
+                            "observed directory became a link or reparse path before opening"
+                                .into();
+                    }
                     send(
                         &sender,
                         Event::Issue {

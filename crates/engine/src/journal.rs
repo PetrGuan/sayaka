@@ -13,11 +13,13 @@ pub const MAX_RECORD_BYTES: u64 = 1024 * 1024;
 pub const MAX_RECORDS: usize = 1024;
 pub const MAX_READ_BYTES: usize = 16 * 1024 * 1024;
 
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Default)]
 pub(crate) struct Publication {
     pub cleanup_error: Option<io::Error>,
 }
 
+#[cfg(any(target_os = "macos", test))]
 impl Publication {
     pub fn require_clean(self) -> io::Result<()> {
         match self.cleanup_error {
@@ -261,6 +263,7 @@ impl Record {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn now_ms() -> io::Result<u64> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -306,14 +309,24 @@ impl Store {
 }
 
 pub fn default_directory() -> io::Result<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .ok_or_else(|| invalid("HOME is unavailable; supply --state-dir"))?;
-    let home = PathBuf::from(home);
-    if !home.is_absolute() {
-        return Err(invalid("HOME must be absolute; supply --state-dir"));
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native journal storage is macOS-only",
+        ))
     }
-    Ok(home.join("Library/Application Support/Sayaka"))
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .filter(|home| !home.is_empty())
+            .ok_or_else(|| invalid("HOME is unavailable; supply --state-dir"))?;
+        let home = PathBuf::from(home);
+        if !home.is_absolute() {
+            return Err(invalid("HOME must be absolute; supply --state-dir"));
+        }
+        Ok(home.join("Library/Application Support/Sayaka"))
+    }
 }
 
 #[cfg(test)]

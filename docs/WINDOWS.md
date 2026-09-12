@@ -1,15 +1,20 @@
 # Windows native read-only slice
 
-Status: initial native read-only NTFS slice implemented and tested. Full Windows
-milestone acceptance is **not complete**: workspace strict static checks, write
-feasibility, independent review and environmental cases remain open. Minimum
-supported Windows versions and release architectures remain a maintainer
-decision. A tested host is not a supported-system matrix.
+Status: native read-only NTFS slice implemented and tested on Windows 11 x64.
+The maintainer selected Windows 11 or later, x64 and ARM64 as product targets.
+This closeout is scoped to the x64 native read-only slice; ARM64 native acceptance
+is a separate follow-up. ARM64 all-target compilation checks pass, but a complete
+linked build and native execution are not verified. Windows writes and provider/
+network/removable environments remain unsupported. A tested Insider host is not
+evidence that every Windows 11 release or architecture has been run.
 
 ## Contract
 
 Inputs are explicitly selected absolute directory paths. The shared scanner
 retains its limits, cancellation, task IDs, accounting and JSON v1 semantics.
+CLI root arguments reject parent traversal before Windows absolute-path
+normalization can erase it. If an observed directory becomes a reparse path
+before opening, that failure is a `changed_entry` gap, not a complete link skip.
 Paths remain native UTF-16; display strings never locate native operations.
 The Windows adapter uses a separately reviewable FFI boundary, leaving the engine
 unsafe-free. File identity is the volume serial plus the full 128-bit File ID.
@@ -71,8 +76,9 @@ The new platform crate is target-specific; runtime/size impact is unmeasured.
 
 ## Recorded Evidence
 
-Baseline: `bf3d37bce4dfabe1fdba5c86a6e8ee5b5a996a5b` plus the uncommitted Windows
-slice. Host: Windows 11 Enterprise Insider Preview, build 26310 (`10.0.26310`),
+Baseline: merged Windows slice `f0d74da814a0f88da88e5523ae69e93a226092db` plus
+the closeout changes described below. Host: Windows 11 Enterprise Insider
+Preview, build 26310 (`10.0.26310`),
 x64. Toolchain: Rust 1.93.1, `x86_64-pc-windows-msvc`. Clippy and rustfmt were
 installed for this existing user toolchain. No elevation or external host was used.
 
@@ -83,6 +89,24 @@ The ACL case uses the system `icacls.exe` on one newly created fixture directory
 verifies actual denied enumeration, removes its explicit denial and checks
 access restoration before cleanup. Junctions are explicitly removed. Successful
 native and CLI cases completed cleanup; no recycle-bin cleanup was attempted.
+
+Closeout fixtures create randomized directories exclusively relative to a retained
+parent capability, then immediately open the new child without following links.
+They never adopt an existing directory or junction. Pathname-based automatic cleanup
+is disabled before creation; initialization failures preserve the partial fixture
+and are not retried as naming collisions. Fixtures retain a capability directory
+handle, native same-file identity and a unique marker. Cleanup validates ancestors, reparse absence, current root
+identity and the marker, then removes through the retained directory capability.
+Cleanup disarms itself before validation, so a refusal preserves the fixture and
+cannot retry deletion by its old name.
+Windows capability handles prevent relevant renames while held; tests exercise
+both prevented replacements and explicit identity mismatch (even with a copied
+marker). Child-controlled teardown is not an atomic deletion guarantee against
+arbitrary hostile concurrent namespace mutation on every OS: the capability
+library documents residual rename limits. Tests run in owned, otherwise quiescent
+roots, join child work first and never discover cleanup targets by name matching.
+Creation and no-follow handle capture are also separate operations: callers must
+exclude concurrent replacement during initialization as well as teardown.
 
 Run from the repository root:
 
@@ -97,22 +121,37 @@ cargo fmt --all -- --check
 cargo build --workspace --locked
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo check --workspace --all-targets --target aarch64-pc-windows-msvc --locked
 ```
 
 | Check | Result | Evidence/limit |
 | --- | --- | --- |
-| Platform tests | PASS, 3 | Native sparse allocation cross-checked with `GetCompressedFileSizeW`; 2 pure path/cloud-flag tests are not cloud-provider evidence |
-| Engine native tests | PASS, 6 | Empty/nested trees, hardlinks/full IDs, 901-file buffer traversal, actual unpaired UTF-16 names, real sharing violation, cancellation/budget, junction escape/cycle/ancestors, replaced ancestor handle binding |
-| Windows CLI tests | PASS, 4 | JSON v1/progress IDs/native strings, mixed-root partial exit, real ACL denial/restoration, Trash rejection without file changes or journal creation |
+| Platform tests | PASS, 10 | Sparse allocation, malformed enumeration buffers, path/cloud-flag decisions and 6 fixture lifecycle tests; synthetic flags are not cloud-provider evidence |
+| Engine native tests | PASS, 12 | 6 native scan cases plus 6 fixture lifecycle tests; empty/nested trees, hardlinks/full IDs, native UTF-16, sharing violation, cancellation/budget, junctions and ancestor replacement |
+| Windows CLI-specific cases | PASS, 6 | Original 4 native cases plus raw parent traversal and unsupported journal commands without HOME |
 | Native root unit test | PASS, 1 | Drive root, relative/parent forms rejected; native UTF-16 preserved |
 | Platform strict Clippy | PASS | All targets, no warning suppression |
-| Complete CLI suite | PASS, 30 | 19 unit and 11 subprocess tests, including the 4 Windows-specific cases above |
-| Workspace format/build | PASS | Locked debug build succeeds; existing non-macOS warnings remain |
-| Workspace tests | PASS, 140 | Engine library: 93 passed; full default command completes with zero failures or ignored tests |
-| Workspace strict Clippy | FAIL | Existing non-macOS unused execution/journal/plan code: 12 library diagnostics, plus unused `Effect::Failed` in tests |
-| Cloud provider/network/removable host cases | BLOCKED | No dedicated fixture/environment; no simulated pass claimed |
-| Windows Trash/recovery/system journal | BLOCKED | Unsupported; no native effects, recovery, crash-window or real partial-write acceptance claimed |
-| Independent review/minimum OS/latency and RSS budgets | BLOCKED | Not independently reviewed or selected/measured |
+| Complete CLI suite | PASS, 38 | 19 unit plus 19 integration checks, including fixture lifecycle assertions |
+| Workspace tests | PASS, 169 | Engine library: 95 passed; zero failures or ignored tests |
+| Workspace strict Clippy | PASS | All targets with `-D warnings`; no blanket warning exemptions |
+| ARM64 all-target check | PASS | Rust 1.93.1 cross-compilation check only; no binary execution |
+| ARM64 linked build/native execution | BLOCKED, separate follow-up | ARM64 MSVC linker and native host unavailable; maintainer split this from x64 closeout |
+| Cloud provider/network/removable host cases | NOT RUN, unsupported scope | No dedicated fixture/environment; no simulated pass claimed |
+| Windows Trash/recovery/system journal | REFUSED, unsupported scope | Preparation/storage reject; no native effects or recovery guarantees claimed |
+| Minimum platform | SELECTED | Windows 11+ x64/ARM64 product targets; only x64 build 26310 has runtime evidence here |
+| Independent review | PASS, scoped x64 read-only closeout | Initial findings corrected; independent reviewer reran 169 checks, strict Clippy and fmt; no blocking findings under the owned quiescent-fixture contract |
+| Latency/RSS and broader release matrix | UNMEASURED | No competitive or all-version performance claim; separate acceptance work |
+
+The closeout fixes unused-code diagnostics with platform/test compilation
+conditions, not `allow` attributes. The injected executor now tests deterministic
+item failure in either batch position while preserving successful results and
+without retry/fallback. Non-macOS journal default-directory selection returns
+Unsupported before consulting HOME, matching explicit-store refusal.
+
+Independent read-only review found raw-argument normalization, reparse-gap
+classification and fixture cleanup weaknesses. Focused regression tests now cover
+all three, including unchanged parent metadata and released scanner handles.
+The reviewer also requested malformed native record coverage, now included.
 
 The initial run had 16 engine failures (76 passed); all 16 now pass without
 disabling tests or weakening production validation:
@@ -131,9 +170,11 @@ disabling tests or weakening production validation:
 - One added Windows regression test confirms display-only scope/item paths still
 	fail real journal validation. This accounts for 93 rather than 92 engine tests.
 
-The 140 checks comprise 93 engine unit tests, 3 in-memory integration tests, 6
-Windows scanner tests, 19 CLI unit tests, 11 CLI subprocess tests, 3 Windows
-platform tests, 1 non-macOS unsupported-source test and 4 compile-fail doc tests.
+The 169 checks comprise 95 engine unit tests, 9 in-memory integration checks, 12
+Windows scanner checks, 19 CLI unit tests, 19 CLI integration checks, 10 Windows
+platform checks, 1 non-macOS unsupported-source test and 4 compile-fail doc tests.
+The shared cleanup tests are compiled in multiple test targets; this is a count
+of executed tests, not a claim of 153 distinct native scenarios.
 Rows in the table overlap and must not be summed. Bindings and macOS scanner
 targets with zero tests on this host are not capability passes; macOS-native
 execution was not run. The executor tests above are injected contract checks,
@@ -151,6 +192,8 @@ interface; its unsupported-source test and compile-fail policy check passed.
 Native bindings use `windows-sys` 0.61 (MIT/Apache-2.0); test-only junction creation
 uses `junction` 1.4 (MIT), and temporary fixture handling uses the existing
 `tempfile` dependency (MIT/Apache-2.0). No third-party source was copied.
+Test-only capability cleanup uses `cap-std`/`cap-primitives` 4 and identity comparisons
+use `same-file` 1; these dependencies do not enter the product runtime dependency tree.
 
 - [NT file opening](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)
 - [Object attributes and reparse refusal](https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes)

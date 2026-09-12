@@ -6,3 +6,7 @@
 mod native;
 #[cfg(windows)]
 pub use native::{Directory, Entry, Error, Metadata};
+
+#[cfg(all(windows, test))]
+#[path = "../../engine/tests/support/owned_temp.rs"]
+mod owned_temp;
