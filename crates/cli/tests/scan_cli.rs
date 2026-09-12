@@ -176,7 +176,9 @@ fn completion_is_stdout_only_and_covers_current_commands() {
         let result = capture(command);
         assert!(result.status.success());
         let script = String::from_utf8(result.stdout).unwrap();
-        for name in ["history", "status", "browse", "install", "remove"] {
+        for name in [
+            "history", "status", "browse", "install", "update", "recover", "remove",
+        ] {
             assert!(script.contains(name));
         }
         assert!(result.stderr.is_empty());
@@ -220,6 +222,33 @@ fn local_install_preview_execute_and_owned_remove_preserve_user_state() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(prefix.join("bin/sayaka").is_file());
+    let mut command = fixture.command();
+    command
+        .args(["update", "--json"])
+        .arg("--prefix")
+        .arg(&prefix);
+    let update_preview = capture(command);
+    assert!(update_preview.status.success());
+    let update_preview_json: Value = serde_json::from_slice(&update_preview.stdout).unwrap();
+    assert_eq!(update_preview_json["plan"]["action"], "Update");
+    let mut command = fixture.command();
+    command
+        .args(["update", "--execute", "--json"])
+        .arg("--prefix")
+        .arg(&prefix);
+    let update_result = capture(command);
+    assert!(update_result.status.success());
+    let update_result_json: Value = serde_json::from_slice(&update_result.stdout).unwrap();
+    assert_eq!(update_result_json["outcome"]["status"], "AlreadyInstalled");
+    let mut command = fixture.command();
+    command
+        .args(["recover", "--execute", "--json"])
+        .arg("--prefix")
+        .arg(&prefix);
+    let recover_result = capture(command);
+    assert!(recover_result.status.success());
+    let recover_result_json: Value = serde_json::from_slice(&recover_result.stdout).unwrap();
+    assert_eq!(recover_result_json["outcome"]["status"], "Recovered");
     let mut installed = Command::new(prefix.join("bin/sayaka"));
     fixture.isolate(&mut installed);
     installed.arg("--version");

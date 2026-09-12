@@ -20,10 +20,10 @@
 //! visibility alone does not prove an earlier publication was durable. Preparing
 //! an existing-image preview does not perform these barriers or repair anything.
 //! Abrupt process death cannot return an outcome: retained artifacts are not
-//! automatically discovered or replayed, and incomplete layouts need inspection.
+//! automatically rolled back, and explicit recovery may be required.
 
 use crate::{journal::NativePath, model::Cancellation};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{io, path::Path};
 
 #[cfg(target_os = "macos")]
@@ -32,7 +32,22 @@ mod macos;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum Action {
     Install,
+    Update,
+    Recover,
     Remove,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactMetadata {
+    pub version: String,
+    pub sha256: String,
+    pub executable_bytes: u64,
+    pub target_os: String,
+    pub target_arch: String,
+    pub min_macos: Option<String>,
+    pub ownership_layout: String,
+    pub lifecycle_contract: String,
+    pub source_trust: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -44,13 +59,20 @@ pub struct Preview {
     pub sha256: String,
     pub executable_bytes: u64,
     pub already_installed: bool,
+    pub current: Option<ArtifactMetadata>,
+    pub candidate: Option<ArtifactMetadata>,
+    pub can_execute: bool,
+    pub decision: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum OutcomeState {
     Installed,
     AlreadyInstalled,
+    Updated,
+    Recovered,
     Removed,
+    Refused,
     Incomplete,
     Cancelled,
 }
@@ -70,7 +92,12 @@ pub struct Outcome {
 impl Outcome {
     pub fn exit_code(&self) -> u8 {
         match self.status {
-            OutcomeState::Installed | OutcomeState::AlreadyInstalled | OutcomeState::Removed => 0,
+            OutcomeState::Installed
+            | OutcomeState::AlreadyInstalled
+            | OutcomeState::Updated
+            | OutcomeState::Recovered
+            | OutcomeState::Removed => 0,
+            OutcomeState::Refused => 1,
             OutcomeState::Incomplete => 1,
             OutcomeState::Cancelled => 130,
         }
@@ -82,6 +109,12 @@ pub struct InstallPlan {
     preview: Preview,
     #[cfg(target_os = "macos")]
     inner: macos::Install,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UpdatePolicy {
+    pub allow_downgrade: bool,
+    pub allow_same_version_replace: bool,
 }
 
 impl InstallPlan {
@@ -116,11 +149,92 @@ impl InstallPlan {
     }
 }
 
+/// A single-use local update plan using only the currently running executable.
+pub struct UpdatePlan {
+    preview: Preview,
+    #[cfg(target_os = "macos")]
+    inner: macos::Update,
+}
+
+impl UpdatePlan {
+    pub fn prepare(
+        prefix: &Path,
+        source: &Path,
+        version: &str,
+        policy: UpdatePolicy,
+    ) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            let (inner, preview) = macos::Update::prepare(prefix, source, version, policy)?;
+            Ok(Self { preview, inner })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (prefix, source, version, policy);
+            Err(unsupported())
+        }
+    }
+
+    pub fn preview(&self) -> &Preview {
+        &self.preview
+    }
+
+    pub fn execute(self, cancellation: &Cancellation) -> io::Result<Outcome> {
+        #[cfg(target_os = "macos")]
+        {
+            self.inner.execute(self.preview, cancellation)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = cancellation;
+            Err(unsupported())
+        }
+    }
+}
+
 /// A single-use plan holding the verified package's exclusive cooperative lock.
 pub struct RemovePlan {
     preview: Preview,
     #[cfg(target_os = "macos")]
     inner: macos::Remove,
+}
+
+/// A single-use explicit recovery plan for local lifecycle update states.
+pub struct RecoverPlan {
+    preview: Preview,
+    #[cfg(target_os = "macos")]
+    inner: macos::Recover,
+}
+
+impl RecoverPlan {
+    pub fn prepare(prefix: &Path) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            let (inner, preview) = macos::Recover::prepare(prefix)?;
+            Ok(Self { preview, inner })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = prefix;
+            Err(unsupported())
+        }
+    }
+
+    pub fn preview(&self) -> &Preview {
+        &self.preview
+    }
+
+    pub fn execute(self, cancellation: &Cancellation) -> io::Result<Outcome> {
+        #[cfg(target_os = "macos")]
+        {
+            self.inner.execute(self.preview, cancellation)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = cancellation;
+            Err(unsupported())
+        }
+    }
 }
 
 impl RemovePlan {
@@ -171,6 +285,19 @@ mod tests {
     fn installation_is_explicitly_unsupported() {
         assert!(matches!(
             InstallPlan::prepare(Path::new("/unused"), Path::new("/unused"), "1"),
+            Err(error) if error.kind() == io::ErrorKind::Unsupported
+        ));
+        assert!(matches!(
+            UpdatePlan::prepare(
+                Path::new("/unused"),
+                Path::new("/unused"),
+                "1",
+                UpdatePolicy::default(),
+            ),
+            Err(error) if error.kind() == io::ErrorKind::Unsupported
+        ));
+        assert!(matches!(
+            RecoverPlan::prepare(Path::new("/unused")),
             Err(error) if error.kind() == io::ErrorKind::Unsupported
         ));
         assert!(matches!(

@@ -515,6 +515,7 @@ dependencies = [
  "libc",
  "rustix",
  "sayaka-platform-macos",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
