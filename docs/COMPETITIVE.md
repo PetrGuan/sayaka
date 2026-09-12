@@ -3,9 +3,12 @@
 Status: development objective and measurement protocol, not a superiority claim.
 Sayaka has an M1 in-memory core, M2 macOS read-only scanning/CLI, and an initial
 M3 explicit-file Trash/receipt workflow under the revised revalidation contract.
+Initial M7 browser, T11 status, and T12 local lifecycle slices have local fixture
+regression baselines only (`benchmarks/m7-v1.json`, `benchmarks/t11-v1.json`,
+`scripts/check_local_install.py`); these are not Mole parity proof.
 Native Trash/recovery acceptance remains a separate gate.
-The local M2 fixture is measured, but no comparative runtime, usability, or full
-installation-footprint benchmark against Mole has been executed.
+No comparative runtime, usability, or full installation-footprint benchmark
+against Mole has been executed.
 
 ## Objective and scope
 
@@ -37,6 +40,19 @@ Freeze source, artifact SHA-256, installer path, tool versions, and fixture
 manifest in each benchmark record. Update this baseline explicitly when the
 comparison version changes; do not silently move the goalposts.
 
+C0 source/ledger/protocol manifests are now pinned in:
+
+- `benchmarks/c0-mole-v1.53.0-source.json`
+- `benchmarks/c0-mole-v1.53.0-ledger.json` (clean section flow and all 21 optimize catalog actions are explicitly enumerated)
+- `benchmarks/c0-install-v1.json`
+- `benchmarks/c0-fixtures-v1.json` (includes sparse, denied-subtree, overlapping-root, controlled-churn, history/lifecycle, and owned-prefix fixtures)
+- `benchmarks/c0-statistics-v1.json` (frozen scenario matrix, fixture/ledger/source hashes, equal-work checks, candidate-not-runnable blocked adapters, and required failure/skip retention schema)
+- `benchmarks/results/c0-blocked-results-v1.json` (machine-readable blocked/not-measured result record for current preregistration state)
+
+Protocol-only validation is explicitly protocol-only. It verifies preregistered
+shape/locks and blocked-state disclosure, but it is never a supported result,
+competitive speed claim, or full C1 parity claim.
+
 GitHub release metadata reports these artifact sizes:
 
 | Architecture | Analyze artifact bytes | Status artifact bytes | Sum of the two | Binary archive bytes |
@@ -48,7 +64,10 @@ These are published asset sizes, not a measured full installation. Mole also
 uses scripts and support files. Do not add an archive to its extracted contents,
 equate the two-Go-artifact sum with the whole tool, or compare these figures to
 Sayaka's current feature-subset executable. Complete footprint is still unmeasured.
-No competitor installer or maintenance command was executed for this document.
+Pinned assets can be downloaded and verified by exact payload SHA-256 and byte
+length without executing them; this provenance step is not installation, runtime,
+or competitive execution evidence. No competitor installer or maintenance command
+was executed for this document.
 
 ## Capability ledger
 

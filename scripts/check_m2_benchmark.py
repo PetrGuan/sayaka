@@ -31,7 +31,7 @@ def run():
     if not binary.is_file():
         parser.error("build first: cargo build -p sayaka-engine --release --example scan_fixture_bench --locked")
     budget = json.loads((repository / "benchmarks/m2-v1.json").read_text())
-    with tempfile.TemporaryDirectory(prefix="sayaka-m2-runner-") as owned:
+    with tempfile.TemporaryDirectory(prefix="sayaka-m2-runner-", dir=repository / "target") as owned:
         root = Path(owned).resolve()
         for name in ("home", "config", "state", "temp", "fixtures"):
             (root / name).mkdir()

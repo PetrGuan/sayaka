@@ -1,0 +1,168 @@
+{
+  "benchmark_id": "c0-local-evidence-v1",
+  "generated_at_utc": "2026-09-12T08:17:01Z",
+  "host": {
+    "os": "macOS 26.6.2",
+    "arch": "arm64"
+  },
+  "source_lock": {
+    "tag": "V1.53.0",
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+    "release_metadata_sha256": "47e09f1dc24e47143c0d38837867006b9853713fa4134d2ae5d61930807d8c14",
+    "sha256sums_sha256": "faa5212910f42765a4e9707de6b924bb097a47968a7a562d4af46ddefcea05e0",
+    "status": "verified"
+  },
+  "ledger": {
+    "required_family_count": 14,
+    "entry_count": 14,
+    "clean_task_count": 20,
+    "optimize_catalog_action_count": 21,
+    "status": "verified"
+  },
+  "fixture_truth": {
+    "manifest_sha256": "ca73f1e033008b0b1715f5f4183b869484fe04aafb9be9d6bacd71e39d264ede",
+    "fixture_count": 7,
+    "fixtures": [
+      {
+        "id": "scan-readonly-basic-v1",
+        "class": "scan-readonly",
+        "status": "verified"
+      },
+      {
+        "id": "scan-sparse-links-v1",
+        "class": "scan-readonly",
+        "status": "verified"
+      },
+      {
+        "id": "scan-denied-subtree-v1",
+        "class": "scan-denied-subtree",
+        "status": "verified"
+      },
+      {
+        "id": "scan-overlapping-roots-v1",
+        "class": "scan-overlapping-roots",
+        "status": "verified"
+      },
+      {
+        "id": "scan-churn-replacement-v1",
+        "class": "scan-controlled-churn",
+        "status": "verified"
+      },
+      {
+        "id": "history-lifecycle-v1",
+        "class": "history-lifecycle",
+        "status": "verified"
+      },
+      {
+        "id": "install-owned-prefix-v1",
+        "class": "install-owned-prefix",
+        "status": "verified"
+      }
+    ],
+    "status": "verified"
+  },
+  "statistics_protocol": {
+    "seed": 260026,
+    "read_only_repetitions": 31,
+    "install_repetitions": 7,
+    "scenario_count": 4,
+    "supported_now": [],
+    "blocked_now": [
+      "c0-analyze-readonly-basic-json-v1",
+      "c0-analyze-sparse-accounting-v1",
+      "c0-install-owned-prefix-layout-v1",
+      "c0-status-watch-equivalent-coverage-v1"
+    ],
+    "protocol_only_validation": true,
+    "protocol_only_note": "Protocol-only validation checks preregistered schema/locks and blocked-state disclosures; it is not supported competitive result evidence.",
+    "blocked_results_manifest": "benchmarks/results/c0-blocked-results-v1.json",
+    "status": "verified"
+  },
+  "install_artifacts": {
+    "release_assets_verified_from_metadata": true,
+    "downloaded_release_assets_verified": true,
+    "verified_downloaded_asset_count": 7,
+    "downloaded_assets": [
+      {
+        "name": "analyze-darwin-arm64",
+        "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb",
+        "size_bytes": 3620258,
+        "status": "verified_downloaded"
+      },
+      {
+        "name": "status-darwin-arm64",
+        "sha256": "46b8aded69d013d00f858908b02d35ea2d39087ccc474bcb8c2e65988fe0028e",
+        "size_bytes": 4065586,
+        "status": "verified_downloaded"
+      },
+      {
+        "name": "binaries-darwin-arm64.tar.gz",
+        "sha256": "3193b2322039680bf617f2e6794f85fbf1cad4992cc2457dd23c66e25b59db10",
+        "size_bytes": 3010562,
+        "status": "verified_downloaded"
+      },
+      {
+        "name": "analyze-darwin-amd64",
+        "sha256": "9113bfdc226e33eb3ccea548ab0e6012eda032c47ee33d538dd0609acd1b997c",
+        "size_bytes": 3747504,
+        "status": "verified_downloaded"
+      },
+      {
+        "name": "status-darwin-amd64",
+        "sha256": "0b310ecc008297ce227813aa077ad3007e7aa1eb86fb7f0daf9cd175e667ebb6",
+        "size_bytes": 4139040,
+        "status": "verified_downloaded"
+      },
+      {
+        "name": "binaries-darwin-amd64.tar.gz",
+        "sha256": "8f88739f65d2bd58aa8713befabe65917be12f2f2e13e366eebbf4ba5a471237",
+        "size_bytes": 3197762,
+        "status": "verified_downloaded"
+      },
+      {
+        "name": "SHA256SUMS",
+        "sha256": "faa5212910f42765a4e9707de6b924bb097a47968a7a562d4af46ddefcea05e0",
+        "size_bytes": 536,
+        "status": "verified_downloaded"
+      }
+    ],
+    "verification_scope": "Payload SHA-256 and exact byte length were verified for all pinned release assets; nothing was executed.",
+    "owned_prefix_install_preflight": "blocked_install_layout",
+    "blockers": [
+      "install.sh contains pattern requiring deeper confinement proof: .zshrc"
+    ]
+  },
+  "sayaka_local_measurements": {
+    "t12_local_install": {
+      "logical_bytes": 2818392,
+      "allocated_bytes": 2822144,
+      "status": "verified"
+    },
+    "m2_fixture_regression": {
+      "max_elapsed_ms": 42,
+      "max_first_result_ms": 4,
+      "peak_rss_bytes": 17563648,
+      "status": "verified"
+    },
+    "m7_fixture_regression": {
+      "index_ms": 2,
+      "first_frame_ms_max": 7.918999996036291,
+      "first_usable_snapshot_ms_max": 29.85900011844933,
+      "peak_rss_bytes": 15548416,
+      "effects_performed": false,
+      "status": "verified"
+    },
+    "t11_fixture_regression": {
+      "max_cpu_percent_one_core": 0.56187624750499,
+      "max_resident_bytes": 8339456,
+      "max_collection_ms": 3,
+      "status": "verified"
+    }
+  },
+  "remaining_gaps": [
+    "No Mole competitive runtime benchmark executed.",
+    "No disposable-host execution for Mole mutation families.",
+    "No full Sayaka parity installation profile for T8-T12 command families.",
+    "No real participant usability evidence."
+  ]
+}

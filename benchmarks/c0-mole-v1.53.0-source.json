@@ -1,0 +1,83 @@
+{
+  "benchmark_id": "c0-mole-v1.53.0-source-lock",
+  "comparator": {
+    "name": "Mole CLI",
+    "tag": "V1.53.0",
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+    "release_url": "https://github.com/tw93/Mole/releases/tag/V1.53.0",
+    "target_commitish": "main",
+    "published_at": "2026-08-30T02:08:13Z"
+  },
+  "release_assets": {
+    "analyze-darwin-arm64": {
+      "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb",
+      "size_bytes": 3620258
+    },
+    "status-darwin-arm64": {
+      "sha256": "46b8aded69d013d00f858908b02d35ea2d39087ccc474bcb8c2e65988fe0028e",
+      "size_bytes": 4065586
+    },
+    "binaries-darwin-arm64.tar.gz": {
+      "sha256": "3193b2322039680bf617f2e6794f85fbf1cad4992cc2457dd23c66e25b59db10",
+      "size_bytes": 3010562
+    },
+    "analyze-darwin-amd64": {
+      "sha256": "9113bfdc226e33eb3ccea548ab0e6012eda032c47ee33d538dd0609acd1b997c",
+      "size_bytes": 3747504
+    },
+    "status-darwin-amd64": {
+      "sha256": "0b310ecc008297ce227813aa077ad3007e7aa1eb86fb7f0daf9cd175e667ebb6",
+      "size_bytes": 4139040
+    },
+    "binaries-darwin-amd64.tar.gz": {
+      "sha256": "8f88739f65d2bd58aa8713befabe65917be12f2f2e13e366eebbf4ba5a471237",
+      "size_bytes": 3197762
+    },
+    "SHA256SUMS": {
+      "sha256": "faa5212910f42765a4e9707de6b924bb097a47968a7a562d4af46ddefcea05e0",
+      "size_bytes": 536
+    }
+  },
+  "source_evidence": [
+    {
+      "file": "README.md",
+      "line_ranges": [
+        "52-67",
+        "91-111",
+        "117-126",
+        "132-418"
+      ]
+    },
+    {
+      "file": "lib/core/commands.sh",
+      "line_ranges": [
+        "4-19"
+      ]
+    },
+    {
+      "file": "mole",
+      "line_ranges": [
+        "57-58",
+        "115-220"
+      ]
+    },
+    {
+      "file": "cmd/analyze/main.go",
+      "line_ranges": [
+        "19-37",
+        "44-60"
+      ]
+    },
+    {
+      "file": "cmd/status/main.go",
+      "line_ranges": [
+        "16-31",
+        "96-109"
+      ]
+    }
+  ],
+  "notes": [
+    "This lock is for reproducibility and provenance only.",
+    "Release asset bytes are published artifact sizes, not full installed footprint."
+  ]
+}

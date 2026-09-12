@@ -1,0 +1,338 @@
+{
+  "benchmark_id": "c0-mole-v1.53.0-ledger",
+  "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+  "required_command_families": [
+    "clean",
+    "uninstall",
+    "optimize",
+    "analyze",
+    "status",
+    "history",
+    "purge",
+    "installer",
+    "touchid",
+    "completion",
+    "update",
+    "remove",
+    "help",
+    "version"
+  ],
+  "entries": [
+    {
+      "family": "help",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:17",
+        "README.md:66-67",
+        "lib/core/help.sh:3-80"
+      ],
+      "tasks": [
+        "discover-command-list",
+        "inspect-global-options"
+      ],
+      "sayaka_coverage": "partial",
+      "fixture_safety_state": "safe-readonly",
+      "equivalence_rule": "Compare command discoverability and documented options only; no mutation required.",
+      "measurement_status": "locally_feasible_pending"
+    },
+    {
+      "family": "version",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:18",
+        "README.md:67",
+        "mole:57-58"
+      ],
+      "tasks": [
+        "print-version",
+        "alias-parity-mo-mole"
+      ],
+      "sayaka_coverage": "implemented",
+      "fixture_safety_state": "safe-readonly",
+      "equivalence_rule": "Version output must be deterministic and parseable in both tools.",
+      "measurement_status": "verified-local"
+    },
+    {
+      "family": "analyze",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:8",
+        "README.md:230-326",
+        "cmd/analyze/main.go:19-37,44-60",
+        "cmd/analyze/view.go:380-407",
+        "cmd/analyze/delete.go:23-36,50-64,104-153,278-286",
+        "cmd/analyze/json.go:20,103"
+      ],
+      "tasks": [
+        "overview-and-explicit-path-mode",
+        "json-one-shot",
+        "tui-navigation-filter-sort",
+        "large-file-view",
+        "multiselect-preview-cancel",
+        "confirmed-trash-action"
+      ],
+      "sayaka_coverage": "partial",
+      "fixture_safety_state": "mixed-fixture-only-for-read-paths",
+      "equivalence_rule": "Only compare read-only fixture scans unless mutation path confinement is proven.",
+      "measurement_status": "partially_measured_readonly_only"
+    },
+    {
+      "family": "status",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:9",
+        "README.md:247-327",
+        "cmd/status/main.go:16-31,96-109"
+      ],
+      "tasks": [
+        "json-one-shot",
+        "ndjson-watch",
+        "interval-controls",
+        "cpu-memory-disk-network",
+        "power-thermal-gpu-process-and-health"
+      ],
+      "sayaka_coverage": "partial",
+      "fixture_safety_state": "safe-readonly",
+      "equivalence_rule": "Metric coverage and sampling frequency must match before any speed claim.",
+      "measurement_status": "partially_measured_with_coverage_gaps"
+    },
+    {
+      "family": "history",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:10",
+        "README.md:78-79,123,283",
+        "bin/history.sh:20-28"
+      ],
+      "tasks": [
+        "human-history-view",
+        "json-export",
+        "pending-and-partial-outcomes",
+        "disabled-logging-mode"
+      ],
+      "sayaka_coverage": "partial",
+      "fixture_safety_state": "safe-fixture-only",
+      "equivalence_rule": "History correctness is judged against independent journal fixtures, not upstream output format.",
+      "measurement_status": "locally_feasible_pending"
+    },
+    {
+      "family": "completion",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:14",
+        "README.md:61-65,399-418",
+        "bin/completion.sh:14-17,311,375-400,439"
+      ],
+      "tasks": [
+        "generate-shell-completions",
+        "completion-install-preview",
+        "channel-sensitive-completion-behavior"
+      ],
+      "sayaka_coverage": "partial",
+      "fixture_safety_state": "safe-fixture-only",
+      "equivalence_rule": "Compare generated completion behavior separately from shell profile mutation flows.",
+      "measurement_status": "verified-local-partial"
+    },
+    {
+      "family": "clean",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:5",
+        "README.md:132-165",
+        "bin/clean.sh:1680-1796,2017-2046",
+        "lib/clean/user.sh:1-200",
+        "lib/clean/app_caches.sh:1-220",
+        "lib/clean/dev.sh:1-220",
+        "lib/clean/system.sh:1-220",
+        "lib/clean/apps.sh:1-260",
+        "lib/clean/brew.sh:1-220",
+        "lib/clean/project.sh:1-260",
+        "lib/clean/hints.sh:1-220"
+      ],
+      "tasks": [
+        "external-volume-target-cleanup",
+        "system-deep-cleanup",
+        "system-local-snapshots-cleanup",
+        "user-essentials-cleanup",
+        "finder-metadata-cleanup",
+        "app-caches-cleanup",
+        "browsers-cleanup",
+        "cloud-office-cleanup",
+        "developer-tools-cleanup",
+        "apps-utilities-cleanup",
+        "virtualization-cleanup",
+        "application-support-logs-cleanup",
+        "orphaned-app-data-cleanup",
+        "orphaned-system-services-cleanup",
+        "orphaned-container-stubs-cleanup",
+        "apple-silicon-caches-cleanup",
+        "cached-device-firmware-cleanup",
+        "time-machine-failed-backups-cleanup",
+        "large-file-candidates-review",
+        "project-artifact-hints"
+      ],
+      "sayaka_coverage": "unsupported",
+      "fixture_safety_state": "blocked-mutation-outside-disposable-host",
+      "equivalence_rule": "Do not benchmark clean against absent Sayaka capability.",
+      "measurement_status": "unmeasured_unsupported"
+    },
+    {
+      "family": "uninstall",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:6",
+        "README.md:167-190",
+        "bin/uninstall.sh:373-383,1444-1489,1532-1558"
+      ],
+      "tasks": [
+        "list-and-select-apps",
+        "dry-run",
+        "trash-vs-permanent-mode",
+        "shared-data-protection"
+      ],
+      "sayaka_coverage": "unsupported",
+      "fixture_safety_state": "blocked-mutation-outside-disposable-host",
+      "equivalence_rule": "Permanent deletion and real app state are blocked; synthetic fixtures required before timing.",
+      "measurement_status": "unmeasured_unsupported"
+    },
+    {
+      "family": "optimize",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:7",
+        "README.md:193-228",
+        "bin/optimize.sh:192-209,283",
+        "lib/optimize/catalog.sh:31-93",
+        "lib/optimize/tasks.sh:1866-1878"
+      ],
+      "tasks": [
+        "system_maintenance",
+        "cache_refresh",
+        "saved_state_cleanup",
+        "fix_broken_configs",
+        "network_optimization",
+        "sqlite_vacuum",
+        "launch_services_rebuild",
+        "prevent_network_dsstore",
+        "legacy_overrides_audit",
+        "network_stack_optimize",
+        "disk_permissions_repair",
+        "spotlight_index_optimize",
+        "spotlight_orphan_rules_cleanup",
+        "periodic_maintenance",
+        "shared_file_list_repair",
+        "disk_verify",
+        "login_items_audit",
+        "quarantine_cleanup",
+        "launch_agents_cleanup",
+        "notification_cleanup",
+        "coreduet_cleanup"
+      ],
+      "sayaka_coverage": "unsupported",
+      "fixture_safety_state": "blocked-real-host-mutations-and-privilege-flows",
+      "equivalence_rule": "No optimize speed claim is valid without equal catalog task coverage and isolated host proof.",
+      "measurement_status": "unmeasured_blocked"
+    },
+    {
+      "family": "purge",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:11",
+        "README.md:330-368",
+        "bin/purge.sh:288-322",
+        "lib/manage/purge_paths.sh:1-220",
+        "lib/clean/project.sh:1466"
+      ],
+      "tasks": [
+        "default-and-custom-roots",
+        "staleness-cutoff",
+        "dry-run-and-selected-removal",
+        "grouped-project-output"
+      ],
+      "sayaka_coverage": "unsupported",
+      "fixture_safety_state": "safe-fixture-only-for-future",
+      "equivalence_rule": "Use synthetic project fixtures with independent timestamps; no real workspace purges.",
+      "measurement_status": "unmeasured_unsupported"
+    },
+    {
+      "family": "installer",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:12",
+        "README.md:372-395",
+        "bin/installer.sh:3,34-45,52-89,109-118,152-161,811-821"
+      ],
+      "tasks": [
+        "discover-installer-files",
+        "source-labeling",
+        "zip-payload-detection",
+        "dry-run-and-selected-removal"
+      ],
+      "sayaka_coverage": "unsupported",
+      "fixture_safety_state": "safe-fixture-only-for-future",
+      "equivalence_rule": "Installer cleanup measurements require synthetic roots, never real Downloads/Desktop scans.",
+      "measurement_status": "unmeasured_unsupported"
+    },
+    {
+      "family": "touchid",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:13",
+        "README.md:61,91-111",
+        "bin/touchid.sh:332-365"
+      ],
+      "tasks": [
+        "status-check",
+        "enable-disable",
+        "dry-run"
+      ],
+      "sayaka_coverage": "unsupported",
+      "fixture_safety_state": "blocked-real-auth-and-pam-modification",
+      "equivalence_rule": "No local host authentication mutations are allowed in C0.",
+      "measurement_status": "unmeasured_blocked"
+    },
+    {
+      "family": "update",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:15",
+        "README.md:63-64,91-111",
+        "lib/manage/update.sh:1-220"
+      ],
+      "tasks": [
+        "stable-main-nightly-dev-channel-selection",
+        "owned-prefix-update",
+        "rollback-on-failure"
+      ],
+      "sayaka_coverage": "unsupported",
+      "fixture_safety_state": "blocked-network-install-flow-unverified",
+      "equivalence_rule": "Channel/update parity remains open until Sayaka distribution channels exist.",
+      "measurement_status": "unmeasured_unsupported"
+    },
+    {
+      "family": "remove",
+      "upstream_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+      "upstream_evidence": [
+        "lib/core/commands.sh:16",
+        "README.md:65",
+        "lib/manage/remove.sh:1-220"
+      ],
+      "tasks": [
+        "owned-installation-removal",
+        "system-installation-removal",
+        "residual-artifact-safety"
+      ],
+      "sayaka_coverage": "partial",
+      "fixture_safety_state": "safe-owned-prefix-only",
+      "equivalence_rule": "Measure only verified owned-prefix removal; block unowned/system paths.",
+      "measurement_status": "verified-local-partial"
+    }
+  ],
+  "full_rule_audit_status": {
+    "clean": "pending_full_rule_audit",
+    "uninstall": "pending_full_rule_audit",
+    "purge": "pending_full_rule_audit",
+    "installer": "pending_full_rule_audit",
+    "optimize_catalog": "all_catalog_actions_listed_rule_level_pending"
+  }
+}

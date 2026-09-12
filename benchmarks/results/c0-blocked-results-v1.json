@@ -1,0 +1,394 @@
+{
+  "benchmark_id": "c0-statistics-results-v1",
+  "protocol_manifest_path": "benchmarks/c0-statistics-v1.json",
+  "protocol_manifest_sha256": "c400ab20e6df0fdf9b5b2da87a3a738da25e3f0efc158c7a010d38eafd9d9c3c",
+  "frozen_inputs": {
+    "fixture_manifest_sha256": "ca73f1e033008b0b1715f5f4183b869484fe04aafb9be9d6bacd71e39d264ede",
+    "ledger_manifest_sha256": "f43f2f9f3a15b6b6108b575d689354b9a38e4e453c836401affd4fd64177c1d6",
+    "source_manifest_sha256": "075f6cd59d1df59542aa1a20aafa949018d183f26ddec1e4116823cbba68ee94"
+  },
+  "claims": {
+    "supports_full_c1_parity": false,
+    "sayaka_faster": false,
+    "sayaka_smaller": false,
+    "sayaka_easier": false
+  },
+  "scenarios": [
+    {
+      "scenario_id": "c0-analyze-readonly-basic-json-v1",
+      "fixture_id": "scan-readonly-basic-v1",
+      "supported_now": false,
+      "scenario_status": "not_measured",
+      "eligibility_outcome": {
+        "status": "ineligible",
+        "reason": "Mole/Sayaka output field and traversal-equivalence contract is not yet frozen"
+      },
+      "equal_work_outcome": {
+        "status": "ineligible",
+        "reason": "Mole/Sayaka output field and traversal-equivalence contract is not yet frozen"
+      },
+      "pair_schedule": [
+        {
+          "pair_id": 1,
+          "order": "BA"
+        },
+        {
+          "pair_id": 2,
+          "order": "AB"
+        },
+        {
+          "pair_id": 3,
+          "order": "BA"
+        },
+        {
+          "pair_id": 4,
+          "order": "AB"
+        },
+        {
+          "pair_id": 5,
+          "order": "BA"
+        },
+        {
+          "pair_id": 6,
+          "order": "AB"
+        },
+        {
+          "pair_id": 7,
+          "order": "BA"
+        },
+        {
+          "pair_id": 8,
+          "order": "BA"
+        },
+        {
+          "pair_id": 9,
+          "order": "AB"
+        },
+        {
+          "pair_id": 10,
+          "order": "BA"
+        },
+        {
+          "pair_id": 11,
+          "order": "BA"
+        },
+        {
+          "pair_id": 12,
+          "order": "BA"
+        },
+        {
+          "pair_id": 13,
+          "order": "BA"
+        },
+        {
+          "pair_id": 14,
+          "order": "AB"
+        },
+        {
+          "pair_id": 15,
+          "order": "BA"
+        },
+        {
+          "pair_id": 16,
+          "order": "BA"
+        },
+        {
+          "pair_id": 17,
+          "order": "AB"
+        },
+        {
+          "pair_id": 18,
+          "order": "AB"
+        },
+        {
+          "pair_id": 19,
+          "order": "AB"
+        },
+        {
+          "pair_id": 20,
+          "order": "AB"
+        },
+        {
+          "pair_id": 21,
+          "order": "BA"
+        },
+        {
+          "pair_id": 22,
+          "order": "AB"
+        },
+        {
+          "pair_id": 23,
+          "order": "BA"
+        },
+        {
+          "pair_id": 24,
+          "order": "AB"
+        },
+        {
+          "pair_id": 25,
+          "order": "BA"
+        },
+        {
+          "pair_id": 26,
+          "order": "AB"
+        },
+        {
+          "pair_id": 27,
+          "order": "BA"
+        },
+        {
+          "pair_id": 28,
+          "order": "AB"
+        },
+        {
+          "pair_id": 29,
+          "order": "AB"
+        },
+        {
+          "pair_id": 30,
+          "order": "AB"
+        },
+        {
+          "pair_id": 31,
+          "order": "AB"
+        }
+      ],
+      "samples": [],
+      "failures": []
+    },
+    {
+      "scenario_id": "c0-analyze-sparse-accounting-v1",
+      "fixture_id": "scan-sparse-links-v1",
+      "supported_now": false,
+      "scenario_status": "not_measured",
+      "eligibility_outcome": {
+        "status": "ineligible",
+        "reason": "competitive sparse-accounting equivalence is not yet proven"
+      },
+      "equal_work_outcome": {
+        "status": "ineligible",
+        "reason": "competitive sparse-accounting equivalence is not yet proven"
+      },
+      "pair_schedule": [
+        {
+          "pair_id": 1,
+          "order": "BA"
+        },
+        {
+          "pair_id": 2,
+          "order": "AB"
+        },
+        {
+          "pair_id": 3,
+          "order": "BA"
+        },
+        {
+          "pair_id": 4,
+          "order": "AB"
+        },
+        {
+          "pair_id": 5,
+          "order": "BA"
+        },
+        {
+          "pair_id": 6,
+          "order": "AB"
+        },
+        {
+          "pair_id": 7,
+          "order": "BA"
+        },
+        {
+          "pair_id": 8,
+          "order": "BA"
+        },
+        {
+          "pair_id": 9,
+          "order": "AB"
+        },
+        {
+          "pair_id": 10,
+          "order": "BA"
+        },
+        {
+          "pair_id": 11,
+          "order": "BA"
+        },
+        {
+          "pair_id": 12,
+          "order": "BA"
+        },
+        {
+          "pair_id": 13,
+          "order": "BA"
+        },
+        {
+          "pair_id": 14,
+          "order": "AB"
+        },
+        {
+          "pair_id": 15,
+          "order": "BA"
+        },
+        {
+          "pair_id": 16,
+          "order": "BA"
+        },
+        {
+          "pair_id": 17,
+          "order": "AB"
+        },
+        {
+          "pair_id": 18,
+          "order": "AB"
+        },
+        {
+          "pair_id": 19,
+          "order": "AB"
+        },
+        {
+          "pair_id": 20,
+          "order": "AB"
+        },
+        {
+          "pair_id": 21,
+          "order": "BA"
+        },
+        {
+          "pair_id": 22,
+          "order": "AB"
+        },
+        {
+          "pair_id": 23,
+          "order": "BA"
+        },
+        {
+          "pair_id": 24,
+          "order": "AB"
+        },
+        {
+          "pair_id": 25,
+          "order": "BA"
+        },
+        {
+          "pair_id": 26,
+          "order": "AB"
+        },
+        {
+          "pair_id": 27,
+          "order": "BA"
+        },
+        {
+          "pair_id": 28,
+          "order": "AB"
+        },
+        {
+          "pair_id": 29,
+          "order": "AB"
+        },
+        {
+          "pair_id": 30,
+          "order": "AB"
+        },
+        {
+          "pair_id": 31,
+          "order": "AB"
+        }
+      ],
+      "samples": [],
+      "failures": []
+    },
+    {
+      "scenario_id": "c0-install-owned-prefix-layout-v1",
+      "fixture_id": "install-owned-prefix-v1",
+      "supported_now": false,
+      "scenario_status": "not_measured",
+      "eligibility_outcome": {
+        "status": "ineligible",
+        "reason": "Mole install preflight remains blocked on shell-profile path handling"
+      },
+      "equal_work_outcome": {
+        "status": "ineligible",
+        "reason": "Mole install preflight remains blocked on shell-profile path handling"
+      },
+      "pair_schedule": [
+        {
+          "pair_id": 1,
+          "order": "AB"
+        },
+        {
+          "pair_id": 2,
+          "order": "BA"
+        },
+        {
+          "pair_id": 3,
+          "order": "BA"
+        },
+        {
+          "pair_id": 4,
+          "order": "BA"
+        },
+        {
+          "pair_id": 5,
+          "order": "AB"
+        },
+        {
+          "pair_id": 6,
+          "order": "BA"
+        },
+        {
+          "pair_id": 7,
+          "order": "AB"
+        }
+      ],
+      "samples": [],
+      "failures": []
+    },
+    {
+      "scenario_id": "c0-status-watch-equivalent-coverage-v1",
+      "fixture_id": "none",
+      "supported_now": false,
+      "scenario_status": "not_measured",
+      "eligibility_outcome": {
+        "status": "ineligible",
+        "reason": "current status metric coverage mismatch prevents equal-work comparison"
+      },
+      "equal_work_outcome": {
+        "status": "ineligible",
+        "reason": "current status metric coverage mismatch prevents equal-work comparison"
+      },
+      "pair_schedule": [
+        {
+          "pair_id": 1,
+          "order": "AB"
+        },
+        {
+          "pair_id": 2,
+          "order": "BA"
+        },
+        {
+          "pair_id": 3,
+          "order": "BA"
+        },
+        {
+          "pair_id": 4,
+          "order": "BA"
+        },
+        {
+          "pair_id": 5,
+          "order": "AB"
+        },
+        {
+          "pair_id": 6,
+          "order": "BA"
+        },
+        {
+          "pair_id": 7,
+          "order": "AB"
+        }
+      ],
+      "samples": [],
+      "failures": []
+    }
+  ]
+}
