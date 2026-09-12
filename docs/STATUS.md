@@ -9,6 +9,8 @@ sayaka status
 sayaka status --json
 sayaka status --watch
 sayaka status --watch --json --interval-ms 1000 --count 12
+sayaka status --top 10
+sayaka status --watch --json --interval-ms 1000 --count 12 --top 10 --top-sort cpu
 ```
 
 One-shot output takes a baseline and waits for a subsequent usable CPU counter
@@ -32,10 +34,16 @@ numbers and `coalesced_samples` disclose skipped intermediate delivery.
 | Network | Bounded routing/interface counters | Per-interface cumulative byte counters and measured rates; no double-counted aggregate across physical/virtual interfaces |
 | Disk | Startup filesystem `statfs` | Native total/free/available quantities; not Finder purgeable/reclaimable space |
 | Sampler | Current task RSS and cumulative self CPU time | Actual process resident bytes and interval CPU use, where one full core is 100% |
-| Processes | Bounded visible PID enumeration | Count only; no names, command lines, environment or per-process top table |
+| Processes | Bounded visible PID enumeration and optional `PROC_PIDTASKALLINFO` probe | Default is count-only. `--top N` (1..32) opt-in adds PID/name/RSS/CPU rows sorted by `--top-sort cpu|memory` (default cpu); no command lines, env, cwd, path, or UID names |
 | Power | Public IOPowerSources evidence | AC/battery and charge where available; no battery is represented by null, not 0% |
 | Thermal state | Public NSProcessInfo classification | Nominal/fair/serious/critical where available; not numeric temperature |
-| Temperature / GPU / top processes | Not implemented in this slice | Explicit unsupported state and null value |
+| Temperature / GPU | Not implemented in this slice | Explicit unsupported state and null value |
+
+Per-process top data is disabled by default because process names/PIDs are local
+potentially sensitive data. When enabled with `--top`, JSON/NDJSON populates
+`process_top` with `top_schema_version: 1`, row-level CPU freshness, and
+coverage metadata (`visible_processes`, `probed`, `denied`, `disappeared`,
+`invalid`, `truncated`, `partial`, caps, and collection budget).
 
 Native calls live in the existing macOS FFI audit crate. Errors and invalid
 returned lengths/units are not silently converted to zero-shaped data.
@@ -62,6 +70,11 @@ context, not a claim that the published revision exactly matches the running
 kernel. Observation timestamps describe retrieval; Mach does not expose a
 cache-generation timestamp here. Configuring a faster interval cannot guarantee
 new native values on every query.
+
+For opt-in process-top CPU rows, Sayaka converts `PROC_PIDTASKALLINFO`
+user+system counters from Mach absolute-time units via `mach_timebase_info`
+(consistent with Apple XNU recount examples), and local synthetic self-probe
+checks matched converted deltas against process CPU-time evidence.
 
 ## Freshness and failure
 

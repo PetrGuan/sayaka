@@ -4,7 +4,9 @@ use crate::terminal::{Line, Signals, Style, Terminal};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use sayaka_engine::model::Cancellation;
-use sayaka_engine::status::{Config, Metric, NativeProvider, Sampler, Snapshot, State};
+use sayaka_engine::status::{
+    Config, Metric, NativeProvider, ProcessTopConfig, ProcessTopSort, Sampler, Snapshot, State,
+};
 use std::io::{self, IsTerminal, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -20,13 +22,17 @@ pub fn command() -> Command {
             .help("Stop after N emitted watch snapshots"))
         .arg(Arg::new("interval-ms").long("interval-ms").default_value("1000").value_parser(value_parser!(u64).range(250..=60000))
             .help("Fast sampling interval; slow metrics refresh no faster than 5 seconds"))
+        .arg(Arg::new("top").long("top").value_name("N").value_parser(value_parser!(u64).range(1..=32))
+            .help("Opt-in local process PID/name/RSS/CPU table; names can be sensitive local data"))
+        .arg(Arg::new("top-sort").long("top-sort").requires("top").value_parser(["cpu", "memory"])
+            .help("Sort --top rows by cpu (default) or memory"))
         .arg(Arg::new("cpu-warn").long("cpu-warn").default_value("90").value_parser(value_parser!(f64))
             .help("Read-only CPU busy threshold, percent"))
         .arg(Arg::new("memory-warn").long("memory-warn").default_value("90").value_parser(value_parser!(f64))
             .help("Active+wired+physical compressor / RAM threshold; not an OS pressure score"))
         .arg(Arg::new("disk-warn").long("disk-warn").default_value("10").value_parser(value_parser!(f64))
             .help("Read-only startup filesystem available-space threshold, percent or less"))
-        .after_help("One-shot waits for a usable CPU counter window (up to five observations).\nWatch never installs a daemon or changes system state. q/Esc exits a terminal panel;\nCtrl-C/SIGTERM cancels and joins the sampler. Numeric temperature, GPU utilization\nand per-process top lists remain explicit unsupported capabilities.")
+        .after_help("One-shot waits for a usable CPU counter window (up to five observations).\nWatch never installs a daemon or changes system state. q/Esc exits a terminal panel;\nCtrl-C/SIGTERM cancels and joins the sampler. Numeric temperature and GPU utilization\nremain unsupported. Process PID/name/RSS/CPU rows are collected only with --top.")
 }
 
 struct TimedSnapshot {
@@ -181,6 +187,17 @@ fn options(args: &ArgMatches) -> io::Result<Options> {
         .ok_or_else(|| io::Error::other("interval missing"))?;
     let config = Config {
         interval: Duration::from_millis(interval),
+        process_top: args.get_one::<u64>("top").map(|limit| ProcessTopConfig {
+            limit: *limit as usize,
+            sort: match args
+                .get_one::<String>("top-sort")
+                .map(String::as_str)
+                .unwrap_or("cpu")
+            {
+                "memory" => ProcessTopSort::Memory,
+                _ => ProcessTopSort::Cpu,
+            },
+        }),
         cpu_warning_percent: *args
             .get_one::<f64>("cpu-warn")
             .ok_or_else(|| io::Error::other("threshold missing"))?,
@@ -471,6 +488,41 @@ fn lines(snapshot: &Snapshot) -> Vec<String> {
         "Visible processes: {}",
         metric(&snapshot.visible_processes, |count| count.to_string())
     ));
+    if let Some(top) = &snapshot.process_top.value {
+        lines.push(format!(
+            "Top processes (opt-in): sort={:?} shown={} limit={} probed={} visible={} denied={} disappeared={} invalid={}{}{}",
+            top.sort,
+            top.rows.len(),
+            top.limit,
+            top.probed,
+            top.visible_processes,
+            top.denied,
+            top.disappeared,
+            top.invalid,
+            if top.truncated { " truncated" } else { "" },
+            if top.partial { " partial" } else { "" }
+        ));
+        for row in &top.rows {
+            lines.push(format!(
+                "  pid={} {} cpu={} rss={} window={} state={:?}",
+                row.pid,
+                row.name,
+                row.cpu_percent_one_core
+                    .map(|value| format!("{value:.2}%"))
+                    .unwrap_or_else(|| "unknown".into()),
+                crate::human::size(row.resident_bytes),
+                row.cpu_window_ms
+                    .map(|value| format!("{value}ms"))
+                    .unwrap_or_else(|| "unknown".into()),
+                row.state
+            ));
+        }
+    } else if let Some(error) = &snapshot.process_top.error {
+        lines.push(format!(
+            "Top processes: {}: {:?}",
+            error.code, error.message
+        ));
+    }
     lines.push(format!(
         "Power: {}",
         metric(&snapshot.power, |power| format!(
@@ -490,8 +542,7 @@ fn lines(snapshot: &Snapshot) -> Vec<String> {
         "Thermal state: {}",
         metric(&snapshot.thermal_state, |state| format!("{state:?}"))
     ));
-    lines
-        .push("Temperature / GPU utilization / per-process top: unsupported in this slice.".into());
+    lines.push("Temperature / GPU utilization: unsupported in this slice.".into());
     lines.push(format!(
         "Sampler: {}",
         metric(&snapshot.sampler_process, |process| format!(
@@ -519,7 +570,7 @@ fn json_error(error: serde_json::Error) -> io::Error {
 fn print_snapshot(snapshot: &Snapshot) -> io::Result<()> {
     let mut out = io::stdout().lock();
     writeln!(out, "Sayaka system status - read-only")?;
-    for line in lines(snapshot) {
+    for line in render_terminal_lines(snapshot) {
         writeln!(out, "{line}")?;
     }
     out.flush()
@@ -573,23 +624,47 @@ fn frame(snapshot: Option<&Snapshot>, width: u16, height: u16) -> Vec<Line> {
 }
 
 fn clip(text: &str, width: usize) -> String {
+    let text = escape_for_terminal(text);
     let mut output = String::new();
     let mut used = 0;
+    for ch in text.chars() {
+        let columns = ch.width().unwrap_or(0);
+        if used + columns > width {
+            return output;
+        }
+        output.push(ch);
+        used += columns;
+    }
+    output
+}
+
+fn render_terminal_lines(snapshot: &Snapshot) -> Vec<String> {
+    lines(snapshot)
+        .into_iter()
+        .map(|line| escape_for_terminal(&line))
+        .collect()
+}
+
+fn escape_for_terminal(text: &str) -> String {
+    let sensitive = |ch: char| {
+        ch.is_control()
+            || ('\u{007f}'..='\u{009f}').contains(&ch)
+            || matches!(
+                ch,
+                '\u{061c}'
+                    | '\u{200b}'..='\u{200f}'
+                    | '\u{2028}'..='\u{202e}'
+                    | '\u{2066}'..='\u{2069}'
+            )
+    };
+    let mut output = String::new();
     for original in text.chars() {
-        let safe = if original.is_control()
-            || matches!(original, '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}')
-        {
-            original.escape_debug().to_string()
-        } else {
-            original.to_string()
-        };
-        for ch in safe.chars() {
-            let columns = ch.width().unwrap_or(0);
-            if used + columns > width {
-                return output;
+        if sensitive(original) {
+            for escaped in original.escape_debug() {
+                output.push(escaped);
             }
-            output.push(ch);
-            used += columns;
+        } else {
+            output.push(original);
         }
     }
     output
@@ -598,6 +673,145 @@ fn clip(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sayaka_engine::status::{
+        Alert, Cpu, Disk, Interface, Memory, MetricError, Power, ProcessIdentity, ProcessTop,
+        ProcessTopRow, SamplerProcess, Thermal,
+    };
+
+    fn metric<T>(value: Option<T>, state: State) -> Metric<T> {
+        Metric {
+            value,
+            state,
+            source: "test",
+            observed_unix_ms: Some(1),
+            age_ms: Some(0),
+            max_age_ms: 1000,
+            error: None,
+        }
+    }
+
+    fn sample_snapshot_with_name(name: &str) -> Snapshot {
+        Snapshot {
+            schema_version: 1,
+            sampler_id: "x".into(),
+            sequence: 2,
+            observed_unix_ms: Some(1),
+            elapsed_ms: 1000,
+            interval_ms: 1000,
+            slow_interval_ms: 5000,
+            collection_ms: 3,
+            coalesced_samples: 0,
+            clock_error: Some(MetricError {
+                code: "clock".into(),
+                message: "none".into(),
+            }),
+            cpu: metric(
+                Some(Cpu {
+                    busy_percent: 10.0,
+                    window_ms: 1000,
+                }),
+                State::Fresh,
+            ),
+            memory: metric(
+                Some(Memory {
+                    physical_bytes: 1024,
+                    page_size: 4096,
+                    active_bytes: 200,
+                    inactive_bytes: 100,
+                    wired_bytes: 100,
+                    free_bytes: 400,
+                    compressor_bytes: 50,
+                    speculative_bytes: 0,
+                    purgeable_bytes: 0,
+                    working_set_percent: 34.0,
+                }),
+                State::Fresh,
+            ),
+            network: metric(
+                Some(vec![Interface {
+                    index: 1,
+                    name: "en0".into(),
+                    up: true,
+                    received_bytes: 1,
+                    transmitted_bytes: 1,
+                    received_bytes_per_second: Some(1.0),
+                    transmitted_bytes_per_second: Some(1.0),
+                    window_ms: Some(1000),
+                    rate_state: State::Fresh,
+                    rate_reason: None,
+                }]),
+                State::Fresh,
+            ),
+            disk: metric(
+                Some(Disk {
+                    total_bytes: 1000,
+                    free_bytes: 500,
+                    available_bytes: 400,
+                }),
+                State::Fresh,
+            ),
+            sampler_process: metric(
+                Some(SamplerProcess {
+                    cpu_time_ns: 1,
+                    resident_bytes: 4096,
+                    cpu_percent_one_core: Some(1.0),
+                    window_ms: Some(1000),
+                }),
+                State::Fresh,
+            ),
+            visible_processes: metric(Some(10), State::Fresh),
+            power: metric(
+                Some(Power {
+                    on_ac: true,
+                    battery_percent: None,
+                    charging: None,
+                }),
+                State::Fresh,
+            ),
+            thermal_state: metric(Some(Thermal::Nominal), State::Fresh),
+            temperature_celsius: metric::<f64>(None, State::Unsupported),
+            gpu_utilization_percent: metric::<f64>(None, State::Unsupported),
+            process_top: metric(
+                Some(ProcessTop {
+                    top_schema_version: 1,
+                    sort: ProcessTopSort::Cpu,
+                    limit: 1,
+                    visible_processes: 10,
+                    candidate_cap: 65536,
+                    probe_cap: 4096,
+                    collection_budget_ms: 100,
+                    probed: 10,
+                    denied: 0,
+                    disappeared: 0,
+                    invalid: 0,
+                    truncated: false,
+                    partial: false,
+                    rows: vec![ProcessTopRow {
+                        pid: 42,
+                        name: name.to_owned(),
+                        identity: ProcessIdentity {
+                            pid: 42,
+                            start_unix_sec: 1,
+                            start_unix_usec: 1,
+                        },
+                        resident_bytes: 2048,
+                        cpu_percent_one_core: None,
+                        cpu_window_ms: None,
+                        state: State::WarmingUp,
+                        reason: Some("first_sample".into()),
+                    }],
+                }),
+                State::Fresh,
+            ),
+            alerts: vec![Alert {
+                metric: "cpu_busy",
+                state: "clear",
+                threshold_percent: 90.0,
+                observed_percent: Some(10.0),
+            }],
+        }
+    }
+
     #[test]
     fn tiny_frames_are_bounded_and_escape_terminal_controls() {
         for height in 0..8 {
@@ -605,9 +819,22 @@ mod tests {
             assert_eq!(result.len(), usize::from(height));
         }
         assert!(
-            !clip("bad\x1b[2J\n\u{202e}", 80)
+            !clip("bad\x1b[2J\n\u{202e}\u{0085}\u{2067}", 80)
                 .chars()
                 .any(char::is_control)
         );
+    }
+
+    #[test]
+    fn rendered_lines_escape_malicious_process_names_without_breaking_unicode() {
+        let snapshot = sample_snapshot_with_name("bad\x1b[2J\n\u{202e}\u{0085}\u{2067}中文");
+        let lines = render_terminal_lines(&snapshot);
+        let top_line = lines
+            .iter()
+            .find(|line| line.contains("pid=42"))
+            .expect("top line");
+        assert!(!top_line.chars().any(char::is_control));
+        assert!(top_line.contains("\\u{202e}") || top_line.contains("\\x1b"));
+        assert!(top_line.contains("中文"));
     }
 }

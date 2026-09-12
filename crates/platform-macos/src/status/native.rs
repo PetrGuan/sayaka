@@ -4,6 +4,7 @@ use super::*;
 use std::io;
 use std::mem::{offset_of, size_of};
 use std::ptr;
+use std::time::Instant;
 
 mod power;
 pub use power::power;
@@ -11,6 +12,7 @@ pub use power::power;
 const ROUTE_CAP: usize = 1024 * 1024;
 const INTERFACE_CAP: usize = 128;
 const PID_CAP: usize = 65_536;
+const PROCESS_TOP_MAX_LIMIT: usize = 32;
 // SDK sys/proc_info.h; libc exposes proc_listpids but not this selector.
 const PROC_ALL_PIDS: u32 = 1;
 
@@ -438,6 +440,52 @@ fn pid_count(pids: &[libc::pid_t], written: usize) -> io::Result<u64> {
     Ok(pids.len() as u64)
 }
 
+fn pid_list(pids: &[libc::pid_t], written: usize) -> io::Result<(&[libc::pid_t], bool)> {
+    let capacity = std::mem::size_of_val(pids);
+    if written == 0 || written > capacity || !written.is_multiple_of(size_of::<libc::pid_t>()) {
+        return Err(invalid("proc_listpids returned an invalid byte count"));
+    }
+    let truncated = written == capacity;
+    let pids = &pids[..written / size_of::<libc::pid_t>()];
+    if pids.iter().any(|pid| *pid < 0) {
+        return Err(invalid("proc_listpids returned a negative PID"));
+    }
+    Ok((pids, truncated))
+}
+
+fn c_name(bytes: &[libc::c_char]) -> Option<String> {
+    let raw = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    if raw == 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(raw);
+    for byte in &bytes[..raw] {
+        out.push(*byte as u8);
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out).into_owned())
+}
+
+fn mach_ticks_to_ns(ticks: u64, numer: u32, denom: u32) -> io::Result<u64> {
+    if denom == 0 {
+        return Err(invalid("mach timebase denominator is zero"));
+    }
+    let scaled = u128::from(ticks)
+        .checked_mul(u128::from(numer))
+        .ok_or_else(|| invalid("mach counter conversion overflow"))?;
+    let ns = scaled / u128::from(denom);
+    u64::try_from(ns).map_err(|_| invalid("mach counter conversion exceeds u64"))
+}
+
+fn process_name(info: &libc::proc_bsdinfo) -> Option<String> {
+    c_name(&info.pbi_name).or_else(|| c_name(&info.pbi_comm))
+}
+
 /// Number of visible PIDs from `proc_listpids(PROC_ALL_PIDS)`, capped at 65,536.
 /// No process names, arguments or environment are requested.
 pub fn processes() -> io::Result<u64> {
@@ -453,6 +501,156 @@ pub fn processes() -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
     pid_count(&pids, written as usize)
+}
+
+/// Bounded per-process PID/name/RSS/CPU counters from `PROC_PIDTASKALLINFO`.
+/// No command line, executable path, cwd, environment, UID names, or arguments.
+pub fn processes_top(
+    limit: usize,
+    _sort: ProcessTopSort,
+    probe_cap: usize,
+    collection_budget_ms: u64,
+) -> io::Result<ProcessTopSnapshot> {
+    if !(1..=PROCESS_TOP_MAX_LIMIT).contains(&limit) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "top limit must be in 1..=32",
+        ));
+    }
+    if probe_cap == 0 || probe_cap > PID_CAP {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "top probe cap must be in 1..=65536",
+        ));
+    }
+    if collection_budget_ms == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "top collection budget must be positive milliseconds",
+        ));
+    }
+    // SAFETY: Integer-only C API writes numer/denom to this initialized record.
+    #[allow(deprecated)]
+    let mut timebase: libc::mach_timebase_info_data_t = unsafe { std::mem::zeroed() };
+    // SAFETY: Public API with writable pointer to a valid record.
+    #[allow(deprecated)]
+    mach_result(
+        unsafe { libc::mach_timebase_info(&mut timebase) },
+        "mach_timebase_info",
+    )?;
+    #[allow(deprecated)]
+    if timebase.numer == 0 || timebase.denom == 0 {
+        return Err(invalid("invalid mach timebase ratio"));
+    }
+    let mut pids = bounded_vec(PID_CAP, PID_CAP, 0 as libc::pid_t)?;
+    let capacity = std::mem::size_of_val(pids.as_slice());
+    // SAFETY: The output buffer has byte capacity and receives PID values.
+    let written =
+        unsafe { libc::proc_listpids(PROC_ALL_PIDS, 0, pids.as_mut_ptr().cast(), capacity as i32) };
+    if written <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let (all, mut truncated) = pid_list(&pids, written as usize)?;
+    let visible = all.len() as u64;
+    let started = Instant::now();
+    let budget = std::time::Duration::from_millis(collection_budget_ms);
+    let mut seen = std::collections::HashSet::new();
+    let mut rows = Vec::new();
+    let mut collection = ProcessTopCollection {
+        visible_processes: visible,
+        candidate_cap: PID_CAP,
+        probe_cap,
+        probed: 0,
+        denied: 0,
+        disappeared: 0,
+        invalid: 0,
+        truncated,
+        partial: false,
+    };
+    for pid in all {
+        if collection.probed >= probe_cap {
+            collection.partial = true;
+            truncated = true;
+            break;
+        }
+        if started.elapsed() > budget {
+            collection.partial = true;
+            break;
+        }
+        if *pid < 0 {
+            collection.invalid += 1;
+            continue;
+        }
+        if !seen.insert(*pid) {
+            collection.invalid += 1;
+            continue;
+        }
+        let mut info: libc::proc_taskallinfo = unsafe { std::mem::zeroed() };
+        // SAFETY: Pointer and length match the concrete proc_taskallinfo record.
+        let size = unsafe {
+            libc::proc_pidinfo(
+                *pid,
+                libc::PROC_PIDTASKALLINFO,
+                0,
+                (&mut info as *mut libc::proc_taskallinfo).cast(),
+                size_of::<libc::proc_taskallinfo>() as i32,
+            )
+        };
+        collection.probed += 1;
+        if size <= 0 {
+            match io::Error::last_os_error().raw_os_error() {
+                Some(libc::ESRCH) => collection.disappeared += 1,
+                Some(code) if code == libc::EPERM || code == libc::EACCES => collection.denied += 1,
+                _ => collection.invalid += 1,
+            }
+            continue;
+        }
+        if usize::try_from(size).ok() != Some(size_of::<libc::proc_taskallinfo>()) {
+            collection.invalid += 1;
+            continue;
+        }
+        let bsd = &info.pbsd;
+        if bsd.pbi_pid != *pid as u32 || bsd.pbi_start_tvusec >= 1_000_000 {
+            collection.invalid += 1;
+            continue;
+        }
+        let Some(name) = process_name(bsd) else {
+            collection.invalid += 1;
+            continue;
+        };
+        if name.is_empty() {
+            collection.invalid += 1;
+            continue;
+        }
+        let total_ticks = info
+            .ptinfo
+            .pti_total_user
+            .checked_add(info.ptinfo.pti_total_system)
+            .ok_or_else(|| invalid("process CPU counter overflow"))?;
+        #[allow(deprecated)]
+        let total_cpu_time_ns = mach_ticks_to_ns(total_ticks, timebase.numer, timebase.denom)?;
+        rows.push(ProcessTopCounters {
+            identity: ProcessIdentity {
+                pid: bsd.pbi_pid,
+                start_unix_sec: bsd.pbi_start_tvsec,
+                start_unix_usec: bsd.pbi_start_tvusec,
+            },
+            name,
+            resident_bytes: info.ptinfo.pti_resident_size,
+            total_cpu_time_ns,
+        });
+    }
+    if truncated || collection.probed < all.len() {
+        collection.truncated = true;
+        collection.partial = true;
+    }
+    if rows.is_empty() && collection.probed > 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "top process details unavailable for all probed candidates",
+        ));
+    }
+    Ok(ProcessTopSnapshot { rows, collection })
 }
 
 #[link(name = "Foundation", kind = "framework")]
@@ -535,6 +733,19 @@ mod tests {
         assert_eq!(libc::MACH_TASK_BASIC_INFO_COUNT, 12);
         assert_eq!(libc::HOST_CPU_LOAD_INFO_COUNT, 4);
         assert_eq!(offset_of!(libc::vm_statistics64, swapped_count), 152);
+        assert_eq!(size_of::<libc::proc_bsdinfo>(), 136);
+        assert!(size_of::<libc::proc_taskinfo>() >= 96);
+        assert_eq!(
+            size_of::<libc::proc_taskallinfo>(),
+            size_of::<libc::proc_bsdinfo>() + size_of::<libc::proc_taskinfo>()
+        );
+        assert_eq!(offset_of!(libc::proc_taskallinfo, pbsd), 0);
+        assert_eq!(offset_of!(libc::proc_taskallinfo, ptinfo), 136);
+        assert!(offset_of!(libc::proc_bsdinfo, pbi_name) >= 60);
+        assert_eq!(offset_of!(libc::proc_bsdinfo, pbi_start_tvsec), 120);
+        assert_eq!(offset_of!(libc::proc_taskinfo, pti_resident_size), 8);
+        assert_eq!(offset_of!(libc::proc_taskinfo, pti_total_user), 16);
+        assert_eq!(offset_of!(libc::proc_taskinfo, pti_total_system), 24);
     }
 
     #[test]
@@ -706,6 +917,18 @@ mod tests {
     }
 
     #[test]
+    fn process_top_helpers_enforce_conversion_name_and_budget_bounds() {
+        assert_eq!(mach_ticks_to_ns(10, 3, 2).unwrap(), 15);
+        assert!(mach_ticks_to_ns(1, 1, 0).is_err());
+        assert!(mach_ticks_to_ns(u64::MAX, u32::MAX, 1).is_err());
+        assert_eq!(c_name(&[b'a' as i8, b'b' as i8, 0]), Some("ab".into()));
+        assert_eq!(c_name(&[0]), None);
+        let list = pid_list(&[0, 1, 2, 3], 16).unwrap();
+        assert_eq!(list.0.len(), 4);
+        assert!(list.1);
+    }
+
+    #[test]
     fn thermal_maps_only_public_enum_values() {
         for (raw, expected) in [
             (0, ThermalState::Nominal),
@@ -765,6 +988,20 @@ mod tests {
             }
         }
         assert!(sampler().unwrap().cpu_time_ns >= before.cpu_time_ns);
+    }
+
+    #[test]
+    fn native_process_top_smoke_and_bounds() {
+        let _guard = NATIVE_TEST_LOCK.lock().unwrap();
+        let top = processes_top(10, ProcessTopSort::Cpu, 256, 150).unwrap();
+        assert!(top.collection.probed > 0);
+        assert!(top.collection.probe_cap <= 256);
+        assert!(top.rows.len() <= top.collection.probed);
+        for row in top.rows {
+            assert!(row.identity.start_unix_usec < 1_000_000);
+            assert!(!row.name.is_empty());
+            assert!(row.resident_bytes > 0);
+        }
     }
 
     #[link(name = "System")]

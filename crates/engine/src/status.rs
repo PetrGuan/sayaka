@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT_SAMPLER: AtomicU64 = AtomicU64::new(1);
+const PROCESS_TOP_PROBE_CAP: usize = 4096;
+const PROCESS_TOP_COLLECTION_BUDGET_MS: u64 = 100;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -17,6 +19,7 @@ pub struct Config {
     pub cpu_warning_percent: f64,
     pub memory_warning_percent: f64,
     pub disk_available_warning_percent: f64,
+    pub process_top: Option<ProcessTopConfig>,
 }
 
 impl Default for Config {
@@ -26,8 +29,22 @@ impl Default for Config {
             cpu_warning_percent: 90.0,
             memory_warning_percent: 90.0,
             disk_available_warning_percent: 10.0,
+            process_top: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessTopSort {
+    Cpu,
+    Memory,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProcessTopConfig {
+    pub limit: usize,
+    pub sort: ProcessTopSort,
 }
 
 impl Config {
@@ -40,10 +57,14 @@ impl Config {
             ]
             .iter()
             .any(|value| !value.is_finite() || !(0.0..=100.0).contains(value))
+            || self
+                .process_top
+                .as_ref()
+                .is_some_and(|top| !(1..=32).contains(&top.limit))
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "interval must be 250..60000 ms and thresholds finite percentages in 0..100",
+                "interval must be 250..60000 ms, thresholds finite percentages in 0..100, and top limit in 1..=32",
             ));
         }
         Ok(())
@@ -135,6 +156,12 @@ struct Cache<T> {
     observed: Option<TimePoint>,
     state: State,
     error: Option<MetricError>,
+}
+
+#[derive(Clone, Debug)]
+struct ProcessCpuBaseline {
+    total_cpu_time_ns: u64,
+    observed: TimePoint,
 }
 
 impl<T: Clone> Cache<T> {
@@ -252,12 +279,70 @@ pub struct ProcessCounters {
     pub cpu_time_ns: u64,
     pub resident_bytes: u64,
 }
+#[derive(Clone, Debug)]
+pub struct ProcessTopCounters {
+    pub identity: ProcessIdentity,
+    pub name: String,
+    pub resident_bytes: u64,
+    pub total_cpu_time_ns: u64,
+}
+#[derive(Clone, Debug)]
+pub struct ProcessTopCollection {
+    pub visible_processes: u64,
+    pub candidate_cap: usize,
+    pub probe_cap: usize,
+    pub probed: usize,
+    pub denied: usize,
+    pub disappeared: usize,
+    pub invalid: usize,
+    pub truncated: bool,
+    pub partial: bool,
+}
+#[derive(Clone, Debug)]
+pub struct ProcessTopSnapshot {
+    pub rows: Vec<ProcessTopCounters>,
+    pub collection: ProcessTopCollection,
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct SamplerProcess {
     pub cpu_time_ns: u64,
     pub resident_bytes: u64,
     pub cpu_percent_one_core: Option<f64>,
     pub window_ms: Option<u64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub start_unix_sec: u64,
+    pub start_unix_usec: u64,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessTopRow {
+    pub pid: u32,
+    pub name: String,
+    pub identity: ProcessIdentity,
+    pub resident_bytes: u64,
+    pub cpu_percent_one_core: Option<f64>,
+    pub cpu_window_ms: Option<u64>,
+    pub state: State,
+    pub reason: Option<String>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessTop {
+    pub top_schema_version: u32,
+    pub sort: ProcessTopSort,
+    pub limit: usize,
+    pub visible_processes: u64,
+    pub candidate_cap: usize,
+    pub probe_cap: usize,
+    pub collection_budget_ms: u64,
+    pub probed: usize,
+    pub denied: usize,
+    pub disappeared: usize,
+    pub invalid: usize,
+    pub truncated: bool,
+    pub partial: bool,
+    pub rows: Vec<ProcessTopRow>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Power {
@@ -282,6 +367,13 @@ pub trait Provider {
     fn sampler(&mut self) -> io::Result<ProcessCounters>;
     fn disk(&mut self) -> io::Result<Disk>;
     fn processes(&mut self) -> io::Result<u64>;
+    fn processes_top(
+        &mut self,
+        limit: usize,
+        sort: ProcessTopSort,
+        probe_cap: usize,
+        collection_budget_ms: u64,
+    ) -> io::Result<ProcessTopSnapshot>;
     fn power(&mut self) -> io::Result<Power>;
     fn thermal(&mut self) -> io::Result<Thermal>;
 }
@@ -316,7 +408,7 @@ pub struct Snapshot {
     pub thermal_state: Metric<Thermal>,
     pub temperature_celsius: Metric<f64>,
     pub gpu_utilization_percent: Metric<f64>,
-    pub process_top: Metric<Vec<String>>,
+    pub process_top: Metric<ProcessTop>,
     pub alerts: Vec<Alert>,
 }
 
@@ -331,6 +423,7 @@ impl Snapshot {
         self.visible_processes.age_by(elapsed);
         self.power.age_by(elapsed);
         self.thermal_state.age_by(elapsed);
+        self.process_top.age_by(elapsed);
         self.age_network_rates();
         self.alerts = alerts(self, config);
         Ok(())
@@ -386,6 +479,7 @@ pub struct Sampler<P, C = LiveClock> {
     cpu_baseline: Option<(CpuTicks, TimePoint)>,
     network_baselines: HashMap<(u32, String), (InterfaceCounters, TimePoint)>,
     process_baseline: Option<(ProcessCounters, TimePoint)>,
+    process_top_baselines: HashMap<ProcessIdentity, ProcessCpuBaseline>,
     cpu: Cache<Cpu>,
     memory: Cache<Memory>,
     network: Cache<Vec<Interface>>,
@@ -394,6 +488,7 @@ pub struct Sampler<P, C = LiveClock> {
     processes: Cache<u64>,
     power: Cache<Power>,
     thermal: Cache<Thermal>,
+    process_top: Cache<ProcessTop>,
 }
 
 impl<P: Provider> Sampler<P> {
@@ -419,6 +514,7 @@ impl<P: Provider, C: Clock> Sampler<P, C> {
             cpu_baseline: None,
             network_baselines: HashMap::new(),
             process_baseline: None,
+            process_top_baselines: HashMap::new(),
             cpu: Cache::new(),
             memory: Cache::new(),
             network: Cache::new(),
@@ -427,6 +523,7 @@ impl<P: Provider, C: Clock> Sampler<P, C> {
             processes: Cache::new(),
             power: Cache::new(),
             thermal: Cache::new(),
+            process_top: Cache::new(),
         })
     }
     fn time(&mut self, cancellation: &Cancellation) -> io::Result<TimePoint> {
@@ -566,6 +663,28 @@ impl<P: Provider, C: Clock> Sampler<P, C> {
             });
             let now = self.time(cancellation)?;
             self.processes.update(processes, now);
+            if let Some(top) = self.config.process_top.clone() {
+                let top_rows = self.provider.processes_top(
+                    top.limit,
+                    top.sort,
+                    PROCESS_TOP_PROBE_CAP,
+                    PROCESS_TOP_COLLECTION_BUDGET_MS,
+                );
+                let now = self.time(cancellation)?;
+                let top_result = top_rows.and_then(|snapshot| {
+                    build_process_top(
+                        snapshot,
+                        &top,
+                        &mut self.process_top_baselines,
+                        now,
+                        self.config.slow_interval(),
+                    )
+                });
+                if top_result.is_err() {
+                    self.process_top_baselines.clear();
+                }
+                self.process_top.update(top_result, now);
+            }
             let power = self.provider.power().and_then(validate_power);
             let now = self.time(cancellation)?;
             self.power.update(power, now);
@@ -637,10 +756,15 @@ impl<P: Provider, C: Clock> Sampler<P, C> {
                 "no supported collector in this slice",
                 "GPU utilization is not implemented",
             ),
-            process_top: unsupported(
-                "no supported collector in this slice",
-                "per-process top tables are not implemented; only visible count and sampler metrics are collected",
-            ),
+            process_top: if self.config.process_top.is_some() {
+                self.process_top
+                    .metric(now, "libproc PROC_PIDTASKALLINFO", slow_ttl)
+            } else {
+                unsupported(
+                    "disabled unless --top is requested",
+                    "per-process top tables are opt-in because process names are sensitive local data",
+                )
+            },
             alerts: Vec::new(),
         };
         result.age_network_rates();
@@ -715,6 +839,146 @@ fn network_values(
             .then(left.index.cmp(&right.index))
     });
     Ok((values, baselines))
+}
+
+fn build_process_top(
+    snapshot: ProcessTopSnapshot,
+    config: &ProcessTopConfig,
+    baselines: &mut HashMap<ProcessIdentity, ProcessCpuBaseline>,
+    now: TimePoint,
+    slow_interval: Duration,
+) -> io::Result<ProcessTop> {
+    if snapshot.collection.probed == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "no process candidates were probed",
+        ));
+    }
+    let mut rows = Vec::with_capacity(snapshot.rows.len());
+    let mut next = HashMap::new();
+    for row in snapshot.rows {
+        let rate = baselines
+            .get(&row.identity)
+            .ok_or("first_sample")
+            .and_then(|old| {
+                let window = valid_window(old.observed, now, slow_interval)
+                    .ok_or("invalid_counter_window")?;
+                let delta = row
+                    .total_cpu_time_ns
+                    .checked_sub(old.total_cpu_time_ns)
+                    .ok_or("counter_decreased")?;
+                Ok((delta as f64 / (window as f64 * 1_000_000.0) * 100.0, window))
+            });
+        rows.push(ProcessTopRow {
+            pid: row.identity.pid,
+            name: row.name,
+            identity: row.identity.clone(),
+            resident_bytes: row.resident_bytes,
+            cpu_percent_one_core: rate.as_ref().ok().map(|(value, _)| *value),
+            cpu_window_ms: rate.as_ref().ok().map(|(_, window)| *window),
+            state: if rate.is_ok() {
+                State::Fresh
+            } else {
+                State::WarmingUp
+            },
+            reason: rate.err().map(ToOwned::to_owned),
+        });
+        next.insert(
+            row.identity,
+            ProcessCpuBaseline {
+                total_cpu_time_ns: row.total_cpu_time_ns,
+                observed: now,
+            },
+        );
+    }
+    *baselines = next;
+    rows.sort_by(|left, right| match config.sort {
+        ProcessTopSort::Cpu => cmp_cpu_first(left, right),
+        ProcessTopSort::Memory => cmp_memory_first(left, right),
+    });
+    if rows.len() > config.limit {
+        rows.truncate(config.limit);
+    }
+    Ok(ProcessTop {
+        top_schema_version: 1,
+        sort: config.sort,
+        limit: config.limit,
+        visible_processes: snapshot.collection.visible_processes,
+        candidate_cap: snapshot.collection.candidate_cap,
+        probe_cap: snapshot.collection.probe_cap,
+        collection_budget_ms: PROCESS_TOP_COLLECTION_BUDGET_MS,
+        probed: snapshot.collection.probed,
+        denied: snapshot.collection.denied,
+        disappeared: snapshot.collection.disappeared,
+        invalid: snapshot.collection.invalid,
+        truncated: snapshot.collection.truncated,
+        partial: snapshot.collection.partial,
+        rows,
+    })
+}
+
+fn cmp_cpu_first(left: &ProcessTopRow, right: &ProcessTopRow) -> std::cmp::Ordering {
+    match (left.cpu_percent_one_core, right.cpu_percent_one_core) {
+        (Some(a), Some(b)) => b
+            .partial_cmp(&a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(right.resident_bytes.cmp(&left.resident_bytes))
+            .then(left.name.cmp(&right.name))
+            .then(left.pid.cmp(&right.pid))
+            .then(
+                left.identity
+                    .start_unix_sec
+                    .cmp(&right.identity.start_unix_sec),
+            )
+            .then(
+                left.identity
+                    .start_unix_usec
+                    .cmp(&right.identity.start_unix_usec),
+            ),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => right
+            .resident_bytes
+            .cmp(&left.resident_bytes)
+            .then(left.name.cmp(&right.name))
+            .then(left.pid.cmp(&right.pid))
+            .then(
+                left.identity
+                    .start_unix_sec
+                    .cmp(&right.identity.start_unix_sec),
+            )
+            .then(
+                left.identity
+                    .start_unix_usec
+                    .cmp(&right.identity.start_unix_usec),
+            ),
+    }
+}
+
+fn cmp_memory_first(left: &ProcessTopRow, right: &ProcessTopRow) -> std::cmp::Ordering {
+    right
+        .resident_bytes
+        .cmp(&left.resident_bytes)
+        .then_with(
+            || match (left.cpu_percent_one_core, right.cpu_percent_one_core) {
+                (Some(a), Some(b)) => b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            },
+        )
+        .then(left.name.cmp(&right.name))
+        .then(left.pid.cmp(&right.pid))
+        .then(
+            left.identity
+                .start_unix_sec
+                .cmp(&right.identity.start_unix_sec),
+        )
+        .then(
+            left.identity
+                .start_unix_usec
+                .cmp(&right.identity.start_unix_usec),
+        )
 }
 
 fn validate_memory(mut value: Memory) -> io::Result<Memory> {
@@ -873,6 +1137,15 @@ impl Provider for NativeProvider {
         Err(unsupported_platform())
     }
     fn processes(&mut self) -> io::Result<u64> {
+        Err(unsupported_platform())
+    }
+    fn processes_top(
+        &mut self,
+        _: usize,
+        _: ProcessTopSort,
+        _: usize,
+        _: u64,
+    ) -> io::Result<ProcessTopSnapshot> {
         Err(unsupported_platform())
     }
     fn power(&mut self) -> io::Result<Power> {
