@@ -8,7 +8,9 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tempfile::TempDir;
+#[path = "../../engine/tests/support/owned_temp.rs"]
+mod owned_temp;
+use owned_temp::OwnedTempDir as TempDir;
 
 const DEADLINE: Duration = Duration::from_secs(30);
 
@@ -995,14 +997,68 @@ struct Fixture {
     root: PathBuf,
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_journal_commands_reject_unsupported_storage_even_without_home() {
+    let fixture = Fixture::new();
+    for name in ["receipt", "history"] {
+        let mut command = fixture.command();
+        command.env_remove("HOME").args([name, "--json"]);
+        let result = capture(command);
+        assert_eq!(result.status.code(), Some(1));
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["status"], "failed");
+        let output = String::from_utf8(result.stdout).unwrap();
+        assert!(output.contains("native journal storage is macOS-only"));
+        assert!(!output.contains("HOME is unavailable"));
+    }
+    assert!(
+        fs::read_dir(fixture.base.join("state"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_scan_rejects_parent_traversal_before_path_normalization() {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let fixture = Fixture::new();
+    let units: Vec<u16> = fixture.base.as_os_str().encode_wide().collect();
+    assert!(units.starts_with(&[92, 92, 63, 92]));
+    let ordinary = PathBuf::from(OsString::from_wide(&units[4..]));
+    let mut verbatim = fixture.base.as_os_str().to_owned();
+    verbatim.push(r"\root\..\home");
+    for path in [
+        PathBuf::from("root/../home"),
+        ordinary.join("root/../home"),
+        PathBuf::from(verbatim),
+    ] {
+        assert!(
+            path.components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        );
+        let mut command = fixture.command();
+        command.arg("scan").arg(path).arg("--json");
+        let value = json(&capture(command), 2);
+        assert_eq!(value["issues"][0]["code"], "invalid_root");
+        assert!(value["task_id"].is_null());
+        assert!(value["entries"].as_array().unwrap().is_empty());
+        assert!(value["totals"].is_null());
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         // Never use the user's temp directory, HOME, or working tree as a scan root.
-        let directory = tempfile::Builder::new()
-            .prefix("sayaka-cli-test-")
-            .tempdir_in(env!("CARGO_MANIFEST_DIR"))
-            .expect("create dedicated fixture");
-        let base = directory.path().canonicalize().expect("canonical fixture");
+        let directory = TempDir::new(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+            "sayaka-cli-test-",
+        )
+        .expect("retain fixture ownership");
+        let base = directory.path().to_path_buf();
         for name in ["root", "home", "config", "state", "cache", "temp"] {
             fs::create_dir(base.join(name)).expect("create fixture directory");
         }

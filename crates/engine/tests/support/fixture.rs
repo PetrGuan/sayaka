@@ -3,7 +3,9 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use tempfile::TempDir;
+#[path = "owned_temp.rs"]
+mod owned_temp;
+use owned_temp::OwnedTempDir as TempDir;
 
 pub struct Fixture {
     directory: Option<TempDir>,
@@ -11,7 +13,7 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new() -> io::Result<Self> {
-        let directory = tempfile::Builder::new().prefix("sayaka-m1-").tempdir()?;
+        let directory = TempDir::new(&std::env::temp_dir(), "sayaka-m1-")?;
         let fixture = Self {
             directory: Some(directory),
         };
