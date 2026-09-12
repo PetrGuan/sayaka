@@ -1,0 +1,236 @@
+{
+  "benchmark_id": "c0-statistics-v1",
+  "scope": "Pre-registered competitive protocol for C0; no post-hoc promotion of local regression data.",
+  "comparator_lock": {
+    "name": "Mole CLI",
+    "tag": "V1.53.0",
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa"
+  },
+  "required_inputs": {
+    "fixture_manifest_path": "benchmarks/c0-fixtures-v1.json",
+    "fixture_manifest_sha256": "ca73f1e033008b0b1715f5f4183b869484fe04aafb9be9d6bacd71e39d264ede",
+    "ledger_manifest_path": "benchmarks/c0-mole-v1.53.0-ledger.json",
+    "ledger_manifest_sha256": "f43f2f9f3a15b6b6108b575d689354b9a38e4e453c836401affd4fd64177c1d6",
+    "source_manifest_path": "benchmarks/c0-mole-v1.53.0-source.json",
+    "source_manifest_sha256": "075f6cd59d1df59542aa1a20aafa949018d183f26ddec1e4116823cbba68ee94"
+  },
+  "ordering": {
+    "seed": 260026,
+    "method": "deterministic_ab_ba_pairs"
+  },
+  "repetitions": {
+    "read_only_fixture_scenarios": 31,
+    "install_layout_scenarios": 7,
+    "warmup_per_tool": 1
+  },
+  "estimators": {
+    "primary": "paired_median_difference_ms",
+    "tail": "empirical_p95_ms",
+    "memory": "peak_rss_bytes",
+    "startup": "first_useful_result_ms",
+    "completion": "complete_result_ms",
+    "cancellation": "cancellation_latency_ms",
+    "confidence_interval": {
+      "method": "paired_bootstrap",
+      "confidence_level": 0.95,
+      "resamples": 10000,
+      "seed": 260026
+    }
+  },
+  "equal_work_checks": [
+    "same_logical_user_task",
+    "same_eligible_target_set",
+    "same_freshness_expectation",
+    "same_output_accounting_fields",
+    "same_safety_preconditions"
+  ],
+  "scenario_matrix": [
+    {
+      "scenario_id": "c0-analyze-readonly-basic-json-v1",
+      "family": "analyze",
+      "fixture_id": "scan-readonly-basic-v1",
+      "pair_repetitions": 31,
+      "schedule": "AB_BA_seeded",
+      "sayaka_command": [
+        "sayaka",
+        "scan",
+        "--json",
+        "<fixture-root>/scan-readonly-basic-v1/root"
+      ],
+      "mole_command": [
+        "mole",
+        "analyze",
+        "--json",
+        "<fixture-root>/scan-readonly-basic-v1/root"
+      ],
+      "expected_output_fields": [
+        "file_entries",
+        "unique_files",
+        "logical_bytes",
+        "allocated_bytes",
+        "unknown_entries"
+      ],
+      "cleanup_rule": "recreate_fixture_before_each_pair",
+      "eligibility_rule": "run only when both tools can produce equivalent read-only JSON accounting for this fixture",
+      "adapter_command_status": "candidate_not_runnable_while_blocked",
+      "supported_now": false,
+      "blocked_reason": "Mole/Sayaka output field and traversal-equivalence contract is not yet frozen"
+    },
+    {
+      "scenario_id": "c0-analyze-sparse-accounting-v1",
+      "family": "analyze",
+      "fixture_id": "scan-sparse-links-v1",
+      "pair_repetitions": 31,
+      "schedule": "AB_BA_seeded",
+      "sayaka_command": [
+        "sayaka",
+        "scan",
+        "--json",
+        "<fixture-root>/scan-sparse-links-v1/root"
+      ],
+      "mole_command": [
+        "mole",
+        "analyze",
+        "--json",
+        "<fixture-root>/scan-sparse-links-v1/root"
+      ],
+      "expected_output_fields": [
+        "file_entries",
+        "unique_files",
+        "logical_bytes",
+        "allocated_bytes",
+        "hard_link_aliases",
+        "sparse_files"
+      ],
+      "cleanup_rule": "recreate_fixture_before_each_pair",
+      "eligibility_rule": "run only when both tools expose sparse-vs-logical accounting with equal semantics",
+      "adapter_command_status": "candidate_not_runnable_while_blocked",
+      "supported_now": false,
+      "blocked_reason": "competitive sparse-accounting equivalence is not yet proven"
+    },
+    {
+      "scenario_id": "c0-install-owned-prefix-layout-v1",
+      "family": "installer",
+      "fixture_id": "install-owned-prefix-v1",
+      "pair_repetitions": 7,
+      "schedule": "AB_BA_seeded",
+      "sayaka_command": [
+        "python3",
+        "scripts/check_local_install.py",
+        "--binary",
+        "target/release/sayaka"
+      ],
+      "mole_command": [
+        "python3",
+        "scripts/check_c0_install.py",
+        "--verify-owned-prefix",
+        "--mole-repo",
+        "<mole-source>"
+      ],
+      "expected_output_fields": [
+        "installed_regular_file_logical_bytes",
+        "installed_regular_file_allocated_bytes",
+        "unknown_entry_refusals"
+      ],
+      "cleanup_rule": "reset_owned_prefix_before_each_pair",
+      "eligibility_rule": "run only when Mole install preflight proves confined owned-prefix execution",
+      "adapter_command_status": "candidate_not_runnable_while_blocked",
+      "supported_now": false,
+      "blocked_reason": "Mole install preflight remains blocked on shell-profile path handling"
+    },
+    {
+      "scenario_id": "c0-status-watch-equivalent-coverage-v1",
+      "family": "status",
+      "fixture_id": "none",
+      "pair_repetitions": 7,
+      "schedule": "AB_BA_seeded",
+      "sayaka_command": [
+        "sayaka",
+        "status",
+        "--watch",
+        "--json"
+      ],
+      "mole_command": [
+        "mole",
+        "status",
+        "--watch",
+        "--json"
+      ],
+      "expected_output_fields": [
+        "metric_coverage_map",
+        "sample_period_ms",
+        "peak_rss_bytes",
+        "p95_collection_ms"
+      ],
+      "cleanup_rule": "fresh_process_with_shared_power_profile",
+      "eligibility_rule": "run only when metric coverage and frequencies are equalized and disclosed",
+      "adapter_command_status": "candidate_not_runnable_while_blocked",
+      "supported_now": false,
+      "blocked_reason": "current status metric coverage mismatch prevents equal-work comparison"
+    }
+  ],
+  "result_schema": {
+    "required_scenario_fields": [
+      "scenario_id",
+      "fixture_id",
+      "supported_now",
+      "eligibility_outcome",
+      "equal_work_outcome",
+      "pair_schedule"
+    ],
+    "required_sample_fields": [
+      "pair_id",
+      "order",
+      "tool",
+      "run_index",
+      "first_useful_result_ms",
+      "complete_result_ms",
+      "peak_rss_bytes",
+      "p95_collection_ms",
+      "status"
+    ],
+    "required_failure_fields": [
+      "pair_id",
+      "tool",
+      "run_index",
+      "classification",
+      "reason",
+      "raw_log_reference"
+    ],
+    "required_summary_fields": [
+      "paired_median_difference_ms",
+      "paired_bootstrap_ci_95",
+      "p95_regression_percent",
+      "peak_rss_regression_percent",
+      "failure_count",
+      "skip_count"
+    ]
+  },
+  "retention": {
+    "keep_all_raw_samples": true,
+    "keep_failures_and_skips": true,
+    "raw_provenance_fields": [
+      "tool_version",
+      "artifact_sha256",
+      "host_os",
+      "host_arch",
+      "filesystem",
+      "power_mode",
+      "fixture_manifest_sha256",
+      "command_line",
+      "environment_redactions"
+    ]
+  },
+  "acceptance_gates": [
+    "Each preregistered supported primary scenario must show lower Sayaka median with CI excluding no-improvement.",
+    "No statistically supported p95 or peak-RSS regression above 10% at equal work.",
+    "Any unsupported, failed, skipped, blocked, or ineligible scenario remains visible and disqualifies full C1 claim."
+  ],
+  "cache_policy": {
+    "fresh_process": true,
+    "warm_process": true,
+    "warm_after_fixture_creation_label": true,
+    "global_os_cache_flush_allowed": false,
+    "os_cold_requires_disposable_host": true
+  }
+}

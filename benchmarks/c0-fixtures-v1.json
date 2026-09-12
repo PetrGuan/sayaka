@@ -1,0 +1,319 @@
+{
+  "benchmark_id": "c0-fixtures-v1",
+  "fixture_root": "target/c0-fixtures",
+  "ownership_marker": ".sayaka-c0-owned",
+  "required_fixture_ids": [
+    "scan-readonly-basic-v1",
+    "scan-sparse-links-v1",
+    "scan-denied-subtree-v1",
+    "scan-overlapping-roots-v1",
+    "scan-churn-replacement-v1",
+    "history-lifecycle-v1",
+    "install-owned-prefix-v1"
+  ],
+  "fixtures": [
+    {
+      "id": "scan-readonly-basic-v1",
+      "class": "scan-readonly",
+      "description": "Synthetic read-only scan fixture with deep/wide paths, hard links, and symlink entry.",
+      "layout": {
+        "directories": [
+          "root",
+          "root/deep",
+          "root/deep/l1",
+          "root/deep/l1/l2",
+          "root/wide",
+          "root/aliases",
+          "root/empty"
+        ],
+        "files": [
+          {
+            "path": "root/wide/file-a.bin",
+            "bytes": 128
+          },
+          {
+            "path": "root/wide/file-b.bin",
+            "bytes": 512
+          },
+          {
+            "path": "root/deep/l1/l2/file-c.bin",
+            "bytes": 2048
+          }
+        ],
+        "hard_links": [
+          {
+            "source": "root/wide/file-a.bin",
+            "link": "root/aliases/file-a-link.bin"
+          }
+        ],
+        "symlinks": [
+          {
+            "path": "root/symlink-to-wide",
+            "target": "wide"
+          }
+        ]
+      },
+      "truth": {
+        "file_entries": 4,
+        "unique_files": 3,
+        "logical_bytes": 2816,
+        "hard_link_aliases": 1,
+        "symlink_entries": 1,
+        "allocated_bytes_at_least": 2816
+      }
+    },
+    {
+      "id": "scan-sparse-links-v1",
+      "class": "scan-readonly",
+      "description": "Sparse-file accounting with hard-link aliases for equal-work byte checks.",
+      "layout": {
+        "directories": [
+          "root",
+          "root/data",
+          "root/aliases"
+        ],
+        "files": [
+          {
+            "path": "root/data/regular.bin",
+            "bytes": 4096
+          }
+        ],
+        "sparse_files": [
+          {
+            "path": "root/data/sparse.img",
+            "logical_bytes": 67108864,
+            "fill_byte": 171
+          }
+        ],
+        "hard_links": [
+          {
+            "source": "root/data/regular.bin",
+            "link": "root/aliases/regular-link.bin"
+          }
+        ]
+      },
+      "truth": {
+        "file_entries": 3,
+        "unique_files": 2,
+        "logical_bytes": 67117056,
+        "hard_link_aliases": 1,
+        "sparse_files": 1,
+        "allocated_bytes_less_than_logical": true
+      }
+    },
+    {
+      "id": "scan-denied-subtree-v1",
+      "class": "scan-denied-subtree",
+      "description": "Permission-denied subtree fixture for unreadable/unknown coverage.",
+      "layout": {
+        "directories": [
+          "root",
+          "root/allowed",
+          "root/denied",
+          "root/denied/inner"
+        ],
+        "files": [
+          {
+            "path": "root/allowed/readable.txt",
+            "bytes": 64
+          },
+          {
+            "path": "root/denied/secret.txt",
+            "bytes": 256
+          },
+          {
+            "path": "root/denied/inner/more-secret.txt",
+            "bytes": 32
+          }
+        ],
+        "chmod": [
+          {
+            "path": "root/denied",
+            "mode": "000"
+          }
+        ]
+      },
+      "truth": {
+        "file_entries": 1,
+        "unique_files": 1,
+        "logical_bytes": 64,
+        "unreadable_directories": 1,
+        "expected_refusal": "permission_denied",
+        "unknown_entries_at_least": 1
+      }
+    },
+    {
+      "id": "scan-overlapping-roots-v1",
+      "class": "scan-overlapping-roots",
+      "description": "Nested explicit roots for scope-equivalence and overlap checks.",
+      "layout": {
+        "directories": [
+          "root",
+          "root/shared",
+          "root/shared/nested"
+        ],
+        "files": [
+          {
+            "path": "root/top-a.bin",
+            "bytes": 100
+          },
+          {
+            "path": "root/shared/shared.bin",
+            "bytes": 200
+          },
+          {
+            "path": "root/shared/nested/deep.bin",
+            "bytes": 300
+          }
+        ]
+      },
+      "truth": {
+        "root_scopes": [
+          {
+            "id": "outer",
+            "path": "root",
+            "file_entries": 3,
+            "unique_files": 3,
+            "logical_bytes": 600
+          },
+          {
+            "id": "nested",
+            "path": "root/shared",
+            "file_entries": 2,
+            "unique_files": 2,
+            "logical_bytes": 500
+          }
+        ],
+        "union_unique_files": 3,
+        "overlap_unique_files": 2
+      }
+    },
+    {
+      "id": "scan-churn-replacement-v1",
+      "class": "scan-controlled-churn",
+      "description": "Deterministic file replacement between paired runs.",
+      "layout": {
+        "directories": [
+          "root",
+          "root/churn",
+          "root/stable"
+        ],
+        "files": [
+          {
+            "path": "root/churn/item.bin",
+            "bytes": 128
+          },
+          {
+            "path": "root/stable/base.bin",
+            "bytes": 64
+          }
+        ]
+      },
+      "churn": {
+        "replacements": [
+          {
+            "path": "root/churn/item.bin",
+            "bytes": 1024,
+            "fill_byte": 93
+          }
+        ]
+      },
+      "truth": {
+        "before": {
+          "file_entries": 2,
+          "unique_files": 2,
+          "logical_bytes": 192
+        },
+        "after": {
+          "file_entries": 2,
+          "unique_files": 2,
+          "logical_bytes": 1088
+        },
+        "replacements": [
+          {
+            "path": "root/churn/item.bin",
+            "inode_changed": true,
+            "sha256_changed": true,
+            "size_before": 128,
+            "size_after": 1024
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-lifecycle-v1",
+      "class": "history-lifecycle",
+      "description": "Owned operation history fixture with complete/failed/partial/pending/corrupt/disabled cases.",
+      "layout": {
+        "directories": [
+          "root",
+          "root/history"
+        ],
+        "text_files": [
+          {
+            "path": "root/history/operations.jsonl",
+            "lines": [
+              "{\"id\":\"op1\",\"status\":\"complete\"}",
+              "{\"id\":\"op2\",\"status\":\"failed\"}",
+              "{\"id\":\"op3\",\"status\":\"partial\"}",
+              "{\"id\":\"op4\",\"status\":\"pending\"}",
+              "{not-json"
+            ]
+          },
+          {
+            "path": "root/history/logging-disabled.flag",
+            "lines": [
+              "disabled=true"
+            ]
+          }
+        ]
+      },
+      "truth": {
+        "complete": 1,
+        "failed": 1,
+        "partial": 1,
+        "pending": 1,
+        "corrupt": 1,
+        "disabled_markers": 1
+      }
+    },
+    {
+      "id": "install-owned-prefix-v1",
+      "class": "install-owned-prefix",
+      "description": "Dedicated owned-prefix install layout with unknown-entry refusal expectations.",
+      "layout": {
+        "directories": [
+          "root",
+          "root/prefix",
+          "root/prefix/bin",
+          "root/prefix/share",
+          "root/prefix/rogue"
+        ],
+        "files": [
+          {
+            "path": "root/prefix/bin/sayaka",
+            "bytes": 2048
+          },
+          {
+            "path": "root/prefix/share/sayaka-completion.zsh",
+            "bytes": 256
+          },
+          {
+            "path": "root/prefix/rogue/untracked.bin",
+            "bytes": 128
+          }
+        ]
+      },
+      "truth": {
+        "tracked_paths": [
+          "root/prefix/bin/sayaka",
+          "root/prefix/share/sayaka-completion.zsh"
+        ],
+        "tracked_regular_files": 2,
+        "unknown_regular_files": 1,
+        "expected_refusal_unknown_entries": true
+      }
+    }
+  ],
+  "cleanup_policy": "Cleanup is limited to owned fixture roots with marker and identity checks; no wildcard recursive deletion."
+}

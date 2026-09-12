@@ -1,0 +1,33 @@
+{
+  "benchmark_id": "c0-install-v1",
+  "scope": "Release artifacts and owned-prefix installation preflight for Mole V1.53.0; no real user installation or system mutation.",
+  "comparator": {
+    "name": "Mole CLI",
+    "tag": "V1.53.0",
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa"
+  },
+  "owned_paths": {
+    "artifact_cache_root": "target/c0-artifacts/mole/V1.53.0",
+    "owned_home_root": "target/c0-install/home",
+    "owned_prefix_root": "target/c0-install/prefix",
+    "owned_config_root": "target/c0-install/config",
+    "owned_state_root": "target/c0-install/state"
+  },
+  "measurement_categories": [
+    "release_asset_download_bytes",
+    "archive_extracted_regular_file_logical_bytes",
+    "archive_extracted_regular_file_allocated_bytes",
+    "installed_regular_file_logical_bytes_if_preflight_passes",
+    "installed_regular_file_allocated_bytes_if_preflight_passes",
+    "required_runtime_or_dependency_notes",
+    "optional_extras_named_separately"
+  ],
+  "blocked_conditions": [
+    "installer_confinement_not_proven",
+    "requires_sudo_or_unowned_writes",
+    "shell_profile_or_auth_modification_detected",
+    "attempts_real_home_or_global_cache_access",
+    "disposable_host_required_for_command_family"
+  ],
+  "sayaka_profile_note": "Current local-prefix check_local_install.py is a minimal profile, not full parity footprint."
+}
