@@ -42,9 +42,18 @@ impl Probe for FakePlatform {
     }
 }
 impl Platform for FakePlatform {
-    fn effect(&mut self, path: &Path, stop: &mut dyn FnMut() -> bool) -> Effect {
+    fn effect(
+        &mut self,
+        path: &Path,
+        stop: &mut dyn FnMut() -> bool,
+        guard: &mut dyn FnMut() -> GuardDecision,
+    ) -> Effect {
         if let Some(callback) = &mut self.before_effect {
             callback();
+        }
+        match guard() {
+            GuardDecision::Proceed => {}
+            GuardDecision::Refused(reason) => return Effect::Refused(reason),
         }
         if let Some(reason) = self.refuse_before_effect.take() {
             return Effect::Refused(reason);
@@ -95,6 +104,34 @@ impl Journal for FakeJournal {
             cleanup_error: (self.calls.get() == self.cleanup_fail_on)
                 .then(|| io::Error::other("outcome durable; marker cleanup failed")),
         })
+    }
+}
+
+fn clean_policy_context() -> journal::CleanPolicyContextRecord {
+    journal::CleanPolicyContextRecord {
+        schema_version: 1,
+        kind: "sayaka_clean_policy_context".into(),
+        root_path: journal::CleanPolicyPathRecord {
+            encoding: "unix_bytes".into(),
+            bytes_hex: "2f66697874757265".into(),
+            display: "\"/fixture\"".into(),
+        },
+        root_identity: journal::CleanPolicyIdentityRecord {
+            device: 1,
+            inode: 1,
+        },
+        file_state: serde_json::json!({
+            "state": "present",
+            "path": {
+                "encoding": "unix_bytes",
+                "bytes_hex": "2f636f6e6669672f6578636c7573696f6e732d76312e6a736f6e",
+                "display": "\"/config/exclusions-v1.json\""
+            },
+            "identity": {"device": 1, "inode": 44},
+            "length": 100,
+            "sha256": "abc123"
+        }),
+        effective_exclusions: vec![],
     }
 }
 
@@ -739,4 +776,179 @@ fn rule_bound_after_started_source_refusal_has_zero_effect_and_truthful_skip() {
     let durable = journal.durable.borrow();
     assert_eq!(durable[1].items[0].state, ItemState::Started);
     assert_eq!(durable.last().unwrap().items[0].state, ItemState::Skipped);
+}
+
+#[test]
+fn clean_execution_writes_policy_bound_schema_v3_record() {
+    let (mut session, _) = setup_rule_bound();
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal::default();
+    let mut guard = |_point: GuardPoint, _path: &Path| Ok(GuardDecision::Proceed);
+    let report = session
+        .execute_with_clean_policy(
+            &preview,
+            &approval,
+            &Cancellation::default(),
+            &journal,
+            Some(clean_policy_context()),
+            Some(&mut guard),
+        )
+        .unwrap();
+    assert_eq!(report.exit_code(), 0);
+    assert_eq!(report.record.schema_version, 3);
+    assert!(report.record.clean_policy.is_some());
+    report.record.validate().unwrap();
+}
+
+#[test]
+fn clean_policy_refusal_after_started_makes_zero_effect_calls_and_stops_batch() {
+    let (mut session, _) = setup_rule_bound();
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal::default();
+    let mut guard = |point: GuardPoint, _path: &Path| {
+        if matches!(point, GuardPoint::AfterStarted) {
+            Ok(GuardDecision::Refused(
+                "policy_refused_after_started:policy_content_changed_after_approval".into(),
+            ))
+        } else {
+            Ok(GuardDecision::Proceed)
+        }
+    };
+    let report = session
+        .execute_with_clean_policy(
+            &preview,
+            &approval,
+            &Cancellation::default(),
+            &journal,
+            Some(clean_policy_context()),
+            Some(&mut guard),
+        )
+        .unwrap();
+    assert!(session.platform.effects.is_empty());
+    assert_eq!(report.record.items[0].state, ItemState::Skipped);
+    assert!(report.record.clean_policy.is_some());
+    assert!(
+        report.record.items[0]
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("policy_refused_after_started")
+    );
+    assert_ne!(report.record.items[0].reason.as_deref(), Some("cancelled"));
+    let durable = journal.durable.borrow();
+    assert_eq!(durable[1].items[0].state, ItemState::Started);
+    assert_eq!(durable[2].items[0].state, ItemState::Skipped);
+}
+
+#[test]
+fn clean_policy_refusal_at_last_native_guard_makes_zero_effect_calls() {
+    let (mut session, _) = setup_rule_bound();
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal::default();
+    let mut guard = |point: GuardPoint, _path: &Path| {
+        if matches!(point, GuardPoint::LastNative) {
+            Ok(GuardDecision::Refused(
+                "policy_refused_last_native_guard:policy_content_changed_after_approval".into(),
+            ))
+        } else {
+            Ok(GuardDecision::Proceed)
+        }
+    };
+    let report = session
+        .execute_with_clean_policy(
+            &preview,
+            &approval,
+            &Cancellation::default(),
+            &journal,
+            Some(clean_policy_context()),
+            Some(&mut guard),
+        )
+        .unwrap();
+    assert!(session.platform.effects.is_empty());
+    assert_eq!(report.record.items[0].state, ItemState::Skipped);
+    assert!(
+        report.record.items[0]
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("policy_refused_last_native_guard")
+    );
+}
+
+#[test]
+fn clean_policy_guard_error_after_started_records_skipped_and_stops_without_effect() {
+    for (kind, message) in [
+        (io::ErrorKind::PermissionDenied, "policy unreadable"),
+        (io::ErrorKind::InvalidData, "policy corrupt"),
+        (io::ErrorKind::Other, "injected policy I/O"),
+    ] {
+        let (mut session, _) = setup_rule_bound();
+        let preview = session.preview.clone();
+        let approval = session.planner.approve(&preview).unwrap();
+        let journal = FakeJournal::default();
+        let mut guard = |point: GuardPoint, _path: &Path| {
+            if matches!(point, GuardPoint::AfterStarted) {
+                Err(io::Error::new(kind, message))
+            } else {
+                Ok(GuardDecision::Proceed)
+            }
+        };
+        let report = session
+            .execute_with_clean_policy(
+                &preview,
+                &approval,
+                &Cancellation::default(),
+                &journal,
+                None,
+                Some(&mut guard),
+            )
+            .unwrap();
+        assert!(session.platform.effects.is_empty());
+        assert_eq!(report.record.items[0].state, ItemState::Skipped);
+        let reason = report.record.items[0].reason.as_deref().unwrap();
+        assert!(reason.contains("policy_guard_error_after_started"));
+        assert!(reason.contains("no_native_call"));
+        assert_ne!(Some(reason), Some("cancelled"));
+        let durable = journal.durable.borrow();
+        assert_eq!(durable[1].items[0].state, ItemState::Started);
+        assert_eq!(durable[2].items[0].state, ItemState::Skipped);
+    }
+}
+
+#[test]
+fn clean_policy_guard_error_after_started_publication_failure_keeps_ambiguity_and_no_effect() {
+    let (mut session, _) = setup_rule_bound();
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal {
+        fail_on: 3,
+        ..Default::default()
+    };
+    let mut guard = |point: GuardPoint, _path: &Path| {
+        if matches!(point, GuardPoint::AfterStarted) {
+            Err(io::Error::other("injected policy read I/O failure"))
+        } else {
+            Ok(GuardDecision::Proceed)
+        }
+    };
+    let report = session
+        .execute_with_clean_policy(
+            &preview,
+            &approval,
+            &Cancellation::default(),
+            &journal,
+            Some(clean_policy_context()),
+            Some(&mut guard),
+        )
+        .unwrap();
+    assert!(session.platform.effects.is_empty());
+    assert!(report.journal_error.is_some());
+    assert!(report.record.clean_policy.is_some());
+    assert_eq!(report.record.items[0].state, ItemState::Skipped);
+    let durable = journal.durable.borrow();
+    assert_eq!(durable[1].items[0].state, ItemState::Started);
+    assert_eq!(durable.len(), 2);
 }

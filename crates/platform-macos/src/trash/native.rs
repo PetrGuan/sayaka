@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{
-    NativeFileInfo, NativeRecoveryEvidence, NativeRuleBindingWitness, NativeTrashOutcome,
-    NativeWitnessInfo,
+    NativeFileInfo, NativeLastGuard, NativeRecoveryEvidence, NativeRuleBindingWitness,
+    NativeTrashOutcome, NativeWitnessInfo,
 };
 use crate::{ReadOnlyPolicy, VolumeInfo, volume_info};
 use std::ffi::{OsStr, OsString};
@@ -772,7 +772,11 @@ impl Candidate {
         Ok(())
     }
 
-    pub(super) fn move_to_trash(&self, cancelled: impl FnOnce() -> bool) -> NativeTrashOutcome {
+    pub(super) fn move_to_trash_with_last_guard(
+        &self,
+        cancelled: impl FnOnce() -> bool,
+        last_guard: impl FnOnce() -> NativeLastGuard,
+    ) -> NativeTrashOutcome {
         if self.attempted.swap(true, Ordering::AcqRel) {
             return NativeTrashOutcome::Refused(
                 "candidate was already submitted; never retry".into(),
@@ -789,6 +793,15 @@ impl Candidate {
             };
             if let Err(error) = self.revalidate_inner() {
                 return NativeTrashOutcome::Refused(error.to_string());
+            }
+            match last_guard() {
+                NativeLastGuard::Proceed => {}
+                NativeLastGuard::Cancelled => {
+                    return NativeTrashOutcome::Refused("cancelled".into());
+                }
+                NativeLastGuard::PolicyRefused(reason) => {
+                    return NativeTrashOutcome::Refused(reason);
+                }
             }
             self.interpret_response(prepared.trash(cancelled))
         });

@@ -54,6 +54,13 @@ pub enum NativeTrashOutcome {
     },
 }
 
+#[derive(Debug, Clone)]
+pub enum NativeLastGuard {
+    Proceed,
+    Cancelled,
+    PolicyRefused(String),
+}
+
 /// Recovery observations, never authorization to restore, retry, or delete.
 /// `returned_destination` is an UNVERIFIED Foundation pathname hint, not proof
 /// of an approved object. Held-source observations describe the retained
@@ -199,13 +206,24 @@ impl TrashCandidate {
     /// sole synchronous Foundation call; it cannot cancel an already-entered call.
     /// A candidate can be submitted only once, including refused/cancelled calls.
     pub fn move_to_trash(&self, cancelled: impl FnOnce() -> bool) -> NativeTrashOutcome {
+        self.move_to_trash_with_last_guard(cancelled, || NativeLastGuard::Proceed)
+    }
+
+    /// Executes the final native call with an additional typed last guard.
+    /// The guard runs after final revalidation and before Foundation.
+    pub fn move_to_trash_with_last_guard(
+        &self,
+        cancelled: impl FnOnce() -> bool,
+        last_guard: impl FnOnce() -> NativeLastGuard,
+    ) -> NativeTrashOutcome {
         #[cfg(target_os = "macos")]
         {
-            self.native.move_to_trash(cancelled)
+            self.native
+                .move_to_trash_with_last_guard(cancelled, last_guard)
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = cancelled;
+            let _ = (cancelled, last_guard);
             NativeTrashOutcome::Refused(unsupported().to_string())
         }
     }

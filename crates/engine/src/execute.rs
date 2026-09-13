@@ -75,8 +75,28 @@ pub(crate) enum Effect {
 }
 
 #[cfg(any(target_os = "macos", test))]
+pub(crate) enum GuardDecision {
+    Proceed,
+    Refused(String),
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) enum GuardPoint {
+    AfterStarted,
+    LastNative,
+}
+
+#[cfg(any(target_os = "macos", test))]
+type GuardHook<'a> = Option<&'a mut dyn FnMut(GuardPoint, &Path) -> io::Result<GuardDecision>>;
+
+#[cfg(any(target_os = "macos", test))]
 trait Platform: Probe {
-    fn effect(&mut self, path: &Path, stop: &mut dyn FnMut() -> bool) -> Effect;
+    fn effect(
+        &mut self,
+        path: &Path,
+        stop: &mut dyn FnMut() -> bool,
+        guard: &mut dyn FnMut() -> GuardDecision,
+    ) -> Effect;
 
     fn journal_path(&self, path: &Path) -> NativePath {
         NativePath::from_path(path)
@@ -114,6 +134,18 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
         approval: &Approval,
         cancellation: &Cancellation,
         journal: &impl Journal,
+    ) -> io::Result<ExecutionReport> {
+        self.execute_with_clean_policy(preview, approval, cancellation, journal, None, None)
+    }
+
+    fn execute_with_clean_policy(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        journal: &impl Journal,
+        clean_policy: Option<journal::CleanPolicyContextRecord>,
+        mut guard: GuardHook<'_>,
     ) -> io::Result<ExecutionReport> {
         if preview.execution_contract() != ExecutionContract::RevalidatedTrashV1 {
             return Err(journal::invalid(
@@ -214,7 +246,10 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                 })
             })
             .collect::<io::Result<Vec<_>>>()?;
-        let schema_version = if preview.schema_version() == 3 {
+        let clean_profile = clean_policy.is_some();
+        let schema_version = if clean_profile {
+            3
+        } else if preview.schema_version() == 3 {
             journal::SCHEMA_VERSION
         } else {
             1
@@ -228,6 +263,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                 operation_id: journal.new_id()?,
                 contract: preview.execution_contract().as_str().into(),
                 scope: self.platform.journal_path(preview.scope()),
+                clean_policy,
                 created_unix_ms: now,
                 items,
             },
@@ -272,35 +308,75 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                     stop_for_journal_error(&mut report, index, error);
                     return Ok(report);
                 }
-                let mut final_stop = None;
-                let planner = &mut self.planner;
-                let effect = self.platform.effect(item.observation().path(), &mut || {
-                    final_stop = planner.stop_reason(preview, cancellation);
-                    final_stop.is_some()
-                });
-                let row = &mut report.record.items[index];
-                match effect {
-                    Effect::Moved(destination) => {
-                        row.state = ItemState::Succeeded;
-                        row.destination = Some(self.platform.journal_path(&destination));
+                let mut skip_native_call = false;
+                if let Some(check) = guard.as_deref_mut() {
+                    match resolve_guard_decision(
+                        check(GuardPoint::AfterStarted, item.observation().path()),
+                        GuardPoint::AfterStarted,
+                    ) {
+                        GuardDecision::Proceed => {}
+                        GuardDecision::Refused(reason) => {
+                            report.record.items[index].state = ItemState::Skipped;
+                            report.record.items[index].reason =
+                                Some(format!("{reason}; no_native_call"));
+                            report.record.items[index].destination = None;
+                            stopped = true;
+                            skip_native_call = true;
+                        }
                     }
-                    Effect::Refused(message) => {
-                        row.state = ItemState::Skipped;
-                        row.reason = Some(
-                            final_stop
-                                .map(|code| code.as_str().to_owned())
-                                .unwrap_or(message),
-                        );
-                    }
-                    Effect::Failed(message) => {
-                        row.state = ItemState::Failed;
-                        row.reason = Some(message);
-                    }
-                    Effect::Unknown { message, evidence } => {
-                        row.state = ItemState::Unknown;
-                        row.reason = Some(message);
-                        row.recovery_evidence = evidence.map(|evidence| *evidence);
-                        stopped = true;
+                }
+                if !skip_native_call {
+                    let mut final_stop = None;
+                    let planner = &mut self.planner;
+                    let mut guard_result = GuardDecision::Proceed;
+                    let effect = self.platform.effect(
+                        item.observation().path(),
+                        &mut || {
+                            final_stop = planner.stop_reason(preview, cancellation);
+                            final_stop.is_some()
+                        },
+                        &mut || {
+                            if let Some(check) = guard.as_deref_mut() {
+                                guard_result = resolve_guard_decision(
+                                    check(GuardPoint::LastNative, item.observation().path()),
+                                    GuardPoint::LastNative,
+                                );
+                            }
+                            match &guard_result {
+                                GuardDecision::Proceed => GuardDecision::Proceed,
+                                GuardDecision::Refused(reason) => {
+                                    GuardDecision::Refused(reason.clone())
+                                }
+                            }
+                        },
+                    );
+                    let row = &mut report.record.items[index];
+                    match effect {
+                        Effect::Moved(destination) => {
+                            row.state = ItemState::Succeeded;
+                            row.destination = Some(self.platform.journal_path(&destination));
+                        }
+                        Effect::Refused(message) => {
+                            row.state = ItemState::Skipped;
+                            row.reason = Some(
+                                final_stop
+                                    .map(|code| code.as_str().to_owned())
+                                    .unwrap_or(message),
+                            );
+                            if matches!(guard_result, GuardDecision::Refused(_)) {
+                                stopped = true;
+                            }
+                        }
+                        Effect::Failed(message) => {
+                            row.state = ItemState::Failed;
+                            row.reason = Some(message);
+                        }
+                        Effect::Unknown { message, evidence } => {
+                            row.state = ItemState::Unknown;
+                            row.reason = Some(message);
+                            row.recovery_evidence = evidence.map(|evidence| *evidence);
+                            stopped = true;
+                        }
                     }
                 }
             }
@@ -355,13 +431,38 @@ fn model_error(error: Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, error)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn resolve_guard_decision(result: io::Result<GuardDecision>, point: GuardPoint) -> GuardDecision {
+    match result {
+        Ok(decision) => decision,
+        Err(error) => {
+            GuardDecision::Refused(format!("policy_guard_error_{}: {error}", point.label()))
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl GuardPoint {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::AfterStarted => "after_started",
+            Self::LastNative => "last_native",
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::TrashSession;
+pub use macos::{CleanSession, TrashSession};
 
 #[cfg(not(target_os = "macos"))]
 pub struct TrashSession {
+    _unavailable: (),
+}
+
+#[cfg(not(target_os = "macos"))]
+pub struct CleanSession {
     _unavailable: (),
 }
 
@@ -373,6 +474,7 @@ impl TrashSession {
             "native Trash is macOS-only",
         ))
     }
+
     pub fn prepare_rule_selection(
         _: Scope,
         _: &str,
@@ -400,6 +502,44 @@ impl TrashSession {
     pub fn execute(
         &mut self,
         _: &Plan,
+        _: &Approval,
+        _: &Cancellation,
+        _: &Store,
+    ) -> io::Result<ExecutionReport> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native Trash is macOS-only",
+        ))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl CleanSession {
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_rule_selection(
+        _: Scope,
+        _: &[crate::rules::RuleCandidate],
+        _: &[PathBuf],
+        _: crate::clean_policy::ConfigPath,
+        _: crate::clean_policy::PolicySnapshot,
+        _: &Cancellation,
+    ) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native Trash is macOS-only",
+        ))
+    }
+    pub fn preview(&self) -> &Plan {
+        unreachable!("session cannot be created on this platform")
+    }
+    pub fn approve(&mut self) -> io::Result<Approval> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native Trash is macOS-only",
+        ))
+    }
+    pub fn execute(
+        &mut self,
         _: &Approval,
         _: &Cancellation,
         _: &Store,

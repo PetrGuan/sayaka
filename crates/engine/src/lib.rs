@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod clean_policy;
 pub mod execute;
 pub mod history;
 pub mod installation;
