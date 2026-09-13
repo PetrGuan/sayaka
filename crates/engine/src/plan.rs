@@ -207,6 +207,7 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             items.push(PlanItem {
                 observation: observation.clone(),
                 contract: self.contract,
+                rule_binding: None,
             });
         }
         let plan = Plan {
@@ -252,6 +253,36 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
         }
         record.state = PlanState::Approved;
         Ok(Approval { plan: preview.id })
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn seal_rule_bindings_for_prepared(
+        &mut self,
+        plan: PlanId,
+        bindings: &HashMap<ResourceId, RuleBinding>,
+    ) -> Result<Plan, Error> {
+        if bindings.is_empty() {
+            return Err(Error::new(ReasonCode::InvalidPlanState));
+        }
+        let record = self
+            .plans
+            .get_mut(&plan)
+            .ok_or_else(|| Error::new(ReasonCode::UnknownPlan))?;
+        if record.state != PlanState::Prepared {
+            return Err(Error::new(ReasonCode::InvalidPlanState));
+        }
+        let mut sealed = record.plan.clone();
+        for item in &mut sealed.items {
+            let Some(binding) = bindings.get(&item.resource()) else {
+                return Err(Error::at(ReasonCode::InvalidPlanState, item.resource()));
+            };
+            item.rule_binding = Some(binding.clone());
+        }
+        if bindings.len() != sealed.items.len() {
+            return Err(Error::new(ReasonCode::InvalidPlanState));
+        }
+        record.plan = sealed.clone();
+        Ok(sealed)
     }
 
     /// One-shot, read-only preflight. Never enumerates new targets or mutates

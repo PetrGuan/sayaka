@@ -129,9 +129,9 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
             "selection_issues": session.issues(),
             "effects_performed": false,
         });
-        write_json(&value)?;
+        print_json_value(&value)?;
     } else {
-        show_preview(&plan)?;
+        show_plan_preview(&plan)?;
         for item in session.refusals() {
             writeln!(
                 io::stdout().lock(),
@@ -212,6 +212,16 @@ pub(crate) fn print_execution_report(
                 destination.display
             )?;
         }
+        if let Some(binding) = &item.rule_binding {
+            writeln!(
+                io::stdout().lock(),
+                "  Rule: {} v{} (ruleset r{}, digest {})",
+                binding.rule_id,
+                binding.rule_version,
+                binding.ruleset_revision,
+                binding.semantics_digest
+            )?;
+        }
         if let Some(evidence) = &item.recovery_evidence {
             show_recovery_evidence(&mut io::stdout().lock(), evidence)?;
         }
@@ -234,7 +244,7 @@ pub(crate) fn print_execution_report(
     Ok(())
 }
 
-fn confirmed(answer: &str, expected: &str) -> bool {
+pub(crate) fn confirmed(answer: &str, expected: &str) -> bool {
     answer
         .strip_suffix('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
@@ -270,7 +280,7 @@ fn show_recovery_evidence(
     Ok(())
 }
 
-fn show_preview(plan: &Plan) -> io::Result<()> {
+pub(crate) fn show_plan_preview(plan: &Plan) -> io::Result<()> {
     let mut out = io::stdout().lock();
     writeln!(
         out,
@@ -304,7 +314,9 @@ pub fn receipt(args: &ArgMatches) -> io::Result<u8> {
         let store = Store::open(&state_directory(args)?, false)?;
         let snapshot = store.records()?;
         if args.get_flag("json") {
-            write_json(&json!({ "schema_version": 1, "kind": "receipts", "journal": snapshot }))?;
+            print_json_value(
+                &json!({ "schema_version": 1, "kind": "receipts", "journal": snapshot }),
+            )?;
         } else {
             let mut out = io::stdout().lock();
             if snapshot.records.is_empty() {
@@ -341,6 +353,16 @@ pub(crate) fn write_record(out: &mut impl Write, record: &journal::Record) -> io
             "  {:?} {}  {:?}",
             item.state, item.path.display, item.reason
         )?;
+        if let Some(binding) = &item.rule_binding {
+            writeln!(
+                out,
+                "    rule={} v{} ruleset_r{} digest={}",
+                binding.rule_id,
+                binding.rule_version,
+                binding.ruleset_revision,
+                binding.semantics_digest
+            )?;
+        }
         if let Some(evidence) = &item.recovery_evidence {
             show_recovery_evidence(out, evidence)?;
         }
@@ -348,14 +370,18 @@ pub(crate) fn write_record(out: &mut impl Write, record: &journal::Record) -> io
     Ok(())
 }
 
-fn write_json(value: &serde_json::Value) -> io::Result<()> {
+pub(crate) fn print_json_value(value: &serde_json::Value) -> io::Result<()> {
     let mut out = io::stdout().lock();
     serde_json::to_writer(&mut out, value)?;
     writeln!(out)?;
     out.flush()
 }
 
-fn render_error(result: io::Result<u8>, json_output: bool, kind: &str) -> io::Result<u8> {
+pub(crate) fn render_error(
+    result: io::Result<u8>,
+    json_output: bool,
+    kind: &str,
+) -> io::Result<u8> {
     match result {
         Ok(code) => Ok(code),
         Err(error) => {
@@ -365,7 +391,7 @@ fn render_error(result: io::Result<u8>, json_output: bool, kind: &str) -> io::Re
                 _ => 1,
             };
             if json_output {
-                write_json(&json!({
+                print_json_value(&json!({
                     "schema_version": 1, "kind": kind, "status": "failed",
                     "error": { "code": format!("{:?}", error.kind()), "message": error.to_string() }
                 }))?;

@@ -35,7 +35,9 @@ filesystem identity, case/alias safety, permissions or TOCTOU guarantees.
 
 M1 plans contain only the modeled ordinary-file `MoveToTrash` candidate;
 there is no method that executes an M1 plan. M3 plans use a distinct
-`RevalidatedMoveToTrash` action and versioned execution contract. Size is a logical-byte estimate, not
+`RevalidatedMoveToTrash` action and versioned execution contract. Rule-bound
+explicit selections use plan schema v3 with immutable per-item rule/source/target
+witnesses; plain explicit-file Trash remains schema v2. Size is a logical-byte estimate, not
 reclaimable capacity. Unknown counts remain explicit and sums fail on overflow.
 Trash recovery is platform-dependent, not promised.
 

@@ -477,6 +477,7 @@ impl ByteEstimate {
 pub struct PlanItem {
     pub(crate) observation: Observation,
     pub(crate) contract: ExecutionContract,
+    pub(crate) rule_binding: Option<RuleBinding>,
 }
 
 impl PlanItem {
@@ -497,6 +498,92 @@ impl PlanItem {
     }
     pub fn recovery(&self) -> Recovery {
         Recovery::PlatformDependentTrash
+    }
+    pub fn rule_binding(&self) -> Option<&RuleBinding> {
+        self.rule_binding.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuleWitness {
+    pub path: PathBuf,
+    pub identity: FileIdentity,
+    pub kind: ResourceKind,
+    pub logical_bytes: u64,
+    pub modified_at: SystemTime,
+    pub changed_at: SystemTime,
+    pub created_at: SystemTime,
+    pub uid: u32,
+    pub gid: u32,
+    pub mode: u32,
+    pub nlink: u64,
+    pub flags: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuleBinding {
+    pub(crate) schema_version: u32,
+    pub(crate) rule_id: String,
+    pub(crate) rule_version: u32,
+    pub(crate) ruleset_schema_version: u32,
+    pub(crate) ruleset_revision: u32,
+    pub(crate) semantics: String,
+    pub(crate) semantics_digest: String,
+    pub(crate) selected_root: PathBuf,
+    pub(crate) exclusions: Vec<PathBuf>,
+    pub(crate) target: RuleWitness,
+    pub(crate) source: RuleWitness,
+    pub(crate) root: RuleWitness,
+    pub(crate) target_ancestors: Vec<RuleWitness>,
+    pub(crate) source_ancestors: Vec<RuleWitness>,
+    pub(crate) warnings: Vec<String>,
+}
+
+impl RuleBinding {
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    pub fn rule_id(&self) -> &str {
+        &self.rule_id
+    }
+    pub fn rule_version(&self) -> u32 {
+        self.rule_version
+    }
+    pub fn ruleset_schema_version(&self) -> u32 {
+        self.ruleset_schema_version
+    }
+    pub fn ruleset_revision(&self) -> u32 {
+        self.ruleset_revision
+    }
+    pub fn semantics(&self) -> &str {
+        &self.semantics
+    }
+    pub fn semantics_digest(&self) -> &str {
+        &self.semantics_digest
+    }
+    pub fn selected_root(&self) -> &Path {
+        &self.selected_root
+    }
+    pub fn exclusions(&self) -> &[PathBuf] {
+        &self.exclusions
+    }
+    pub fn target(&self) -> &RuleWitness {
+        &self.target
+    }
+    pub fn source(&self) -> &RuleWitness {
+        &self.source
+    }
+    pub fn root(&self) -> &RuleWitness {
+        &self.root
+    }
+    pub fn target_ancestors(&self) -> &[RuleWitness] {
+        &self.target_ancestors
+    }
+    pub fn source_ancestors(&self) -> &[RuleWitness] {
+        &self.source_ancestors
+    }
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 }
 
@@ -545,7 +632,13 @@ impl Plan {
     pub fn schema_version(&self) -> u32 {
         match self.contract {
             ExecutionContract::ModelOnly => 1,
-            ExecutionContract::RevalidatedTrashV1 => 2,
+            ExecutionContract::RevalidatedTrashV1 => {
+                if self.items.iter().any(|item| item.rule_binding.is_some()) {
+                    3
+                } else {
+                    2
+                }
+            }
         }
     }
     pub fn execution_contract(&self) -> ExecutionContract {

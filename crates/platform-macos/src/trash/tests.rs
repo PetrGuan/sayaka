@@ -173,6 +173,180 @@ fn native_capture_revalidation_and_cancellation_have_no_trash_effect() {
 }
 
 #[test]
+fn source_bound_capture_retains_rule_witnesses_without_native_effect() {
+    let mut fixture = Fixture::new();
+    let pkg = fixture.directory("pkg");
+    let cache = fixture.directory("pkg/__pycache__");
+    let source = fixture.file("pkg/module.py", b"print('ok')\n");
+    let target = fixture.file("pkg/__pycache__/module.cpython-39.pyc", &[1, 2, 3, 4]);
+    let candidate =
+        TrashCandidate::capture_with_source(&fixture.root, &target, &source, &[]).unwrap();
+    candidate.revalidate().unwrap();
+    let witness = candidate
+        .rule_binding_witness()
+        .expect("source-bound candidate must retain rule witness");
+    assert_eq!(witness.target.path, target);
+    assert_eq!(witness.source.path, source);
+    assert_eq!(witness.root.path, fixture.root);
+    assert!(
+        witness
+            .target_ancestors
+            .iter()
+            .any(|entry| entry.path == cache)
+    );
+    assert!(
+        witness
+            .source_ancestors
+            .iter()
+            .any(|entry| entry.path == pkg)
+    );
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
+fn source_bound_revalidate_refuses_changed_source_before_effect() {
+    let mut fixture = Fixture::new();
+    fixture.directory("pkg");
+    fixture.directory("pkg/__pycache__");
+    let source = fixture.file("pkg/module.py", b"print('ok')\n");
+    let target = fixture.file("pkg/__pycache__/module.cpython-39.pyc", &[1, 2, 3, 4]);
+    let candidate =
+        TrashCandidate::capture_with_source(&fixture.root, &target, &source, &[]).unwrap();
+    fs::write(&source, b"print('changed')\n").unwrap();
+    assert!(candidate.revalidate().is_err());
+    let outcome = candidate.move_to_trash(|| panic!("must refuse before native callback"));
+    assert!(matches!(outcome, NativeTrashOutcome::Refused(_)));
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
+fn source_bound_revalidate_refuses_replaced_source_identity_before_effect() {
+    let mut fixture = Fixture::new();
+    fixture.directory("pkg");
+    fixture.directory("pkg/__pycache__");
+    let source = fixture.file("pkg/module.py", b"print('ok')\n");
+    let target = fixture.file("pkg/__pycache__/module.cpython-39.pyc", &[9, 8, 7, 6]);
+    let candidate =
+        TrashCandidate::capture_with_source(&fixture.root, &target, &source, &[]).unwrap();
+    let retained = fixture.root.join("retained-source.py");
+    fixture.rename(&source, &retained);
+    fixture.file("pkg/module.py", b"print('replacement')\n");
+    assert!(candidate.revalidate().is_err());
+    let outcome = candidate.move_to_trash(|| panic!("must refuse before native callback"));
+    assert!(matches!(outcome, NativeTrashOutcome::Refused(_)));
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
+fn destination_probe_tolerates_changed_time_during_acl_capture_after_owned_rename() {
+    let mut fixture = Fixture::new();
+    let source = fixture.file("before.pyc", b"synthetic-cache");
+    let renamed = fixture.root.join("after.pyc");
+    fixture.rename(&source, &renamed);
+    super::set_test_probe_hook(Some((
+        super::TestProbeStage::Complete,
+        super::TestProbeMutation::Changed,
+    )));
+    let probe = super::verify_destination_probe_for_test(&renamed);
+    super::set_test_probe_hook(None);
+    probe.unwrap();
+    fixture.finish();
+}
+
+#[test]
+fn post_move_capture_anchor_accepts_consistent_changed_time_transition() {
+    super::post_move_capture_anchor_probe_for_test().unwrap();
+}
+
+#[test]
+fn post_move_matrix_strict_fields_fail_and_changed_time_only_passes() {
+    let strict_failures = [
+        super::TestProbeMutation::Device,
+        super::TestProbeMutation::Inode,
+        super::TestProbeMutation::Mode,
+        super::TestProbeMutation::Uid,
+        super::TestProbeMutation::Gid,
+        super::TestProbeMutation::Nlink,
+        super::TestProbeMutation::Flags,
+        super::TestProbeMutation::Size,
+        super::TestProbeMutation::Blocks,
+        super::TestProbeMutation::Modified,
+        super::TestProbeMutation::Created,
+    ];
+    for mutation in strict_failures {
+        assert!(super::post_move_consistency_probe_for_test(None, Some(mutation), true).is_err());
+    }
+    assert!(
+        super::post_move_consistency_probe_for_test(
+            Some(super::TestProbeMutation::Changed),
+            None,
+            true
+        )
+        .is_err()
+    );
+    assert!(
+        super::post_move_consistency_probe_for_test(
+            None,
+            Some(super::TestProbeMutation::ChangedAndSize),
+            true
+        )
+        .is_err()
+    );
+    assert!(super::post_move_consistency_probe_for_test(None, None, false).is_err());
+    assert!(super::post_move_consistency_probe_for_test(None, None, true).is_ok());
+}
+
+#[test]
+fn post_move_anchor_revalidate_refuses_changed_time_after_capture() {
+    let mut fixture = Fixture::new();
+    let source = fixture.file("before-anchor.pyc", b"synthetic-cache");
+    let renamed = fixture.root.join("after-anchor.pyc");
+    fixture.rename(&source, &renamed);
+    let probe = super::verify_destination_anchor_probe_for_test(
+        &renamed,
+        Some((
+            super::TestProbeStage::OpenHandle,
+            super::TestProbeMutation::Changed,
+        )),
+    );
+    assert!(probe.is_err());
+    fixture.finish();
+}
+
+#[test]
+fn post_move_anchor_revalidate_accepts_stable_destination() {
+    let mut fixture = Fixture::new();
+    let source = fixture.file("before-anchor-ok.pyc", b"synthetic-cache");
+    let renamed = fixture.root.join("after-anchor-ok.pyc");
+    fixture.rename(&source, &renamed);
+    super::verify_destination_anchor_probe_for_test(&renamed, None).unwrap();
+    fixture.finish();
+}
+
+#[test]
+fn pre_effect_full_target_refuses_changed_time_and_blocks() {
+    let mut fixture = Fixture::new();
+    let file = fixture.file("strict-pre-effect.pyc", b"strict");
+
+    super::set_test_probe_hook(Some((
+        super::TestProbeStage::OpenHandle,
+        super::TestProbeMutation::Changed,
+    )));
+    assert!(super::full_target_capture_probe_for_test(&file).is_err());
+
+    super::set_test_probe_hook(Some((
+        super::TestProbeStage::OpenHandle,
+        super::TestProbeMutation::Blocks,
+    )));
+    assert!(super::full_target_capture_probe_for_test(&file).is_err());
+    super::set_test_probe_hook(None);
+    fixture.finish();
+}
+
+#[test]
 fn native_non_utf8_path_is_preserved_or_explicitly_rejected_by_apfs() {
     let mut fixture = Fixture::new();
     let path = fixture.root.join(OsStr::from_bytes(b"native-\xff.txt"));

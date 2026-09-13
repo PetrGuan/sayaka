@@ -106,6 +106,128 @@ fn prepare(planner: &mut TestPlanner, ids: &[ResourceId]) -> Plan {
     planner.prepare(ids, &[], Duration::from_secs(60)).unwrap()
 }
 
+fn cpython_binding_for(target: &Path) -> RuleBinding {
+    let source = crate::rules::explicit_selection_for_target(target)
+        .expect("cpthon target naming")
+        .source_path;
+    RuleBinding {
+        schema_version: 1,
+        rule_id: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID.into(),
+        rule_version: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+        ruleset_schema_version: crate::rules::RULESET_SCHEMA_VERSION,
+        ruleset_revision: crate::rules::BUILTIN_RULESET_REVISION,
+        semantics: crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS.into(),
+        semantics_digest: crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST.into(),
+        selected_root: root(),
+        exclusions: vec![],
+        target: RuleWitness {
+            path: target.to_path_buf(),
+            identity: FileIdentity::Unix {
+                device: 1,
+                inode: 10,
+            },
+            kind: ResourceKind::File,
+            logical_bytes: 42,
+            modified_at: UNIX_EPOCH,
+            changed_at: UNIX_EPOCH,
+            created_at: UNIX_EPOCH,
+            uid: 1,
+            gid: 1,
+            mode: 0o100600,
+            nlink: 1,
+            flags: 0,
+        },
+        source: RuleWitness {
+            path: source,
+            identity: FileIdentity::Unix {
+                device: 1,
+                inode: 11,
+            },
+            kind: ResourceKind::File,
+            logical_bytes: 24,
+            modified_at: UNIX_EPOCH,
+            changed_at: UNIX_EPOCH,
+            created_at: UNIX_EPOCH,
+            uid: 1,
+            gid: 1,
+            mode: 0o100600,
+            nlink: 1,
+            flags: 0,
+        },
+        root: RuleWitness {
+            path: root(),
+            identity: FileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
+            kind: ResourceKind::Directory,
+            logical_bytes: 0,
+            modified_at: UNIX_EPOCH,
+            changed_at: UNIX_EPOCH,
+            created_at: UNIX_EPOCH,
+            uid: 1,
+            gid: 1,
+            mode: 0o040700,
+            nlink: 1,
+            flags: 0,
+        },
+        target_ancestors: vec![
+            RuleWitness {
+                path: root().join("pkg"),
+                identity: FileIdentity::Unix {
+                    device: 1,
+                    inode: 2,
+                },
+                kind: ResourceKind::Directory,
+                logical_bytes: 0,
+                modified_at: UNIX_EPOCH,
+                changed_at: UNIX_EPOCH,
+                created_at: UNIX_EPOCH,
+                uid: 1,
+                gid: 1,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            },
+            RuleWitness {
+                path: root().join("pkg/__pycache__"),
+                identity: FileIdentity::Unix {
+                    device: 1,
+                    inode: 3,
+                },
+                kind: ResourceKind::Directory,
+                logical_bytes: 0,
+                modified_at: UNIX_EPOCH,
+                changed_at: UNIX_EPOCH,
+                created_at: UNIX_EPOCH,
+                uid: 1,
+                gid: 1,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            },
+        ],
+        source_ancestors: vec![RuleWitness {
+            path: root().join("pkg"),
+            identity: FileIdentity::Unix {
+                device: 1,
+                inode: 2,
+            },
+            kind: ResourceKind::Directory,
+            logical_bytes: 0,
+            modified_at: UNIX_EPOCH,
+            changed_at: UNIX_EPOCH,
+            created_at: UNIX_EPOCH,
+            uid: 1,
+            gid: 1,
+            mode: 0o040700,
+            nlink: 1,
+            flags: 0,
+        }],
+        warnings: vec!["metadata-only".into()],
+    }
+}
+
 fn assert_code<T>(result: Result<T, Error>, expected: ReasonCode) {
     match result {
         Err(error) => assert_eq!(error.code, expected, "{error}"),
@@ -140,6 +262,38 @@ fn discovery_plan_approval_and_preflight_round_trip() {
     assert!(report.skipped.is_empty());
     assert_eq!(probe.inspected, [root().join("file")]);
     assert_eq!(planner.state(plan.id()).unwrap(), PlanState::Validated);
+}
+
+#[test]
+fn sealing_rule_bindings_updates_prepared_plan_identity() {
+    let (mut planner, mut probe, _) = setup();
+    planner = planner.for_revalidated_trash();
+    planner
+        .set_versions(Versions {
+            engine: 1,
+            rules: 2,
+        })
+        .unwrap();
+    let target = root().join("pkg/__pycache__/module.cpython-39.pyc");
+    let mut target_snapshot = snapshot(10);
+    target_snapshot.logical_bytes = Some(42);
+    let finding = discover(
+        &mut planner,
+        &mut probe,
+        "pkg/__pycache__/module.cpython-39.pyc",
+        target_snapshot,
+    );
+    let preview = planner
+        .prepare(&[finding.observation().id()], &[], Duration::from_secs(60))
+        .unwrap();
+    let mut bindings = HashMap::new();
+    bindings.insert(finding.observation().id(), cpython_binding_for(&target));
+    let sealed = planner
+        .seal_rule_bindings_for_prepared(preview.id(), &bindings)
+        .unwrap();
+    assert_eq!(sealed.schema_version(), 3);
+    assert!(sealed.items()[0].rule_binding().is_some());
+    planner.approve(&sealed).unwrap();
 }
 
 #[test]

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::rules;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn fixture_path(path: &str) -> PathBuf {
     if cfg!(windows) {
@@ -30,6 +31,7 @@ struct FakePlatform {
     next_unknown: bool,
     unknown_evidence: Option<journal::RecoveryEvidence>,
     before_effect: Option<Box<dyn FnMut()>>,
+    refuse_before_effect: Option<String>,
 }
 impl Probe for FakePlatform {
     fn inspect(&mut self, _: &Scope, path: &Path) -> Result<Snapshot, ProbeError> {
@@ -43,6 +45,9 @@ impl Platform for FakePlatform {
     fn effect(&mut self, path: &Path, stop: &mut dyn FnMut() -> bool) -> Effect {
         if let Some(callback) = &mut self.before_effect {
             callback();
+        }
+        if let Some(reason) = self.refuse_before_effect.take() {
+            return Effect::Refused(reason);
         }
         if stop() {
             return Effect::Refused("stopped".into());
@@ -117,6 +122,7 @@ fn setup() -> (Session<FakePlatform, TestClock>, TestClock) {
         next_unknown: false,
         unknown_evidence: None,
         before_effect: None,
+        refuse_before_effect: None,
     };
     let mut selected = Vec::new();
     for index in 1..=2 {
@@ -177,6 +183,203 @@ fn execute(
     session
         .execute(&preview, &approval, &Cancellation::default(), journal)
         .unwrap()
+}
+
+fn setup_rule_bound() -> (Session<FakePlatform, TestClock>, TestClock) {
+    let clock = TestClock(Rc::new(Cell::new(UNIX_EPOCH + Duration::from_secs(100))));
+    let mut planner = Planner::with_sources(
+        Scope::new(fixture_path("/fixture"), vec![]).unwrap(),
+        Versions {
+            engine: 2,
+            rules: 2,
+        },
+        clock.clone(),
+        SequentialIds::default(),
+    )
+    .unwrap()
+    .for_revalidated_trash();
+    let mut platform = FakePlatform {
+        snapshots: HashMap::new(),
+        journal_paths: HashMap::from([(
+            fixture_path("/fixture"),
+            NativePath::unix_fixture("/fixture"),
+        )]),
+        effects: Vec::new(),
+        fail_on: None,
+        next_unknown: false,
+        unknown_evidence: None,
+        before_effect: None,
+        refuse_before_effect: None,
+    };
+    let target_wire = "/fixture/pkg/__pycache__/module.cpython-39.pyc";
+    let target_path = fixture_path(target_wire);
+    let destination = "/fixture-trash/module.cpython-39.pyc";
+    platform
+        .journal_paths
+        .insert(target_path.clone(), NativePath::unix_fixture(target_wire));
+    platform.journal_paths.insert(
+        fixture_path(destination),
+        NativePath::unix_fixture(destination),
+    );
+    platform.snapshots.insert(
+        target_path.clone(),
+        Snapshot {
+            identity: Some(FileIdentity::Unix {
+                device: 1,
+                inode: 99,
+            }),
+            kind: ResourceKind::File,
+            logical_bytes: Some(12),
+            modified_at: Some(UNIX_EPOCH),
+            complete: true,
+            boundary: Boundary::Verified,
+            protection: Protection::Clear,
+            trash: Capability::Available,
+            owner: OwnerState::NotApplicable,
+        },
+    );
+    let selected = vec![
+        planner
+            .discover(&target_path, &mut platform)
+            .unwrap()
+            .observation()
+            .id(),
+    ];
+    let preview = planner
+        .prepare(&selected, &[], Duration::from_secs(60))
+        .unwrap();
+    let mut bindings = HashMap::new();
+    let item = &preview.items()[0];
+    bindings.insert(
+        item.resource(),
+        RuleBinding {
+            schema_version: 1,
+            rule_id: rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID.into(),
+            rule_version: rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+            ruleset_schema_version: rules::RULESET_SCHEMA_VERSION,
+            ruleset_revision: rules::BUILTIN_RULESET_REVISION,
+            semantics: rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS.into(),
+            semantics_digest: rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST.into(),
+            selected_root: fixture_path("/fixture"),
+            exclusions: vec![],
+            target: RuleWitness {
+                path: fixture_path("/fixture/pkg/__pycache__/module.cpython-39.pyc"),
+                identity: FileIdentity::Unix {
+                    device: 1,
+                    inode: 99,
+                },
+                kind: ResourceKind::File,
+                logical_bytes: 12,
+                modified_at: UNIX_EPOCH,
+                changed_at: UNIX_EPOCH,
+                created_at: UNIX_EPOCH,
+                uid: 501,
+                gid: 20,
+                mode: 0o100600,
+                nlink: 1,
+                flags: 0,
+            },
+            source: RuleWitness {
+                path: fixture_path("/fixture/pkg/module.py"),
+                identity: FileIdentity::Unix {
+                    device: 1,
+                    inode: 98,
+                },
+                kind: ResourceKind::File,
+                logical_bytes: 40,
+                modified_at: UNIX_EPOCH,
+                changed_at: UNIX_EPOCH,
+                created_at: UNIX_EPOCH,
+                uid: 501,
+                gid: 20,
+                mode: 0o100600,
+                nlink: 1,
+                flags: 0,
+            },
+            root: RuleWitness {
+                path: fixture_path("/fixture"),
+                identity: FileIdentity::Unix {
+                    device: 1,
+                    inode: 1,
+                },
+                kind: ResourceKind::Directory,
+                logical_bytes: 0,
+                modified_at: UNIX_EPOCH,
+                changed_at: UNIX_EPOCH,
+                created_at: UNIX_EPOCH,
+                uid: 501,
+                gid: 20,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            },
+            target_ancestors: vec![
+                RuleWitness {
+                    path: fixture_path("/fixture/pkg"),
+                    identity: FileIdentity::Unix {
+                        device: 1,
+                        inode: 40,
+                    },
+                    kind: ResourceKind::Directory,
+                    logical_bytes: 0,
+                    modified_at: UNIX_EPOCH,
+                    changed_at: UNIX_EPOCH,
+                    created_at: UNIX_EPOCH,
+                    uid: 501,
+                    gid: 20,
+                    mode: 0o040700,
+                    nlink: 1,
+                    flags: 0,
+                },
+                RuleWitness {
+                    path: fixture_path("/fixture/pkg/__pycache__"),
+                    identity: FileIdentity::Unix {
+                        device: 1,
+                        inode: 41,
+                    },
+                    kind: ResourceKind::Directory,
+                    logical_bytes: 0,
+                    modified_at: UNIX_EPOCH,
+                    changed_at: UNIX_EPOCH,
+                    created_at: UNIX_EPOCH,
+                    uid: 501,
+                    gid: 20,
+                    mode: 0o040700,
+                    nlink: 1,
+                    flags: 0,
+                },
+            ],
+            source_ancestors: vec![RuleWitness {
+                path: fixture_path("/fixture/pkg"),
+                identity: FileIdentity::Unix {
+                    device: 1,
+                    inode: 40,
+                },
+                kind: ResourceKind::Directory,
+                logical_bytes: 0,
+                modified_at: UNIX_EPOCH,
+                changed_at: UNIX_EPOCH,
+                created_at: UNIX_EPOCH,
+                uid: 501,
+                gid: 20,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            }],
+            warnings: vec!["metadata-only".into()],
+        },
+    );
+    let preview = planner
+        .seal_rule_bindings_for_prepared(preview.id(), &bindings)
+        .unwrap();
+    (
+        Session {
+            planner,
+            platform,
+            preview,
+        },
+        clock,
+    )
 }
 
 #[test]
@@ -456,4 +659,84 @@ fn cancellation_at_final_native_boundary_is_not_success() {
         .unwrap();
     assert!(session.platform.effects.is_empty());
     assert_eq!(report.exit_code(), 130);
+}
+
+#[test]
+fn rule_bound_plan_can_be_approved_without_plan_mismatch() {
+    let (mut session, _) = setup_rule_bound();
+    assert_eq!(session.preview.schema_version(), 3);
+    assert!(session.preview.items()[0].rule_binding().is_some());
+    let approval = session.planner.approve(&session.preview.clone()).unwrap();
+    assert_eq!(approval.plan, session.preview.id());
+}
+
+#[test]
+fn mutated_rule_binding_cannot_be_approved() {
+    let (mut session, _) = setup_rule_bound();
+    let mut forged = session.preview.clone();
+    let binding = forged.items[0].rule_binding.as_mut().unwrap();
+    binding.semantics_digest = "sha256:forged".into();
+    let error = session.planner.approve(&forged).unwrap_err();
+    assert_eq!(error.code, ReasonCode::PlanMismatch);
+}
+
+#[test]
+fn rule_bound_execute_publishes_schema_v3_v2_with_binding() {
+    let (mut session, _) = setup_rule_bound();
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal::default();
+    let report = session
+        .execute(&preview, &approval, &Cancellation::default(), &journal)
+        .unwrap();
+    assert_eq!(report.exit_code(), 0);
+    assert_eq!(report.record.plan_schema_version, 3);
+    assert_eq!(report.record.schema_version, journal::SCHEMA_VERSION);
+    let binding = report.record.items[0].rule_binding.as_ref().unwrap();
+    assert_eq!(binding.rule_id, rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID);
+    assert_eq!(
+        binding.semantics_digest,
+        rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST
+    );
+}
+
+#[test]
+fn cancel_before_native_effect_keeps_rule_bound_batch_at_zero_effect() {
+    let (mut session, _) = setup_rule_bound();
+    let cancellation = Cancellation::default();
+    cancellation.cancel();
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal::default();
+    let report = session
+        .execute(&preview, &approval, &cancellation, &journal)
+        .unwrap();
+    assert!(session.platform.effects.is_empty());
+    assert_eq!(report.record.items[0].state, ItemState::Skipped);
+    assert_eq!(report.record.items[0].reason.as_deref(), Some("cancelled"));
+    assert_eq!(
+        journal.durable.borrow()[1].items[0].state,
+        ItemState::Skipped
+    );
+}
+
+#[test]
+fn rule_bound_after_started_source_refusal_has_zero_effect_and_truthful_skip() {
+    let (mut session, _) = setup_rule_bound();
+    session.platform.refuse_before_effect = Some("source_changed_after_durable_intent".into());
+    let preview = session.preview.clone();
+    let approval = session.planner.approve(&preview).unwrap();
+    let journal = FakeJournal::default();
+    let report = session
+        .execute(&preview, &approval, &Cancellation::default(), &journal)
+        .unwrap();
+    assert!(session.platform.effects.is_empty());
+    assert_eq!(report.record.items[0].state, ItemState::Skipped);
+    assert_eq!(
+        report.record.items[0].reason.as_deref(),
+        Some("source_changed_after_durable_intent")
+    );
+    let durable = journal.durable.borrow();
+    assert_eq!(durable[1].items[0].state, ItemState::Started);
+    assert_eq!(durable.last().unwrap().items[0].state, ItemState::Skipped);
 }

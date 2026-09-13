@@ -797,3 +797,26 @@ fn preview_rejects_unknown_rule_id() {
         Err(PreviewError::InvalidRuleId)
     ));
 }
+
+#[test]
+fn explicit_selection_derives_source_from_cpython_target() {
+    let target = path("pkg/__pycache__/module.cpython-311.opt-1.pyc");
+    let selection = explicit_selection_for_target(&target).expect("valid explicit CPython target");
+    assert_eq!(selection.target_path, target);
+    assert_eq!(selection.source_path, path("pkg/module.py"));
+    assert_eq!(selection.cache_tag, "cpython-311");
+    assert_eq!(selection.optimization_tag.as_deref(), Some("1"));
+    assert!(explicit_selection_for_target(&path("pkg/module.pyc")).is_none());
+}
+
+#[test]
+fn cpython_rule_catalog_includes_explicit_native_trash_action() {
+    let rule = builtin_rules()
+        .iter()
+        .find(|rule| rule.id == CPYTHON_SOURCE_BACKED_PYC_RULE_ID)
+        .expect("builtin cpython rule");
+    assert_eq!(rule.version, CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION);
+    assert_eq!(rule.ruleset_revision, BUILTIN_RULESET_REVISION);
+    assert!(rule.actions.contains(&RuleAction::ManualReview));
+    assert!(rule.actions.contains(&RuleAction::ExplicitNativeTrash));
+}

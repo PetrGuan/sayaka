@@ -2,13 +2,18 @@
 
 use crate::human;
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
-use sayaka_engine::model::Cancellation;
+use sayaka_engine::execute::TrashSession;
+use sayaka_engine::journal::{NativePath, Store};
+use sayaka_engine::model::{Cancellation, ReasonCode, Scope};
 use sayaka_engine::rules::{self, PreviewError, RuleAction, RulePreview};
 use sayaka_engine::scan::{self, ScanCode, ScanError, ScanLimits, display_path};
 use serde::Serialize;
 use serde::ser::SerializeStruct;
-use std::io::{self, IsTerminal, Write};
+use serde_json::json;
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+
+const RULE_TRASH_MAX_PATHS: usize = 32;
 
 pub fn command() -> Command {
     let defaults = ScanLimits::default();
@@ -86,6 +91,55 @@ pub fn command() -> Command {
             ))
             .value_parser(value_parser!(u64)),
     );
+    let trash = Command::new("trash")
+        .about("Preview explicit rule-selected files for native Trash; no change without --execute")
+        .arg(
+            Arg::new("root")
+                .value_name("ROOT")
+                .required(true)
+                .help("Existing physical directory containing every selected target and source")
+                .value_parser(value_parser!(PathBuf)),
+        )
+        .arg(
+            Arg::new("rule")
+                .long("rule")
+                .value_name("RULE_ID")
+                .required(true),
+        )
+        .arg(
+            Arg::new("select")
+                .long("select")
+                .value_name("FILE")
+                .action(ArgAction::Append)
+                .required(true)
+                .value_parser(value_parser!(PathBuf))
+                .help("Explicit target .pyc file; repeatable, max 32"),
+        )
+        .arg(
+            Arg::new("exclude")
+                .long("exclude")
+                .value_name("PATH")
+                .action(ArgAction::Append)
+                .value_parser(value_parser!(PathBuf)),
+        )
+        .arg(
+            Arg::new("execute")
+                .long("execute")
+                .action(ArgAction::SetTrue)
+                .help("Require interactive terminal confirmation with exact phrase"),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("execute"),
+        )
+        .arg(
+            Arg::new("state-dir")
+                .long("state-dir")
+                .value_name("DIR")
+                .value_parser(value_parser!(PathBuf)),
+        );
     Command::new("rules")
         .about("Built-in evidence-backed rules")
         .subcommand_required(true)
@@ -101,12 +155,14 @@ pub fn command() -> Command {
                 ),
         )
         .subcommand(preview)
+        .subcommand(trash)
 }
 
 pub fn run(args: &ArgMatches) -> io::Result<u8> {
     match args.subcommand() {
         Some(("list", args)) => run_list(args),
         Some(("preview", args)) => run_preview(args),
+        Some(("trash", args)) => run_trash(args),
         _ => Ok(2),
     }
 }
@@ -178,6 +234,7 @@ fn run_preview(args: &ArgMatches) -> io::Result<u8> {
                 "unknown rule ID; use `sayaka rules list`",
             ));
         }
+
         let root = normalize_root(
             args.get_one::<PathBuf>("root")
                 .ok_or_else(|| ScanError::new(ScanCode::InvalidRoot, "root is required"))?,
@@ -250,10 +307,203 @@ fn run_preview(args: &ArgMatches) -> io::Result<u8> {
     }
 }
 
+fn run_trash(args: &ArgMatches) -> io::Result<u8> {
+    crate::trash::render_error(run_trash_inner(args), args.get_flag("json"), "rule_trash")
+}
+
+fn run_trash_inner(args: &ArgMatches) -> io::Result<u8> {
+    let execute = args.get_flag("execute");
+    if execute
+        && !(io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--execute requires an interactive terminal; piped confirmation is not accepted",
+        ));
+    }
+    let root = normalize_root(
+        args.get_one::<PathBuf>("root")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "root is required"))?,
+    )
+    .map_err(io::Error::other)?;
+    let rule_id = args
+        .get_one::<String>("rule")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "rule is required"))?;
+    let selections = args
+        .get_many::<PathBuf>("select")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "--select is required"))?
+        .map(std::path::absolute)
+        .collect::<io::Result<Vec<_>>>()?;
+    validate_rule_trash_request(rule_id, &selections, "select")?;
+    let excluded = args
+        .get_many::<PathBuf>("exclude")
+        .into_iter()
+        .flatten()
+        .map(std::path::absolute)
+        .collect::<io::Result<Vec<_>>>()?;
+    validate_rule_trash_request(rule_id, &excluded, "exclude")?;
+    let cancellation = Cancellation::default();
+    let scope = Scope::new(root, vec![])
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let mut session = TrashSession::prepare_rule_selection(
+        scope,
+        rule_id,
+        &selections,
+        &excluded,
+        &cancellation,
+    )?;
+    let plan = session.preview().clone();
+    let rejected = plan
+        .rejected()
+        .iter()
+        .filter(|item| item.code != ReasonCode::Excluded)
+        .count();
+    if args.get_flag("json") {
+        let timestamp = |time: std::time::SystemTime| -> io::Result<u64> {
+            let millis = time
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_millis();
+            u64::try_from(millis).map_err(io::Error::other)
+        };
+        let value = json!({
+            "schema_version": 1,
+            "kind": "rule_trash_preview",
+            "plan_schema_version": plan.schema_version(),
+            "execution_contract": plan.execution_contract().as_str(),
+            "warning": plan.execution_contract().warning(),
+            "rule_id": rule_id,
+            "created_unix_ms": timestamp(plan.created_at())?,
+            "expires_unix_ms": timestamp(plan.expires_at())?,
+            "scope": NativePath::from_path(plan.scope()),
+            "items": plan.items().iter().map(|item| {
+                let binding = item.rule_binding().expect("rule selection binds every item");
+                json!({
+                    "path": NativePath::from_path(item.observation().path()),
+                    "action": "revalidated_move_to_trash",
+                    "logical_bytes": item.observation().snapshot().logical_bytes,
+                    "identity": item.observation().snapshot().identity,
+                    "rule_binding": {
+                        "schema_version": binding.schema_version(),
+                        "rule_id": binding.rule_id(),
+                        "rule_version": binding.rule_version(),
+                        "ruleset_schema_version": binding.ruleset_schema_version(),
+                        "ruleset_revision": binding.ruleset_revision(),
+                        "semantics": binding.semantics(),
+                        "semantics_digest": binding.semantics_digest(),
+                        "selected_root": NativePath::from_path(binding.selected_root()),
+                        "exclusions": binding.exclusions().iter().map(|path| NativePath::from_path(path)).collect::<Vec<_>>(),
+                        "target": NativePath::from_path(&binding.target().path),
+                        "source": NativePath::from_path(&binding.source().path),
+                        "warnings": binding.warnings(),
+                    },
+                })
+            }).collect::<Vec<_>>(),
+            "rejected": session.refusals(),
+            "selection_issues": session.issues(),
+            "effects_performed": false,
+        });
+        crate::trash::print_json_value(&value)?;
+    } else {
+        crate::trash::show_plan_preview(&plan)?;
+        for item in session.refusals() {
+            writeln!(
+                io::stdout().lock(),
+                "  Not selected: {} ({})",
+                item.path.display,
+                item.reason
+            )?;
+        }
+
+        for issue in session.issues() {
+            writeln!(
+                io::stderr().lock(),
+                "Refused {}: {:?}",
+                issue.path.display,
+                issue.message
+            )?;
+        }
+    }
+    if !execute {
+        return Ok(if rejected > 0 || plan.items().is_empty() {
+            3
+        } else {
+            0
+        });
+    }
+    if plan.items().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no eligible files; nothing can be approved",
+        ));
+    }
+    let expected = format!("trash {}", plan.items().len());
+    write!(
+        io::stderr().lock(),
+        "\nType {expected:?} to move exactly these files, or press Enter to cancel: "
+    )?;
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().lock().take(128).read_line(&mut answer)?;
+    if !crate::trash::confirmed(&answer, &expected) {
+        writeln!(io::stderr().lock(), "Cancelled; no files moved.")?;
+        return Ok(130);
+    }
+    let signal = cancellation.clone();
+    ctrlc::set_handler(move || signal.cancel()).map_err(io::Error::other)?;
+    let approval = session
+        .approve(&plan)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let store = Store::open(&crate::trash::state_directory(args)?, true)?;
+    let report = session.execute(&plan, &approval, &cancellation, &store)?;
+    crate::trash::print_execution_report(&report)?;
+    let code = report.exit_code();
+    Ok(if code == 0 && rejected > 0 { 3 } else { code })
+}
+
+fn validate_rule_trash_request(
+    rule_id: &str,
+    values: &[PathBuf],
+    option_name: &str,
+) -> io::Result<()> {
+    if rule_id != rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unknown rule ID: {rule_id}"),
+        ));
+    }
+    if values.len() > RULE_TRASH_MAX_PATHS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "too many --{option_name} values: {} (maximum {})",
+                values.len(),
+                RULE_TRASH_MAX_PATHS
+            ),
+        ));
+    }
+    if option_name != "select" {
+        return Ok(());
+    }
+    for selection in values {
+        if rules::explicit_selection_for_target(selection).is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "invalid --select target (expected CPython __pycache__ .pyc path): {}",
+                    display_path(selection)
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn action_label(action: &RuleAction) -> &'static str {
     match action {
         RuleAction::PreviewOnly => "preview_only",
         RuleAction::ManualReview => "manual_review",
+        RuleAction::ExplicitNativeTrash => "explicit_native_trash",
     }
 }
 
@@ -334,9 +584,9 @@ fn write_preview_human(preview: &RulePreview) -> io::Result<()> {
     out.flush()
 }
 
-struct NativePath<'a>(&'a Path);
+struct EncodedPath<'a>(&'a Path);
 
-impl Serialize for NativePath<'_> {
+impl Serialize for EncodedPath<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use std::fmt::Write;
         let mut raw = String::new();
@@ -372,8 +622,8 @@ struct JsonCandidate<'a> {
     action: &'static str,
     target_entry_id: u64,
     source_entry_id: u64,
-    target_path: NativePath<'a>,
-    source_path: NativePath<'a>,
+    target_path: EncodedPath<'a>,
+    source_path: EncodedPath<'a>,
     target_identity: sayaka_engine::model::FileIdentity,
     source_identity: sayaka_engine::model::FileIdentity,
     matched_logical_bytes: Option<u64>,
@@ -387,13 +637,13 @@ struct JsonRefusal<'a> {
     rule_version: u32,
     ruleset_revision: u32,
     code: rules::RefusalCode,
-    path: Option<NativePath<'a>>,
+    path: Option<EncodedPath<'a>>,
     message: &'a str,
 }
 
 #[derive(Serialize)]
 struct JsonIssue<'a> {
-    path: Option<NativePath<'a>>,
+    path: Option<EncodedPath<'a>>,
     code: &'a str,
     message: &'a str,
     os_code: Option<i32>,
@@ -411,7 +661,7 @@ fn write_preview_json(preview: &RulePreview) -> io::Result<()> {
         scan_task_id: &'a str,
         status: &'a str,
         complete: bool,
-        roots: Vec<NativePath<'a>>,
+        roots: Vec<EncodedPath<'a>>,
         issues: Vec<JsonIssue<'a>>,
         issues_omitted: usize,
         candidates: Vec<JsonCandidate<'a>>,
@@ -420,7 +670,7 @@ fn write_preview_json(preview: &RulePreview) -> io::Result<()> {
         matched_bytes_unknown_files: u64,
         effects_performed: bool,
     }
-    let roots = preview.roots.iter().map(|path| NativePath(path)).collect();
+    let roots = preview.roots.iter().map(|path| EncodedPath(path)).collect();
     let candidates = preview
         .candidates
         .iter()
@@ -431,8 +681,8 @@ fn write_preview_json(preview: &RulePreview) -> io::Result<()> {
             action: action_label(&candidate.action),
             target_entry_id: candidate.target_entry_id,
             source_entry_id: candidate.source_entry_id,
-            target_path: NativePath(&candidate.target_path),
-            source_path: NativePath(&candidate.source_path),
+            target_path: EncodedPath(&candidate.target_path),
+            source_path: EncodedPath(&candidate.source_path),
             target_identity: candidate.target_identity,
             source_identity: candidate.source_identity,
             matched_logical_bytes: candidate.matched_logical_bytes,
@@ -444,7 +694,7 @@ fn write_preview_json(preview: &RulePreview) -> io::Result<()> {
         .issues
         .iter()
         .map(|issue| JsonIssue {
-            path: issue.path.as_deref().map(NativePath),
+            path: issue.path.as_deref().map(EncodedPath),
             code: issue.code.as_str(),
             message: &issue.message,
             os_code: issue.os_code,
@@ -458,7 +708,7 @@ fn write_preview_json(preview: &RulePreview) -> io::Result<()> {
             rule_version: refusal.rule_version,
             ruleset_revision: refusal.ruleset_revision,
             code: refusal.code,
-            path: refusal.path.as_deref().map(NativePath),
+            path: refusal.path.as_deref().map(EncodedPath),
             message: &refusal.message,
         })
         .collect();

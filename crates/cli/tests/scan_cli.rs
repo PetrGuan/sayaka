@@ -43,6 +43,7 @@ fn history_fixture(fixture: &Fixture) -> PathBuf {
                     .then(|| NativePath::from_path(std::path::Path::new("/fixture-trash/item"))),
                 state: item_state,
                 reason: None,
+                rule_binding: None,
                 recovery_evidence: None,
                 updated_unix_ms: created,
             }],
@@ -213,6 +214,7 @@ fn rules_list_human_and_json_catalog_expose_read_only_actions() {
     );
     assert_eq!(value["rules"][0]["actions"][0], "preview_only");
     assert_eq!(value["rules"][0]["actions"][1], "manual_review");
+    assert_eq!(value["rules"][0]["actions"][2], "explicit_native_trash");
 }
 
 #[test]
@@ -410,6 +412,241 @@ fn rules_preview_json_propagates_scan_issue_details() {
             .iter()
             .any(|item| item["code"] == "scan_incomplete")
     );
+}
+
+#[test]
+fn rules_trash_rejects_json_execute_combo() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "trash",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--select",
+        "missing.pyc",
+        "--json",
+        "--execute",
+    ]);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn rules_trash_unknown_rule_is_exit2_json_invalid_input_and_no_state() {
+    let fixture = Fixture::new();
+    let state = fixture.base.join("rules-trash-unknown-rule-state");
+    let pseudo_select = fixture.root.join("pkg/__pycache__/module.cpython-39.pyc");
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "trash",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "invalid",
+        "--select",
+        pseudo_select.to_str().unwrap(),
+        "--json",
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_trash");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"]["code"], "InvalidInput");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown rule ID")
+    );
+    assert!(!state.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn rules_trash_invalid_select_is_exit2_json_invalid_input_and_no_state() {
+    let fixture = Fixture::new();
+    let pkg = fixture.root.join("pkg");
+    fs::create_dir_all(&pkg).unwrap();
+    let not_pyc = pkg.join("module.py");
+    fs::write(&not_pyc, b"print('x')\n").unwrap();
+    let state = fixture.base.join("rules-trash-invalid-select-state");
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "trash",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--select",
+        not_pyc.to_str().unwrap(),
+        "--json",
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_trash");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"]["code"], "InvalidInput");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid --select target")
+    );
+    assert!(!state.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn rules_trash_too_many_select_is_exit2_json_invalid_input_and_no_state() {
+    let fixture = Fixture::new();
+    let state = fixture.base.join("rules-trash-too-many-select-state");
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "trash",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--json",
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    for index in 0..33 {
+        let select = fixture
+            .root
+            .join(format!("pkg/__pycache__/module{index}.cpython-39.pyc"));
+        command.arg("--select").arg(select);
+    }
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_trash");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"]["code"], "InvalidInput");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("too many --select values")
+    );
+    assert!(!state.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn rules_trash_too_many_exclude_is_exit2_json_invalid_input_and_no_state() {
+    let fixture = Fixture::new();
+    let state = fixture.base.join("rules-trash-too-many-exclude-state");
+    let mut command = fixture.command();
+    let select = fixture.root.join("pkg/__pycache__/module.cpython-39.pyc");
+    command.args([
+        "rules",
+        "trash",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--select",
+        select.to_str().unwrap(),
+        "--json",
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    for index in 0..33 {
+        let excluded = fixture.root.join(format!("pkg/excluded-{index}"));
+        command.arg("--exclude").arg(excluded);
+    }
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_trash");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"]["code"], "InvalidInput");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("too many --exclude values")
+    );
+    assert!(!state.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn rules_trash_accepts_exactly_32_select_values() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "trash",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--json",
+    ]);
+    for index in 0..32 {
+        let select = fixture
+            .root
+            .join(format!("pkg/__pycache__/module{index}.cpython-39.pyc"));
+        command.arg("--select").arg(select);
+    }
+    let result = capture(command);
+    assert_ne!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_ne!(value["error"]["code"], "InvalidInput");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn rules_trash_preview_is_read_only_and_emits_rule_binding() {
+    let fixture = Fixture::new();
+    let pkg = fixture.root.join("pkg");
+    fs::create_dir_all(pkg.join("__pycache__")).unwrap();
+    fs::write(pkg.join("module.py"), b"print('ok')\n").unwrap();
+    let pyc = pkg.join("__pycache__/module.cpython-39.pyc");
+    fs::write(&pyc, vec![9_u8; 64]).unwrap();
+    let state = fixture.base.join("rules-trash-state");
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "trash",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--select",
+        pyc.to_str().unwrap(),
+        "--json",
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert!(matches!(output.status.code(), Some(0 | 3)));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_trash_preview");
+    assert_eq!(value["plan_schema_version"], 3);
+    assert_eq!(value["effects_performed"], false);
+    let items = value["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{value}");
+    assert_eq!(
+        items[0]["rule_binding"]["rule_id"],
+        "org.python.cpython.pep3147.source_backed_pyc"
+    );
+    assert_eq!(items[0]["rule_binding"]["schema_version"], 1);
+    assert!(
+        items[0]["rule_binding"]["source"]["display"]
+            .as_str()
+            .unwrap()
+            .contains("module.py")
+    );
+    assert!(!state.exists());
 }
 
 #[test]
@@ -1124,7 +1361,7 @@ fn receipt_missing_state_is_an_explicit_error_without_creation() {
 fn receipt_preserves_unverified_recovery_hints_without_retrying() {
     use sayaka_engine::journal::{
         FileEvidence, ItemRecord, ItemState, NativePath, NativeTime, Record, RecoveryEvidence,
-        SCHEMA_VERSION, Store,
+        Store,
     };
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let fixture = Fixture::new();
@@ -1140,7 +1377,7 @@ fn receipt_preserves_unverified_recovery_hints_without_retrying() {
     let state = fixture.base.join("evidence-journal");
     drop(Store::open(&state, true).unwrap());
     let record = Record {
-        schema_version: SCHEMA_VERSION,
+        schema_version: 1,
         plan_schema_version: 2,
         engine_version: 2,
         rules_version: 1,
@@ -1156,6 +1393,7 @@ fn receipt_preserves_unverified_recovery_hints_without_retrying() {
             state: ItemState::Unknown,
             reason: Some("synthetic unverified outcome".into()),
             destination: None,
+            rule_binding: None,
             updated_unix_ms: 1,
             recovery_evidence: Some(RecoveryEvidence {
                 approved: evidence.clone(),

@@ -12,6 +12,35 @@ pub struct NativeFileInfo {
     pub modified_at: SystemTime,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeWitnessInfo {
+    pub path: PathBuf,
+    pub kind: &'static str,
+    pub device: u64,
+    pub inode: u64,
+    pub logical_bytes: u64,
+    pub modified_unix_seconds: i64,
+    pub modified_nanoseconds: i64,
+    pub changed_unix_seconds: i64,
+    pub changed_nanoseconds: i64,
+    pub created_unix_seconds: i64,
+    pub created_nanoseconds: i64,
+    pub uid: u32,
+    pub gid: u32,
+    pub mode: u32,
+    pub nlink: u64,
+    pub flags: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeRuleBindingWitness {
+    pub target: NativeWitnessInfo,
+    pub source: NativeWitnessInfo,
+    pub root: NativeWitnessInfo,
+    pub target_ancestors: Vec<NativeWitnessInfo>,
+    pub source_ancestors: Vec<NativeWitnessInfo>,
+}
+
 #[derive(Debug)]
 pub enum NativeTrashOutcome {
     Moved {
@@ -90,6 +119,24 @@ impl TrashCandidate {
         }
     }
 
+    pub fn capture_with_source(
+        scope: &Path,
+        target: &Path,
+        source: &Path,
+        protected: &[PathBuf],
+    ) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            native::Candidate::capture_with_source(scope, target, source, protected)
+                .map(|native| Self { native })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (scope, target, source, protected);
+            Err(unsupported())
+        }
+    }
+
     pub fn info(&self) -> &NativeFileInfo {
         #[cfg(target_os = "macos")]
         {
@@ -116,6 +163,17 @@ impl TrashCandidate {
         #[cfg(not(target_os = "macos"))]
         {
             Err(unsupported())
+        }
+    }
+
+    pub fn rule_binding_witness(&self) -> Option<&NativeRuleBindingWitness> {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.rule_binding_witness()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
         }
     }
 

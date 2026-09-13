@@ -16,7 +16,8 @@ pub use volume::volume_info;
 
 mod trash;
 pub use trash::{
-    NativeFileInfo, NativeRecoveryEvidence, NativeTrashOutcome, TrashCandidate, full_sync,
+    NativeFileInfo, NativeRecoveryEvidence, NativeRuleBindingWitness, NativeTrashOutcome,
+    NativeWitnessInfo, TrashCandidate, full_sync,
 };
 
 mod acl;
