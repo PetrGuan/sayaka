@@ -20,6 +20,12 @@ use std::time::Duration;
 
 static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TraversalPolicy {
+    Default,
+    PruneAppBundles,
+}
+
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
@@ -394,21 +400,68 @@ pub fn scan(
     cancellation: &Cancellation,
     progress: impl FnMut(&ScanProgress),
 ) -> Result<ScanReport, ScanError> {
+    scan_with_policy(
+        roots,
+        limits,
+        cancellation,
+        TraversalPolicy::Default,
+        progress,
+    )
+}
+
+/// Read-only scan variant that emits `.app` bundle directories but does not
+/// descend into them.
+pub fn scan_prune_app_bundles(
+    roots: &[PathBuf],
+    limits: &ScanLimits,
+    cancellation: &Cancellation,
+    progress: impl FnMut(&ScanProgress),
+) -> Result<ScanReport, ScanError> {
+    scan_with_policy(
+        roots,
+        limits,
+        cancellation,
+        TraversalPolicy::PruneAppBundles,
+        progress,
+    )
+}
+
+pub(crate) fn scan_with_policy(
+    roots: &[PathBuf],
+    limits: &ScanLimits,
+    cancellation: &Cancellation,
+    traversal_policy: TraversalPolicy,
+    progress: impl FnMut(&ScanProgress),
+) -> Result<ScanReport, ScanError> {
     limits.validate()?;
     let task_id = ScanTaskId::new()?;
     #[cfg(target_os = "macos")]
     {
         let roots = walk::normalize_roots(roots, limits)?;
-        macos::scan_native(roots, limits, cancellation, task_id, progress)
+        macos::scan_native(
+            roots,
+            limits,
+            cancellation,
+            task_id,
+            traversal_policy,
+            progress,
+        )
     }
     #[cfg(windows)]
     {
         let roots = walk::normalize_roots(roots, limits)?;
-        windows::scan_native(roots, limits, cancellation, task_id, progress)
+        windows::scan_native(
+            roots,
+            limits,
+            cancellation,
+            task_id,
+            traversal_policy,
+            progress,
+        )
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
-        let _ = (roots, cancellation, task_id, progress);
+        let _ = (roots, cancellation, task_id, traversal_policy, progress);
         Err(ScanError::new(
             ScanCode::UnsupportedPlatform,
             "native scanning requires macOS or Windows",

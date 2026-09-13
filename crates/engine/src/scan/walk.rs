@@ -17,6 +17,27 @@ pub(super) struct Metadata {
     pub dataless: bool,
 }
 
+fn app_candidate_directory(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".app"))
+}
+
+fn should_descend_directory(policy: TraversalPolicy, path: &Path) -> bool {
+    match policy {
+        TraversalPolicy::Default => true,
+        TraversalPolicy::PruneAppBundles => !app_candidate_directory(path),
+    }
+}
+
+pub(super) struct RunOptions<'a> {
+    pub limits: &'a ScanLimits,
+    pub cancellation: &'a Cancellation,
+    pub task_id: ScanTaskId,
+    pub traversal_policy: TraversalPolicy,
+    pub started: Instant,
+}
+
 pub(super) struct DirItem {
     pub name: OsString,
     pub metadata: Result<Metadata, ScanError>,
@@ -297,6 +318,7 @@ fn worker<B: Backend>(
     shared: &Shared<B::Directory>,
     sender: mpsc::SyncSender<Event>,
     limits: &ScanLimits,
+    traversal_policy: TraversalPolicy,
     cancellation: &Cancellation,
     started: Instant,
 ) -> Result<(), ScanError> {
@@ -443,6 +465,9 @@ fn worker<B: Backend>(
                 continue;
             }
             if metadata.kind != ResourceKind::Directory {
+                continue;
+            }
+            if !should_descend_directory(traversal_policy, &path) {
                 continue;
             }
             if metadata.dataless {
@@ -755,15 +780,37 @@ fn record_entry(
     Ok(true)
 }
 
+#[cfg(test)]
 pub(super) fn run<B: Backend>(
     backend: &B,
     roots: Vec<PathBuf>,
-    limits: &ScanLimits,
-    cancellation: &Cancellation,
-    task_id: ScanTaskId,
-    started: Instant,
+    options: RunOptions<'_>,
+    progress: impl FnMut(&ScanProgress),
+) -> Result<ScanReport, ScanError> {
+    run_with_policy(
+        backend,
+        roots,
+        RunOptions {
+            traversal_policy: TraversalPolicy::Default,
+            ..options
+        },
+        progress,
+    )
+}
+
+pub(super) fn run_with_policy<B: Backend>(
+    backend: &B,
+    roots: Vec<PathBuf>,
+    options: RunOptions<'_>,
     mut progress: impl FnMut(&ScanProgress),
 ) -> Result<ScanReport, ScanError> {
+    let RunOptions {
+        limits,
+        cancellation,
+        task_id,
+        traversal_policy,
+        started,
+    } = options;
     let counters = Arc::new(Counters::default());
     let mut report = ScanReport {
         task_id,
@@ -858,17 +905,19 @@ pub(super) fn run<B: Backend>(
             break;
         }
         report.metrics.accepted_roots += 1;
-        shared
-            .queue
-            .lock()
-            .expect("scan queue poisoned")
-            .jobs
-            .push_back(Frame {
-                directory,
-                _permit: permit,
-                path,
-                depth: 0,
-            });
+        if should_descend_directory(traversal_policy, &path) {
+            shared
+                .queue
+                .lock()
+                .expect("scan queue poisoned")
+                .jobs
+                .push_back(Frame {
+                    directory,
+                    _permit: permit,
+                    path,
+                    depth: 0,
+                });
+        }
     }
     counters.peak_queued.store(
         shared.queue.lock().expect("scan queue poisoned").jobs.len(),
@@ -893,7 +942,15 @@ pub(super) fn run<B: Backend>(
             let sender = sender.clone();
             let shared = &shared;
             match backend.spawn_worker(threads, index, move || {
-                worker(backend, shared, sender, limits, cancellation, started)
+                worker(
+                    backend,
+                    shared,
+                    sender,
+                    limits,
+                    traversal_policy,
+                    cancellation,
+                    started,
+                )
             }) {
                 Ok(handle) => handles.push(handle),
                 Err(error) => {

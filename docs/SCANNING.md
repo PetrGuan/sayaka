@@ -6,7 +6,8 @@ Native scanning targets macOS and an initial Windows local fixed-NTFS slice;
 other platforms return an explicit unsupported-platform error. See
 [Windows native scope and evidence](WINDOWS.md) for its restrictions and remaining
 acceptance gates. The separate [disk browser](BROWSING.md) consumes
-these observations without changing this command or its JSON v1 contract.
+these observations without changing this command or its JSON v1 contract. Read-only
+`.app` bundle inventory is documented separately in [APPLICATIONS.md](APPLICATIONS.md).
 
 ## CLI contract
 

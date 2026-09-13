@@ -259,6 +259,71 @@ fn installer_rejects_exclude_outside_root_before_scan() {
     assert_eq!(value["status"], "failed");
 }
 
+fn apps_oracle_root() -> Option<PathBuf> {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .ok()?;
+    let target = repo.join("target");
+    let mut roots = fs::read_dir(target)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.file_type().ok().is_some_and(|ty| ty.is_dir()))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("apps-oracle-"))
+        })
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots.into_iter().next()
+}
+
+#[test]
+fn apps_requires_explicit_root_and_rejects_out_of_scope_excludes() {
+    let fixture = Fixture::new();
+    let mut missing = fixture.command();
+    missing.arg("apps");
+    assert_eq!(capture(missing).status.code(), Some(2));
+
+    let root = fixture.root.join("apps-root");
+    fs::create_dir(&root).unwrap();
+    let outside = fixture.base.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let mut invalid = fixture.command();
+    invalid.args([
+        "apps",
+        root.to_str().unwrap(),
+        "--exclude",
+        outside.to_str().unwrap(),
+        "--json",
+    ]);
+    let output = capture(invalid);
+    assert_eq!(output.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "app_inventory");
+    assert_eq!(value["status"], "failed");
+}
+
+#[test]
+fn apps_json_reports_inventory_without_effects() {
+    let Some(root) = apps_oracle_root() else {
+        return;
+    };
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args(["apps", root.to_str().unwrap(), "--json"]);
+    let output = capture(command);
+    assert!(matches!(output.status.code(), Some(0 | 3)));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "app_inventory");
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["effects_performed"], false);
+    assert!(value["status"] == "complete" || value["status"] == "partial");
+    assert!(value["apps"].as_array().is_some());
+}
+
 #[test]
 fn rules_list_human_and_json_catalog_expose_read_only_actions() {
     let fixture = Fixture::new();

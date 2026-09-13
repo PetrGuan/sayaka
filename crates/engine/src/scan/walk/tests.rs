@@ -224,10 +224,13 @@ fn execute(tree: Tree, limits: &ScanLimits) -> ScanReport {
     run(
         &backend,
         vec![root()],
-        limits,
-        &Cancellation::default(),
-        ScanTaskId::new().unwrap(),
-        Instant::now(),
+        RunOptions {
+            limits,
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::Default,
+            started: Instant::now(),
+        },
         |_| {},
     )
     .unwrap()
@@ -247,10 +250,13 @@ fn reparse_refusal_after_directory_observation_is_a_gap_even_with_unchanged_pare
     let report = run(
         &backend,
         vec![root()],
-        &ScanLimits::default(),
-        &Cancellation::default(),
-        ScanTaskId::new().unwrap(),
-        Instant::now(),
+        RunOptions {
+            limits: &ScanLimits::default(),
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::Default,
+            started: Instant::now(),
+        },
         |_| {},
     )
     .unwrap();
@@ -421,10 +427,13 @@ fn links_cloud_directories_and_mounts_are_not_opened() {
     let report = run(
         &backend,
         vec![root()],
-        &ScanLimits::default(),
-        &Cancellation::default(),
-        ScanTaskId::new().unwrap(),
-        Instant::now(),
+        RunOptions {
+            limits: &ScanLimits::default(),
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::Default,
+            started: Instant::now(),
+        },
         |_| {},
     )
     .unwrap();
@@ -623,10 +632,13 @@ fn cancellation_and_expired_budget_stop_without_new_scope_discovery() {
     let report = run(
         &backend,
         vec![root()],
-        &ScanLimits::default(),
-        &cancel,
-        ScanTaskId::new().unwrap(),
-        Instant::now(),
+        RunOptions {
+            limits: &ScanLimits::default(),
+            cancellation: &cancel,
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::Default,
+            started: Instant::now(),
+        },
         |_| {},
     )
     .unwrap();
@@ -635,13 +647,16 @@ fn cancellation_and_expired_budget_stop_without_new_scope_discovery() {
     let report = run(
         &backend,
         vec![root()],
-        &ScanLimits {
-            time_budget: Duration::from_secs(1),
-            ..ScanLimits::default()
+        RunOptions {
+            limits: &ScanLimits {
+                time_budget: Duration::from_secs(1),
+                ..ScanLimits::default()
+            },
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::Default,
+            started: Instant::now() - Duration::from_secs(2),
         },
-        &Cancellation::default(),
-        ScanTaskId::new().unwrap(),
-        Instant::now() - Duration::from_secs(2),
         |_| {},
     )
     .unwrap();
@@ -662,10 +677,13 @@ fn cancellation_in_probe_prevents_child_open_and_progress_ids_are_scoped() {
     let report = run(
         &backend,
         vec![root()],
-        &ScanLimits::default(),
-        &cancel,
-        ScanTaskId::new().unwrap(),
-        Instant::now(),
+        RunOptions {
+            limits: &ScanLimits::default(),
+            cancellation: &cancel,
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::Default,
+            started: Instant::now(),
+        },
         |event| ids.push(event.task_id),
     )
     .unwrap();
@@ -689,10 +707,13 @@ fn rejected_explicit_roots_are_gaps_even_for_normally_non_gap_codes() {
     let report = run(
         &backend,
         vec![root(), accepted],
-        &ScanLimits::default(),
-        &Cancellation::default(),
-        ScanTaskId::new().unwrap(),
-        Instant::now(),
+        RunOptions {
+            limits: &ScanLimits::default(),
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::Default,
+            started: Instant::now(),
+        },
         |_| {},
     )
     .unwrap();
@@ -711,10 +732,13 @@ fn thread_creation_failure_stops_and_joins_workers_before_returning_an_error() {
         let result = run(
             &backend,
             vec![root()],
-            &ScanLimits::default(),
-            &Cancellation::default(),
-            ScanTaskId::new().unwrap(),
-            Instant::now(),
+            RunOptions {
+                limits: &ScanLimits::default(),
+                cancellation: &Cancellation::default(),
+                task_id: ScanTaskId::new().unwrap(),
+                traversal_policy: TraversalPolicy::Default,
+                started: Instant::now(),
+            },
             |_| panic!("no progress should be emitted after worker startup failure"),
         );
         let error = result.unwrap_err();

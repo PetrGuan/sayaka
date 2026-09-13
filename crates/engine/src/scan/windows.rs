@@ -117,15 +117,19 @@ pub(super) fn scan_native(
     limits: &ScanLimits,
     cancellation: &Cancellation,
     task_id: ScanTaskId,
+    traversal_policy: TraversalPolicy,
     progress: impl FnMut(&ScanProgress),
 ) -> Result<ScanReport, ScanError> {
-    walk::run(
+    walk::run_with_policy(
         &WindowsBackend,
         roots,
-        limits,
-        cancellation,
-        task_id,
-        Instant::now(),
+        walk::RunOptions {
+            limits,
+            cancellation,
+            task_id,
+            traversal_policy,
+            started: Instant::now(),
+        },
         progress,
     )
 }
