@@ -179,7 +179,7 @@ fn completion_is_stdout_only_and_covers_current_commands() {
         assert!(result.status.success());
         let script = String::from_utf8(result.stdout).unwrap();
         for name in [
-            "history", "status", "browse", "install", "update", "recover", "remove",
+            "history", "status", "browse", "rules", "install", "update", "recover", "remove",
         ] {
             assert!(script.contains(name));
         }
@@ -187,6 +187,229 @@ fn completion_is_stdout_only_and_covers_current_commands() {
     }
     assert!(!fixture.base.join("home/.zshrc").exists());
     assert!(!fixture.base.join("home/.bashrc").exists());
+}
+
+#[test]
+fn rules_list_human_and_json_catalog_expose_read_only_actions() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args(["rules", "list"]);
+    let human = capture(command);
+    assert!(human.status.success());
+    let text = String::from_utf8(human.stdout).unwrap();
+    assert!(text.contains("org.python.cpython.pep3147.source_backed_pyc"));
+    assert!(text.contains("preview_only"));
+    assert!(text.contains("manual_review"));
+
+    let mut command = fixture.command();
+    command.args(["rules", "list", "--json"]);
+    let json = capture(command);
+    assert_eq!(json.status.code(), Some(0));
+    let value: Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_catalog");
+    assert_eq!(
+        value["rules"][0]["id"],
+        "org.python.cpython.pep3147.source_backed_pyc"
+    );
+    assert_eq!(value["rules"][0]["actions"][0], "preview_only");
+    assert_eq!(value["rules"][0]["actions"][1], "manual_review");
+}
+
+#[test]
+fn bare_rules_requires_subcommand_and_prints_usage() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.arg("rules");
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(stderr.contains("Usage:"));
+    assert!(stderr.contains("rules"));
+}
+
+#[test]
+fn rules_preview_requires_explicit_inputs_and_rejects_unknown_rule() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args(["rules", "preview"]);
+    assert_eq!(capture(command).status.code(), Some(2));
+
+    let mut command = fixture.command();
+    command.args(["rules", "preview", ".", "--rule", "invalid", "--json"]);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_preview");
+    assert_eq!(value["status"], "failed");
+    assert!(
+        value["issues"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown rule ID")
+    );
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
+fn rules_preview_unknown_rule_fails_before_scan_or_progress() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    let missing = fixture.root.join("does-not-exist");
+    command.args([
+        "rules",
+        "preview",
+        missing.to_str().unwrap(),
+        "--rule",
+        "invalid",
+        "--json",
+        "--progress",
+    ]);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_preview");
+    assert_eq!(value["issues"][0]["code"], "invalid_root");
+    assert!(
+        value["issues"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown rule ID")
+    );
+    assert!(
+        result.stderr.is_empty(),
+        "{:?}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn rules_preview_invalid_root_json_is_structured_and_no_progress() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "preview",
+        "root/../home",
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--json",
+        "--progress",
+    ]);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_preview");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["issues"][0]["code"], "invalid_root");
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
+fn rules_preview_json_reports_candidates_source_relation_refusals_and_no_effects() {
+    let fixture = Fixture::new();
+    let root = fixture.root.join("pkg");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("__pycache__")).unwrap();
+    fs::write(root.join("module.py"), b"print('ok')\n").unwrap();
+    fs::write(
+        root.join("__pycache__/module.cpython-39.pyc"),
+        vec![3_u8; 218],
+    )
+    .unwrap();
+    fs::write(
+        root.join("__pycache__/missing.cpython-39.pyc"),
+        vec![4_u8; 21],
+    )
+    .unwrap();
+    fs::write(root.join("legacy.pyc"), vec![5_u8; 12]).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "preview",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--json",
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(3));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_preview");
+    assert_eq!(
+        value["rule_id"],
+        "org.python.cpython.pep3147.source_backed_pyc"
+    );
+    assert_eq!(value["effects_performed"], false);
+    assert_eq!(value["candidates"].as_array().unwrap().len(), 1);
+    let candidate = &value["candidates"][0];
+    assert_eq!(candidate["action"], "manual_review");
+    assert!(
+        candidate["source_path"]["display"]
+            .as_str()
+            .unwrap()
+            .contains("module.py")
+    );
+    assert!(
+        candidate["target_path"]["display"]
+            .as_str()
+            .unwrap()
+            .contains("__pycache__")
+    );
+    assert_eq!(value["matched_bytes_known"], 218);
+    assert!(value["refusals"].as_array().unwrap().iter().any(|item| {
+        item["code"] == "source_missing"
+            && item["path"]["display"]
+                .as_str()
+                .unwrap()
+                .contains("missing.cpython-39.pyc")
+    }));
+    assert!(value["refusals"].as_array().unwrap().iter().any(|item| {
+        item["code"] == "not_pycache_child"
+            && item["path"]["display"]
+                .as_str()
+                .unwrap()
+                .contains("legacy.pyc")
+    }));
+    assert!(
+        fs::read_dir(fixture.base.join("state"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+fn rules_preview_json_propagates_scan_issue_details() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "preview",
+        fixture.root.join("missing").to_str().unwrap(),
+        "--rule",
+        "org.python.cpython.pep3147.source_backed_pyc",
+        "--json",
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(3));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "rule_preview");
+    assert!(!value["complete"].as_bool().unwrap());
+    assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["code"] == "not_found"
+            && issue["path"]["display"]
+                .as_str()
+                .unwrap()
+                .contains("missing")
+    }));
+    assert!(
+        value["refusals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["code"] == "scan_incomplete")
+    );
 }
 
 #[test]

@@ -291,17 +291,19 @@ mod tests {
                     assert_eq!(fs::read(path.join("keep")).unwrap(), b"replacement fixture");
                 }
                 Err(error) => {
-                    assert!(
-                        cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32)),
-                        "{error}"
-                    );
-                    assert_eq!(
-                        fs::read(owned.path().join("owned")).unwrap(),
-                        b"original fixture"
-                    );
-                    let path = owned.path().to_path_buf();
-                    owned.close().unwrap();
-                    assert!(!path.exists());
+                    #[cfg(windows)]
+                    {
+                        assert!(matches!(error.raw_os_error(), Some(5 | 32)), "{error}");
+                        assert_eq!(
+                            fs::read(owned.path().join("owned")).unwrap(),
+                            b"original fixture"
+                        );
+                        let path = owned.path().to_path_buf();
+                        owned.close().unwrap();
+                        assert!(!path.exists());
+                    }
+                    #[cfg(not(windows))]
+                    panic!("unexpected rename refusal on non-Windows host: {error}");
                 }
             }
             outer.close().unwrap();

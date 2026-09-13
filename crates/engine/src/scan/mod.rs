@@ -75,6 +75,14 @@ impl ScanTaskId {
             sequence,
         })
     }
+
+    #[cfg(test)]
+    pub(crate) const fn synthetic(sequence: u64) -> Self {
+        Self {
+            process: 1,
+            sequence,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
