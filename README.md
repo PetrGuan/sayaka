@@ -132,6 +132,20 @@ Results are structural hints only (`udif_koly_footer`, `xar_flat_pkg_manifest_hi
 `xar_archive_not_pkg`) and may remain unknown/unsupported/corrupt. See
 [installer preview contract](docs/INSTALLER_PREVIEW.md).
 
+Application inventory (read-only, explicit roots only) can discover `.app`
+bundle candidates with bounded `Contents/Info.plist` metadata and optional
+metadata-only executable-path existence checks:
+
+```sh
+sayaka apps .
+sayaka apps . --json
+```
+
+This command does **not** launch applications, load bundles, verify signatures,
+read receipts/quarantine/user data, or infer uninstall scope. A `.app` suffix
+and declared bundle metadata are observations, not trust/install proofs. See
+[application inventory contract](docs/APPLICATIONS.md).
+
 `clean` wraps the CPython source-backed rule with persistent clean-only exclusions:
 
 ```sh

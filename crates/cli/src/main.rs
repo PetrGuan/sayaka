@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
+mod apps;
 mod browser;
 mod clean;
 mod completions;
@@ -95,9 +96,10 @@ fn command() -> Command {
         .bin_name("sayaka")
         .version(env!("CARGO_PKG_VERSION"))
         .about("An open-source local maintenance engine and CLI")
-        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka installer .     Read-only installer discovery\n  sayaka installer . --json\n  sayaka rules list      Built-in read-only rule catalog\n  sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc\n  sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc\n  sayaka clean .         Clean preview for source-backed __pycache__ .pyc\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and previews never modify targets. Trash requires --execute and terminal confirmation.")
+        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka installer .     Read-only installer discovery\n  sayaka installer . --json\n  sayaka apps .          Read-only macOS app inventory\n  sayaka apps . --json\n  sayaka rules list      Built-in read-only rule catalog\n  sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc\n  sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc\n  sayaka clean .         Clean preview for source-backed __pycache__ .pyc\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and previews never modify targets. Trash requires --execute and terminal confirmation.")
         .arg_required_else_help(true)
         .subcommand(scan)
+        .subcommand(apps::command())
         .subcommand(trash::command())
         .subcommand(trash::receipt_command())
         .subcommand(browser::command())
@@ -253,6 +255,7 @@ fn run() -> io::Result<u8> {
     };
     match args.subcommand() {
         Some(("scan", args)) => run_scan(args),
+        Some(("apps", args)) => apps::run(args),
         Some(("trash", args)) => trash::run(args),
         Some(("receipt", args)) => trash::receipt(args),
         Some(("browse" | "analyze", args)) => browser::run(args),

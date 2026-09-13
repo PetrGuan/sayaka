@@ -269,17 +269,21 @@ pub(super) fn scan_native(
     limits: &ScanLimits,
     cancellation: &Cancellation,
     task_id: ScanTaskId,
+    traversal_policy: TraversalPolicy,
     progress: impl FnMut(&ScanProgress),
 ) -> Result<ScanReport, ScanError> {
     let started = Instant::now();
     let policy = ReadOnlyPolicy::enter().map_err(policy_error)?;
-    let result = walk::run(
+    let result = walk::run_with_policy(
         &MacBackend,
         roots,
-        limits,
-        cancellation,
-        task_id,
-        started,
+        walk::RunOptions {
+            limits,
+            cancellation,
+            task_id,
+            traversal_policy,
+            started,
+        },
         progress,
     );
     let restored = policy.restore().map_err(policy_error);
