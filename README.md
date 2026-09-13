@@ -118,6 +118,20 @@ freed space, and candidate actions remain `preview_only` / `manual_review`.
 source/target rule witnesses in the v3 plan and v2 journal, and still uses the
 same exact interactive `trash N` confirmation for `--execute`.
 
+Installer preview (read-only, explicit root only) can distinguish ordinary
+`.dmg`/`.pkg` names from bounded structural hints:
+
+```sh
+sayaka installer .
+sayaka installer . --filter pkg --exclude ./archive --json
+```
+
+This command does **not** mount images, execute installers, read payload files,
+validate signatures, read quarantine/origin URLs, or check installed receipts.
+Results are structural hints only (`udif_koly_footer`, `xar_flat_pkg_manifest_hint`,
+`xar_archive_not_pkg`) and may remain unknown/unsupported/corrupt. See
+[installer preview contract](docs/INSTALLER_PREVIEW.md).
+
 `clean` wraps the CPython source-backed rule with persistent clean-only exclusions:
 
 ```sh

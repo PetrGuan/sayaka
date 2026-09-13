@@ -12,6 +12,7 @@ pub struct Fixture {
 }
 
 impl Fixture {
+    #[allow(dead_code)]
     pub fn new() -> io::Result<Self> {
         Self::new_in(&std::env::temp_dir())
     }

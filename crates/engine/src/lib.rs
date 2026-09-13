@@ -13,6 +13,7 @@ pub mod clean_policy;
 pub mod execute;
 pub mod history;
 pub mod installation;
+pub mod installer_preview;
 pub mod journal;
 pub mod model;
 pub mod plan;
