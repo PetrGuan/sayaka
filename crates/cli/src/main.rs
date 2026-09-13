@@ -5,6 +5,7 @@ mod clean;
 mod completions;
 mod history;
 mod human;
+mod installer;
 mod lifecycle;
 mod output;
 mod rules;
@@ -94,7 +95,7 @@ fn command() -> Command {
         .bin_name("sayaka")
         .version(env!("CARGO_PKG_VERSION"))
         .about("An open-source local maintenance engine and CLI")
-        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka rules list      Built-in read-only rule catalog\n  sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc\n  sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc\n  sayaka clean .         Clean preview for source-backed __pycache__ .pyc\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and previews never modify targets. Trash requires --execute and terminal confirmation.")
+        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka installer .     Read-only installer discovery\n  sayaka installer . --json\n  sayaka rules list      Built-in read-only rule catalog\n  sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc\n  sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc\n  sayaka clean .         Clean preview for source-backed __pycache__ .pyc\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and previews never modify targets. Trash requires --execute and terminal confirmation.")
         .arg_required_else_help(true)
         .subcommand(scan)
         .subcommand(trash::command())
@@ -102,6 +103,7 @@ fn command() -> Command {
         .subcommand(browser::command())
         .subcommand(status::command())
         .subcommand(history::command())
+        .subcommand(installer::command())
         .subcommand(rules::command())
         .subcommand(clean::command())
         .subcommand(completions::command())
@@ -256,6 +258,7 @@ fn run() -> io::Result<u8> {
         Some(("browse" | "analyze", args)) => browser::run(args),
         Some(("status", args)) => status::run(args),
         Some(("history", args)) => history::run(args),
+        Some(("installer", args)) => installer::run(args),
         Some(("rules", args)) => rules::run(args),
         Some(("clean", args)) => clean::run(args),
         Some(("completions", args)) => completions::run(args),

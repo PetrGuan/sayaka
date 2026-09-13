@@ -183,7 +183,15 @@ fn completion_is_stdout_only_and_covers_current_commands() {
         assert!(result.status.success());
         let script = String::from_utf8(result.stdout).unwrap();
         for name in [
-            "history", "status", "browse", "rules", "clean", "install", "update", "recover",
+            "history",
+            "status",
+            "browse",
+            "rules",
+            "installer",
+            "clean",
+            "install",
+            "update",
+            "recover",
             "remove",
         ] {
             assert!(script.contains(name));
@@ -192,6 +200,63 @@ fn completion_is_stdout_only_and_covers_current_commands() {
     }
     assert!(!fixture.base.join("home/.zshrc").exists());
     assert!(!fixture.base.join("home/.bashrc").exists());
+}
+
+#[test]
+fn installer_requires_explicit_root_and_rejects_unknown_flags() {
+    let fixture = Fixture::new();
+    let mut missing = fixture.command();
+    missing.arg("installer");
+    let output = capture(missing);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("ROOT"));
+
+    let mut invalid = fixture.command();
+    invalid.args(["installer", ".", "--execute"]);
+    let output = capture(invalid);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn installer_json_is_stdout_only_and_never_claims_effects() {
+    let fixture = Fixture::new();
+    let root = fixture.root.join("installer");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("fake.pkg"), b"not-a-xar").unwrap();
+    let mut command = fixture.command();
+    command.args(["installer", root.to_str().unwrap(), "--json"]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(0));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "installer_preview");
+    assert_eq!(value["status"], "complete");
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["effects_performed"], false);
+    assert!(!value["candidates"].as_array().unwrap().is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn installer_rejects_exclude_outside_root_before_scan() {
+    let fixture = Fixture::new();
+    let root = fixture.root.join("installer");
+    fs::create_dir(&root).unwrap();
+    let outside = fixture.base.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "installer",
+        root.to_str().unwrap(),
+        "--exclude",
+        outside.to_str().unwrap(),
+        "--json",
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "installer_preview");
+    assert_eq!(value["status"], "failed");
 }
 
 #[test]
