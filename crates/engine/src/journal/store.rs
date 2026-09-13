@@ -380,6 +380,7 @@ mod tests {
             operation_id: "a-1".into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::from_path(Path::new("/fixture")),
+            clean_policy: None,
             created_unix_ms: 1,
             items: vec![ItemRecord {
                 path: NativePath::from_path(Path::new("/fixture/file")),

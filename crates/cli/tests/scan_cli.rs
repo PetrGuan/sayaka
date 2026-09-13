@@ -3,7 +3,9 @@
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -33,6 +35,7 @@ fn history_fixture(fixture: &Fixture) -> PathBuf {
             operation_id: id.into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::from_path(std::path::Path::new("/fixture")),
+            clean_policy: None,
             created_unix_ms: created,
             items: vec![ItemRecord {
                 path: NativePath::from_path(&std::path::Path::new("/fixture").join(id)),
@@ -180,7 +183,8 @@ fn completion_is_stdout_only_and_covers_current_commands() {
         assert!(result.status.success());
         let script = String::from_utf8(result.stdout).unwrap();
         for name in [
-            "history", "status", "browse", "rules", "install", "update", "recover", "remove",
+            "history", "status", "browse", "rules", "clean", "install", "update", "recover",
+            "remove",
         ] {
             assert!(script.contains(name));
         }
@@ -646,6 +650,335 @@ fn rules_trash_preview_is_read_only_and_emits_rule_binding() {
             .unwrap()
             .contains("module.py")
     );
+    assert!(!state.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_preview_json_uses_policy_without_creating_absent_config() {
+    let fixture = Fixture::new();
+    let pkg = fixture.root.join("pkg");
+    fs::create_dir_all(pkg.join("__pycache__")).unwrap();
+    fs::write(pkg.join("module.py"), b"print('ok')\n").unwrap();
+    fs::write(
+        pkg.join("__pycache__/module.cpython-39.pyc"),
+        vec![1_u8; 11],
+    )
+    .unwrap();
+    let config = fixture.base.join("clean-config");
+    let state = fixture.base.join("clean-state");
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        fixture.root.to_str().unwrap(),
+        "--json",
+        "--config-dir",
+        config.to_str().unwrap(),
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    let result = capture(command);
+    assert_eq!(result.status.code(), Some(0));
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["kind"], "clean_preview");
+    assert_eq!(value["effects_performed"], false);
+    assert_eq!(value["policy_file_state"]["state"], "absent");
+    assert_eq!(value["counts"]["selected"], 0);
+    assert_eq!(value["counts"]["refused"], 0);
+    assert_eq!(value["counts"]["eligible"], 1);
+    assert!(!config.exists());
+    assert!(!state.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_exclusions_add_list_remove_and_remove_root_are_explicit_config_updates() {
+    let fixture = Fixture::new();
+    let pkg = fixture.root.join("pkg");
+    fs::create_dir_all(pkg.join("__pycache__")).unwrap();
+    let keep = pkg.join("keep");
+    fs::create_dir(&keep).unwrap();
+    fs::write(pkg.join("module.py"), b"print('ok')\n").unwrap();
+    fs::write(pkg.join("__pycache__/module.cpython-39.pyc"), vec![2_u8; 9]).unwrap();
+    let config = fixture.base.join("clean-config");
+
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "add",
+        fixture.root.to_str().unwrap(),
+        keep.to_str().unwrap(),
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let add = capture(command);
+    assert_eq!(add.status.code(), Some(0));
+    assert!(config.join("exclusions-v1.json").is_file());
+
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "list",
+        fixture.root.to_str().unwrap(),
+        "--json",
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let listed = capture(command);
+    assert_eq!(listed.status.code(), Some(0));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(listed["entries"].as_array().unwrap().len(), 1);
+    assert!(!listed["entries"][0]["missing_attention"].as_bool().unwrap());
+
+    fs::remove_dir_all(&keep).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        fixture.root.to_str().unwrap(),
+        "--json",
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let blocked = capture(command);
+    assert_eq!(blocked.status.code(), Some(3));
+    let blocked: Value = serde_json::from_slice(&blocked.stdout).unwrap();
+    assert_eq!(blocked["counts"]["eligible"], 1);
+    assert_eq!(
+        blocked["missing_attention_entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(blocked["counts"]["persisted_excluded"], 0);
+    assert_eq!(blocked["counts"]["refused"], 1);
+
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "remove",
+        fixture.root.to_str().unwrap(),
+        Path::new("pkg/keep").to_str().unwrap(),
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    assert_eq!(capture(command).status.code(), Some(0));
+
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "remove-root",
+        fixture.root.to_str().unwrap(),
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    assert_eq!(capture(command).status.code(), Some(0));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_preview_treats_persisted_exclusions_as_intentional_not_refused() {
+    let fixture = Fixture::new();
+    let pkg = fixture.root.join("pkg");
+    fs::create_dir_all(pkg.join("__pycache__")).unwrap();
+    let keep = pkg.join("__pycache__");
+    fs::write(pkg.join("module.py"), b"print('ok')\n").unwrap();
+    fs::write(pkg.join("__pycache__/module.cpython-39.pyc"), vec![3_u8; 9]).unwrap();
+    let config = fixture.base.join("clean-config");
+    let mut add = fixture.command();
+    add.args([
+        "clean",
+        "exclusions",
+        "add",
+        fixture.root.to_str().unwrap(),
+        keep.to_str().unwrap(),
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    assert_eq!(capture(add).status.code(), Some(0));
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        fixture.root.to_str().unwrap(),
+        "--json",
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(0));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["counts"]["persisted_excluded"], 1);
+    assert_eq!(value["counts"]["refused"], 0);
+    assert_eq!(value["counts"]["selected"], 0);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_exclusions_remove_absolute_outside_root_is_invalid_input() {
+    let fixture = Fixture::new();
+    let pkg = fixture.root.join("pkg");
+    fs::create_dir_all(pkg.join("__pycache__")).unwrap();
+    fs::write(pkg.join("module.py"), b"print('ok')\n").unwrap();
+    fs::write(pkg.join("__pycache__/module.cpython-39.pyc"), vec![4_u8; 9]).unwrap();
+    let config = fixture.base.join("clean-config");
+    let outside = fixture.base.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "remove",
+        fixture.root.to_str().unwrap(),
+        outside.to_str().unwrap(),
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_exclusions_list_parent_traversal_json_reports_structured_invalid_input() {
+    let fixture = Fixture::new();
+    let config = fixture.base.join("clean-config");
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "list",
+        "../..",
+        "--json",
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "clean exclusions");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"]["code"], "InvalidInput");
+    assert!(output.stderr.is_empty());
+    assert!(!config.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_exclusions_list_parent_traversal_human_stderr() {
+    let fixture = Fixture::new();
+    let config = fixture.base.join("clean-config");
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "list",
+        "../..",
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("clean exclusions failed:"));
+    assert!(!config.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_exclusions_list_corrupt_owned_policy_json_is_storage_error() {
+    let fixture = Fixture::new();
+    let root = fixture.root.clone();
+    let config = fixture.base.join("clean-config");
+    fs::create_dir_all(&config).unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&config, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let policy_path = config.join("exclusions-v1.json");
+    fs::write(&policy_path, b"{not-json").unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&policy_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "list",
+        root.to_str().unwrap(),
+        "--json",
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "clean exclusions");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"]["code"], "InvalidData");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_exclusions_list_unreadable_owned_policy_json_is_storage_error() {
+    let fixture = Fixture::new();
+    let root = fixture.root.clone();
+    let config = fixture.base.join("clean-config");
+    fs::create_dir_all(&config).unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&config, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let policy_path = config.join("exclusions-v1.json");
+    fs::write(
+        &policy_path,
+        br#"{"schema_version":1,"kind":"sayaka_clean_exclusions","roots":[]}"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&policy_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        "exclusions",
+        "list",
+        root.to_str().unwrap(),
+        "--json",
+        "--config-dir",
+        config.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "clean exclusions");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"]["code"], "PermissionDenied");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_execute_rejects_non_tty_without_effect_or_state() {
+    let fixture = Fixture::new();
+    let pkg = fixture.root.join("pkg");
+    fs::create_dir_all(pkg.join("__pycache__")).unwrap();
+    let py = pkg.join("module.py");
+    let pyc = pkg.join("__pycache__/module.cpython-39.pyc");
+    fs::write(&py, b"print('ok')\n").unwrap();
+    fs::write(&pyc, vec![5_u8; 16]).unwrap();
+    let before_pyc = fs::read(&pyc).unwrap();
+    let state = fixture.base.join("clean-state");
+    let mut command = fixture.command();
+    command.args([
+        "clean",
+        fixture.root.to_str().unwrap(),
+        "--execute",
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&pyc).unwrap(), before_pyc);
     assert!(!state.exists());
 }
 
@@ -1384,6 +1717,7 @@ fn receipt_preserves_unverified_recovery_hints_without_retrying() {
         operation_id: "b-2".into(),
         contract: "revalidated_trash_v1".into(),
         scope: NativePath::from_path(&fixture.root),
+        clean_policy: None,
         created_unix_ms: 1,
         items: vec![ItemRecord {
             path: NativePath::from_path(&file),

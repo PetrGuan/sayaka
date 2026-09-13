@@ -6,7 +6,8 @@
 mod fixture;
 
 use fixture::Fixture;
-use sayaka_engine::execute::TrashSession;
+use sayaka_engine::clean_policy;
+use sayaka_engine::execute::{CleanSession, TrashSession};
 use sayaka_engine::journal::Store;
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::model::Scope;
@@ -19,6 +20,7 @@ use std::mem::ManuallyDrop;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 fn scope(fixture: &Fixture) -> std::path::PathBuf {
@@ -44,6 +46,10 @@ fn setup_rule_bound_layout(root: &Path) -> (PathBuf, PathBuf, &'static [u8], &'s
     fs::write(&source, source_bytes).unwrap();
     fs::write(&target, target_bytes).unwrap();
     (source, target, source_bytes, target_bytes)
+}
+
+fn clean_config_path(fixture: &Fixture) -> clean_policy::ConfigPath {
+    clean_policy::resolve_config_path(Some(&fixture.path().join("clean-config"))).unwrap()
 }
 
 fn preview(root: &std::path::Path) -> rules::RulePreview {
@@ -359,6 +365,230 @@ fn rule_bound_prepare_and_approve_succeed_without_native_effect() {
     );
     assert_eq!(report.record.items[0].reason.as_deref(), Some("cancelled"));
     assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(fs::read(&target).unwrap(), target_bytes);
+    fixture.close().unwrap();
+}
+
+#[test]
+fn clean_session_rejects_candidate_identity_change_before_native_plan() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    let (_source, target, _source_bytes, _target_bytes) = setup_rule_bound_layout(&root);
+    let preview = preview(&root);
+    let config =
+        clean_policy::resolve_config_path(Some(&fixture.path().join("clean-config"))).unwrap();
+    let policy = clean_policy::snapshot_for_root(&config, &root).unwrap();
+    let replacement = target.with_extension("tmp");
+    fs::write(&replacement, b"replacement").unwrap();
+    fs::rename(&replacement, &target).unwrap();
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let error = CleanSession::prepare_rule_selection(
+        scope,
+        &preview.candidates,
+        std::slice::from_ref(&target),
+        config,
+        policy,
+        &Cancellation::default(),
+    )
+    .err()
+    .expect("prepare should fail on inode replacement");
+    assert!(
+        error
+            .to_string()
+            .contains("selected candidate changed after discovery")
+    );
+    fixture.close().unwrap();
+}
+
+#[test]
+fn clean_session_approval_refuses_when_policy_created_after_preview() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    let (_source, target, _source_bytes, _target_bytes) = setup_rule_bound_layout(&root);
+    let preview = preview(&root);
+    let config = clean_config_path(&fixture);
+    let policy = clean_policy::snapshot_for_root(&config, &root).unwrap();
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let mut session = CleanSession::prepare_rule_selection(
+        scope,
+        &preview.candidates,
+        std::slice::from_ref(&target),
+        config.clone(),
+        policy,
+        &Cancellation::default(),
+    )
+    .unwrap();
+    clean_policy::add_entries(&config, &root, std::slice::from_ref(&root.join("pkg"))).unwrap();
+    let error = session.approve().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("policy_created_after_approval"));
+    fixture.close().unwrap();
+}
+
+#[test]
+fn clean_session_approval_refuses_when_policy_removed_after_preview() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    let (_source, target, _source_bytes, _target_bytes) = setup_rule_bound_layout(&root);
+    let config = clean_config_path(&fixture);
+    let keep = root.join("keep");
+    fs::create_dir(&keep).unwrap();
+    clean_policy::add_entries(&config, &root, std::slice::from_ref(&keep)).unwrap();
+    let preview = preview(&root);
+    let policy = clean_policy::snapshot_for_root(&config, &root).unwrap();
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let mut session = CleanSession::prepare_rule_selection(
+        scope,
+        &preview.candidates,
+        std::slice::from_ref(&target),
+        config.clone(),
+        policy,
+        &Cancellation::default(),
+    )
+    .unwrap();
+    fs::remove_file(&config.file).unwrap();
+    let error = session.approve().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("policy_removed_after_approval"));
+    fixture.close().unwrap();
+}
+
+#[test]
+fn clean_session_approval_refuses_when_policy_corrupt_after_preview() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    let (_source, target, _source_bytes, _target_bytes) = setup_rule_bound_layout(&root);
+    let config = clean_config_path(&fixture);
+    let keep = root.join("keep");
+    fs::create_dir(&keep).unwrap();
+    clean_policy::add_entries(&config, &root, std::slice::from_ref(&keep)).unwrap();
+    let preview = preview(&root);
+    let policy = clean_policy::snapshot_for_root(&config, &root).unwrap();
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let mut session = CleanSession::prepare_rule_selection(
+        scope,
+        &preview.candidates,
+        std::slice::from_ref(&target),
+        config.clone(),
+        policy,
+        &Cancellation::default(),
+    )
+    .unwrap();
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&config.file)
+        .unwrap();
+    use std::io::Write;
+    file.write_all(b"{corrupt").unwrap();
+    file.sync_all().unwrap();
+    let error = session.approve().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    fixture.close().unwrap();
+}
+
+#[test]
+fn clean_session_approval_refuses_when_policy_same_inode_edited_after_preview() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    let (_source, target, _source_bytes, _target_bytes) = setup_rule_bound_layout(&root);
+    let config = clean_config_path(&fixture);
+    let keep = root.join("keep");
+    fs::create_dir(&keep).unwrap();
+    clean_policy::add_entries(&config, &root, std::slice::from_ref(&keep)).unwrap();
+    let preview = preview(&root);
+    let policy = clean_policy::snapshot_for_root(&config, &root).unwrap();
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let mut session = CleanSession::prepare_rule_selection(
+        scope,
+        &preview.candidates,
+        std::slice::from_ref(&target),
+        config.clone(),
+        policy,
+        &Cancellation::default(),
+    )
+    .unwrap();
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&config.file)
+        .unwrap();
+    use std::io::Write;
+    file.write_all(br#"{"schema_version":1,"kind":"sayaka_clean_exclusions","roots":[]}"#)
+        .unwrap();
+    file.sync_all().unwrap();
+    let error = session.approve().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("policy_"));
+    fixture.close().unwrap();
+}
+
+#[test]
+fn clean_session_approval_refuses_when_policy_replaced_after_preview() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    let (_source, target, _source_bytes, _target_bytes) = setup_rule_bound_layout(&root);
+    let config = clean_config_path(&fixture);
+    let keep = root.join("keep");
+    fs::create_dir(&keep).unwrap();
+    clean_policy::add_entries(&config, &root, std::slice::from_ref(&keep)).unwrap();
+    let preview = preview(&root);
+    let policy = clean_policy::snapshot_for_root(&config, &root).unwrap();
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let mut session = CleanSession::prepare_rule_selection(
+        scope,
+        &preview.candidates,
+        std::slice::from_ref(&target),
+        config.clone(),
+        policy,
+        &Cancellation::default(),
+    )
+    .unwrap();
+    let replacement = config.directory.join("policy-replacement.json");
+    fs::write(
+        &replacement,
+        br#"{"schema_version":1,"kind":"sayaka_clean_exclusions","roots":[]}"#,
+    )
+    .unwrap();
+    fs::set_permissions(&replacement, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::rename(&replacement, &config.file).unwrap();
+    let error = session.approve().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("policy_"));
+    fixture.close().unwrap();
+}
+
+#[test]
+fn clean_session_approval_refuses_when_exclusion_ancestor_becomes_symlink() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    let (_source, target, _source_bytes, target_bytes) = setup_rule_bound_layout(&root);
+    let config = clean_config_path(&fixture);
+    let protected_dir = root.join("cache/owned");
+    fs::create_dir_all(&protected_dir).unwrap();
+    clean_policy::add_entries(&config, &root, std::slice::from_ref(&protected_dir)).unwrap();
+    let preview = preview(&root);
+    let policy = clean_policy::snapshot_for_root(&config, &root).unwrap();
+    let outside = fixture.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::rename(root.join("cache"), root.join("cache-real")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("cache")).unwrap();
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let error = match CleanSession::prepare_rule_selection(
+        scope,
+        &preview.candidates,
+        std::slice::from_ref(&target),
+        config,
+        policy,
+        &Cancellation::default(),
+    ) {
+        Ok(_) => panic!("prepare should fail when exclusion ancestry becomes symlink"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("cannot verify exclusion"));
     assert_eq!(fs::read(&target).unwrap(), target_bytes);
     fixture.close().unwrap();
 }

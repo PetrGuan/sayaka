@@ -57,6 +57,13 @@ the engine remains `forbid(unsafe_code)`.
 ## CLI
 
 ```sh
+sayaka clean .
+sayaka clean . --filter module
+sayaka clean . --execute
+sayaka clean exclusions list .
+sayaka clean exclusions add . ./pkg/__pycache__
+sayaka clean exclusions remove . ./pkg/__pycache__
+sayaka clean exclusions remove-root .
 sayaka trash --scope . ./file.txt
 sayaka trash --scope . ./file.txt --json
 sayaka trash --scope . ./file.txt --execute
@@ -76,6 +83,22 @@ checks prevent differently spelled filesystem aliases from bypassing an
 exclusion. ASCII case-overlap exclusions are deliberately conservative even on
 case-sensitive volumes. Unverifiable exclusion evidence aborts instead of permitting effects.
 Excluded/refused entries are shown separately.
+
+`clean` is a rule-specific workflow for source-backed CPython `__pycache__` `.pyc`
+entries. It always starts with a read-only preview. `--filter` only narrows the
+display list and does not change policy. `--execute` requires terminal stdin,
+stdout, and stderr; without explicit `--select`, it prompts for bounded numeric
+selection and then requires the exact `trash N` phrase. There is no implicit
+"all selected" execution path. The engine seals the exact native execution plan
+before asking for `trash N`; approval is bound to that sealed plan and to the
+captured clean policy snapshot.
+
+`clean exclusions` uses a separate strict config file (`exclusions-v1.json`) in
+the Sayaka config directory (`$SAYAKA_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sayaka`,
+else `$HOME/.config/sayaka`; override with `--config-dir`). This config is
+clean-only and is not read by `trash`, `rules trash`, or `browse`. Missing
+exclusion entries are reported as `needs_attention`; they block `clean --execute`
+until removed or repaired with explicit management commands.
 
 Without `--execute`, no target or application state is modified. `--execute`
 requires terminal stdin/stdout/stderr, shows the exact preview and risk statement,
@@ -118,6 +141,10 @@ and require complete per-item rule binding evidence (rule id/version/ruleset
 revision/semantics digest, selected root/exclusions, target/source/root/ancestor
 witnesses). Unknown tuples, missing/malformed bindings, and mismatched
 target/source identities are rejected.
+Clean executions use `schema_version:3` with the same plan/rules tuple and must
+include a clean policy context record (policy file state witness, selected root
+identity, and effective exclusions). Missing or malformed clean policy context
+is rejected.
 Before publishing an update,
 a separate `.pending` conservative receipt is written, full-synced, directory-
 synced and full-synced again. It retains earlier completed outcomes while treating

@@ -17,6 +17,10 @@ const LEGACY_RULES_VERSION: u32 = 1;
 const RULE_BOUND_PLAN_SCHEMA_VERSION: u32 = 3;
 const RULE_BOUND_ENGINE_VERSION: u32 = 2;
 const RULE_BOUND_RULES_VERSION: u32 = 2;
+const CLEAN_SCHEMA_VERSION: u32 = 3;
+const CLEAN_PLAN_SCHEMA_VERSION: u32 = 3;
+const CLEAN_ENGINE_VERSION: u32 = 2;
+const CLEAN_RULES_VERSION: u32 = 2;
 const SF_DATALESS: u32 = 0x40000000;
 const SF_RESTRICTED: u32 = 0x00080000;
 const SF_NOUNLINK: u32 = 0x00100000;
@@ -191,6 +195,32 @@ pub struct RuleBindingRecord {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanPolicyPathRecord {
+    pub encoding: String,
+    pub bytes_hex: String,
+    pub display: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanPolicyIdentityRecord {
+    pub device: u64,
+    pub inode: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanPolicyContextRecord {
+    pub schema_version: u32,
+    pub kind: String,
+    pub root_path: CleanPolicyPathRecord,
+    pub root_identity: CleanPolicyIdentityRecord,
+    pub file_state: serde_json::Value,
+    pub effective_exclusions: Vec<CleanPolicyPathRecord>,
+}
+
 /// Read-only observations, not verified restore targets or authorizations.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,6 +259,8 @@ pub struct Record {
     pub operation_id: String,
     pub contract: String,
     pub scope: NativePath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clean_policy: Option<CleanPolicyContextRecord>,
     pub created_unix_ms: u64,
     pub items: Vec<ItemRecord>,
 }
@@ -243,7 +275,11 @@ impl Record {
             && self.plan_schema_version == RULE_BOUND_PLAN_SCHEMA_VERSION
             && self.engine_version == RULE_BOUND_ENGINE_VERSION
             && self.rules_version == RULE_BOUND_RULES_VERSION;
-        if !(legacy || rule_bound)
+        let clean = self.schema_version == CLEAN_SCHEMA_VERSION
+            && self.plan_schema_version == CLEAN_PLAN_SCHEMA_VERSION
+            && self.engine_version == CLEAN_ENGINE_VERSION
+            && self.rules_version == CLEAN_RULES_VERSION;
+        if !(legacy || rule_bound || clean)
             || self.contract != "revalidated_trash_v1"
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
@@ -251,7 +287,76 @@ impl Record {
         {
             return Err(invalid("unsupported or invalid journal record"));
         }
+
+        fn validate_clean_policy_context(context: &CleanPolicyContextRecord) -> io::Result<()> {
+            if context.schema_version != 1
+                || context.kind != "sayaka_clean_policy_context"
+                || context.effective_exclusions.len() > MAX_ITEMS
+            {
+                return Err(invalid("invalid clean policy context metadata"));
+            }
+            validate_clean_policy_path(&context.root_path, true)?;
+            for path in &context.effective_exclusions {
+                validate_clean_policy_path(path, true)?;
+            }
+            if context
+                .file_state
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+            {
+                return Err(invalid("clean policy file state is missing required state"));
+            }
+            Ok(())
+        }
+
+        fn validate_clean_policy_path(
+            path: &CleanPolicyPathRecord,
+            absolute: bool,
+        ) -> io::Result<()> {
+            if path.encoding != "unix_bytes" || path.bytes_hex.is_empty() {
+                return Err(invalid("invalid clean policy path encoding"));
+            }
+            let bytes = decode_hex_bytes(&path.bytes_hex)
+                .ok_or_else(|| invalid("invalid clean policy hex path"))?;
+            if bytes.contains(&0) || (absolute && bytes.first() != Some(&b'/')) {
+                return Err(invalid("invalid clean policy path bytes"));
+            }
+            #[cfg(unix)]
+            {
+                let expected = format!("{:?}", std::ffi::OsStr::from_bytes(&bytes));
+                if expected != path.display {
+                    return Err(invalid(
+                        "clean policy display path disagrees with native path",
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        fn decode_hex_bytes(text: &str) -> Option<Vec<u8>> {
+            if !text.len().is_multiple_of(2) {
+                return None;
+            }
+            let mut bytes = Vec::with_capacity(text.len() / 2);
+            for i in (0..text.len()).step_by(2) {
+                let pair = &text[i..i + 2];
+                bytes.push(u8::from_str_radix(pair, 16).ok()?);
+            }
+            Some(bytes)
+        }
         self.scope.validate()?;
+        if clean {
+            validate_clean_policy_context(
+                self.clean_policy
+                    .as_ref()
+                    .ok_or_else(|| invalid("missing clean policy context"))?,
+            )?;
+        } else if self.clean_policy.is_some() {
+            return Err(invalid(
+                "legacy/rule-bound record must not contain clean policy context",
+            ));
+        }
         let mut identities = std::collections::HashSet::new();
         let mut paths = std::collections::HashSet::new();
         for item in &self.items {
@@ -259,7 +364,7 @@ impl Record {
             if let Some(destination) = &item.destination {
                 destination.validate()?;
             }
-            match (&item.rule_binding, rule_bound) {
+            match (&item.rule_binding, rule_bound || clean) {
                 (Some(binding), true) => validate_rule_binding(item, binding)?,
                 (None, true) => return Err(invalid("missing rule binding for rule-bound record")),
                 (Some(_), false) => {
@@ -603,6 +708,7 @@ mod tests {
             operation_id: "a-1".into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
+            clean_policy: None,
             created_unix_ms: 1,
             items: vec![ItemRecord {
                 path: NativePath::unix_fixture("/fixture/file"),

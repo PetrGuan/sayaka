@@ -118,6 +118,18 @@ freed space, and candidate actions remain `preview_only` / `manual_review`.
 source/target rule witnesses in the v3 plan and v2 journal, and still uses the
 same exact interactive `trash N` confirmation for `--execute`.
 
+`clean` wraps the CPython source-backed rule with persistent clean-only exclusions:
+
+```sh
+sayaka clean .
+sayaka clean . --execute
+sayaka clean exclusions list .
+```
+
+Default `clean` is read-only preview (no implicit all-selection). For execution,
+the engine seals and displays the exact native plan first, then requires exact
+`trash N` confirmation bound to that plan and policy snapshot.
+
 `scan .` scans the current directory and prints a readable terminal report with
 sizes, largest files and actionable scan notes. Replace `.` with another
 **existing physical directory** when needed. Do not type a placeholder path.

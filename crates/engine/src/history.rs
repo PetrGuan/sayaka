@@ -132,7 +132,10 @@ pub fn query(read: JournalRead, query: &Query) -> io::Result<Page> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::journal::{ItemRecord, NativePath, RuleBindingRecord, RuleWitnessRecord};
+    use crate::journal::{
+        CleanPolicyContextRecord, CleanPolicyIdentityRecord, CleanPolicyPathRecord, ItemRecord,
+        NativePath, RuleBindingRecord, RuleWitnessRecord,
+    };
 
     fn record(id: &str, created: u64, state: ItemState) -> Record {
         Record {
@@ -143,6 +146,7 @@ mod tests {
             operation_id: id.into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
+            clean_policy: None,
             created_unix_ms: created,
             items: vec![ItemRecord {
                 path: NativePath::unix_fixture("/fixture/file"),
@@ -174,6 +178,7 @@ mod tests {
             operation_id: id.into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
+            clean_policy: None,
             created_unix_ms: created,
             items: vec![ItemRecord {
                 path: NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc"),
@@ -453,18 +458,61 @@ mod tests {
 
     #[test]
     fn mixed_legacy_and_rule_bound_records_are_queryable() {
+        let clean = Record {
+            schema_version: 3,
+            plan_schema_version: 3,
+            engine_version: 2,
+            rules_version: 2,
+            operation_id: "c-3".into(),
+            contract: "revalidated_trash_v1".into(),
+            scope: NativePath::unix_fixture("/fixture"),
+            clean_policy: Some(CleanPolicyContextRecord {
+                schema_version: 1,
+                kind: "sayaka_clean_policy_context".into(),
+                root_path: CleanPolicyPathRecord {
+                    encoding: "unix_bytes".into(),
+                    bytes_hex: "2f66697874757265".into(),
+                    display: "\"/fixture\"".into(),
+                },
+                root_identity: CleanPolicyIdentityRecord {
+                    device: 1,
+                    inode: 1,
+                },
+                file_state: serde_json::json!({"state":"absent"}),
+                effective_exclusions: vec![],
+            }),
+            created_unix_ms: 30,
+            items: vec![ItemRecord {
+                path: NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc"),
+                device: 1,
+                inode: 12,
+                logical_bytes: 7,
+                state: ItemState::Skipped,
+                reason: Some("policy_refused_last_native_guard".into()),
+                destination: None,
+                rule_binding: rule_bound_record("x", 1, ItemState::Skipped).items[0]
+                    .rule_binding
+                    .clone(),
+                recovery_evidence: None,
+                updated_unix_ms: 30,
+            }],
+        };
         let page = query(
             read(vec![
                 record("a-1", 10, ItemState::Failed),
                 rule_bound_record("b-2", 20, ItemState::Skipped),
+                clean,
             ]),
             &Query::default(),
         )
         .unwrap();
-        assert_eq!(page.total_records, 2);
-        assert_eq!(page.records[0].operation_id, "b-2");
-        assert_eq!(page.records[0].schema_version, 2);
-        assert_eq!(page.records[1].operation_id, "a-1");
-        assert_eq!(page.records[1].schema_version, 1);
+        assert_eq!(page.total_records, 3);
+        assert_eq!(page.records[0].operation_id, "c-3");
+        assert_eq!(page.records[0].schema_version, 3);
+        assert!(page.records[0].clean_policy.is_some());
+        assert_eq!(page.records[1].operation_id, "b-2");
+        assert_eq!(page.records[1].schema_version, 2);
+        assert_eq!(page.records[2].operation_id, "a-1");
+        assert_eq!(page.records[2].schema_version, 1);
     }
 }

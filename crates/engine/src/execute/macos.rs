@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::clean_policy::{self, ConfigPath, PolicyFileState, PolicyGuardStatus, PolicySnapshot};
+use crate::journal::{CleanPolicyContextRecord, CleanPolicyIdentityRecord, CleanPolicyPathRecord};
 use crate::rules;
 use sayaka_platform_macos::{
-    NativeFileInfo, NativeRuleBindingWitness, NativeTrashOutcome, NativeWitnessInfo, TrashCandidate,
+    NativeFileInfo, NativeLastGuard, NativeRuleBindingWitness, NativeTrashOutcome,
+    NativeWitnessInfo, TrashCandidate,
 };
 use std::collections::HashMap;
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, UNIX_EPOCH};
 
 struct MacPlatform {
@@ -66,11 +72,19 @@ impl Probe for MacPlatform {
 }
 
 impl Platform for MacPlatform {
-    fn effect(&mut self, path: &Path, stop: &mut dyn FnMut() -> bool) -> Effect {
+    fn effect(
+        &mut self,
+        path: &Path,
+        stop: &mut dyn FnMut() -> bool,
+        guard: &mut dyn FnMut() -> GuardDecision,
+    ) -> Effect {
         let Some(candidate) = self.candidates.get(path) else {
             return Effect::Refused("native candidate unavailable".into());
         };
-        match candidate.move_to_trash(stop) {
+        match candidate.move_to_trash_with_last_guard(stop, || match guard() {
+            GuardDecision::Proceed => NativeLastGuard::Proceed,
+            GuardDecision::Refused(reason) => NativeLastGuard::PolicyRefused(reason),
+        }) {
             NativeTrashOutcome::Moved { destination } => Effect::Moved(destination),
             NativeTrashOutcome::Refused(message) => Effect::Refused(message),
             NativeTrashOutcome::Failed(message) => Effect::Failed(message),
@@ -437,4 +451,214 @@ impl TrashSession {
     ) -> io::Result<ExecutionReport> {
         self.inner.execute(preview, approval, cancellation, store)
     }
+
+    pub(crate) fn execute_with_clean_policy(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+        clean_policy: CleanPolicyContextRecord,
+        guard: &mut dyn FnMut(GuardPoint, &Path) -> io::Result<GuardDecision>,
+    ) -> io::Result<ExecutionReport> {
+        self.inner.execute_with_clean_policy(
+            preview,
+            approval,
+            cancellation,
+            store,
+            Some(clean_policy),
+            Some(guard),
+        )
+    }
+}
+
+pub struct CleanSession {
+    root: PathBuf,
+    config: ConfigPath,
+    policy_snapshot: PolicySnapshot,
+    preview: Plan,
+    inner: TrashSession,
+    clean_policy_context: CleanPolicyContextRecord,
+}
+
+impl CleanSession {
+    pub fn prepare_rule_selection(
+        scope: Scope,
+        candidates: &[rules::RuleCandidate],
+        selected_paths: &[PathBuf],
+        config: ConfigPath,
+        policy_snapshot: PolicySnapshot,
+        cancellation: &Cancellation,
+    ) -> io::Result<Self> {
+        if selected_paths.is_empty() || selected_paths.len() > journal::MAX_ITEMS {
+            return Err(journal::invalid(
+                "select between 1 and 32 explicit files for clean execution",
+            ));
+        }
+        let mut discovered = HashMap::new();
+        for candidate in candidates {
+            if let FileIdentity::Unix { device, inode } = candidate.target_identity {
+                discovered.insert(candidate.target_path.clone(), (device, inode));
+            }
+        }
+        for selected in selected_paths {
+            if !discovered.contains_key(selected) {
+                return Err(journal::invalid(
+                    "selected path is not a current clean discovery candidate",
+                ));
+            }
+        }
+        let root = scope.root().to_path_buf();
+        let inner = TrashSession::prepare_rule_selection(
+            scope,
+            rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
+            selected_paths,
+            &policy_snapshot.effective_exclusions,
+            cancellation,
+        )?;
+        let preview = inner.preview().clone();
+        for item in preview.items() {
+            let Some((expected_device, expected_inode)) = discovered.get(item.observation().path())
+            else {
+                return Err(journal::invalid(
+                    "selected candidate is missing from discovery set",
+                ));
+            };
+            let Some(FileIdentity::Unix { device, inode }) = item.observation().snapshot().identity
+            else {
+                return Err(journal::invalid(
+                    "selected native candidate lacks Unix identity",
+                ));
+            };
+            if device != *expected_device || inode != *expected_inode {
+                return Err(journal::invalid(
+                    "selected candidate changed after discovery; rerun clean preview",
+                ));
+            }
+        }
+        let clean_policy_context = clean_policy_context_record(&root, &policy_snapshot)?;
+        Ok(Self {
+            root,
+            config,
+            policy_snapshot,
+            preview,
+            inner,
+            clean_policy_context,
+        })
+    }
+
+    pub fn preview(&self) -> &Plan {
+        &self.preview
+    }
+
+    pub fn approve(&mut self) -> io::Result<Approval> {
+        match clean_policy::guard_snapshot(&self.config, &self.root, &self.policy_snapshot)? {
+            PolicyGuardStatus::Unchanged => self
+                .inner
+                .approve(&self.preview)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error)),
+            PolicyGuardStatus::Refused(reason) => Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{reason}; no_native_call"),
+            )),
+        }
+    }
+
+    pub fn execute(
+        &mut self,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+    ) -> io::Result<ExecutionReport> {
+        let config = self.config.clone();
+        let root = self.root.clone();
+        let expected = self.policy_snapshot.clone();
+        let mut guard = move |point: GuardPoint, _path: &Path| -> io::Result<GuardDecision> {
+            match clean_policy::guard_snapshot(&config, &root, &expected)? {
+                PolicyGuardStatus::Unchanged => Ok(GuardDecision::Proceed),
+                PolicyGuardStatus::Refused(reason) => {
+                    let marker = match point {
+                        GuardPoint::AfterStarted => "policy_refused_after_started",
+                        GuardPoint::LastNative => "policy_refused_last_native_guard",
+                    };
+                    Ok(GuardDecision::Refused(format!("{marker}:{reason}")))
+                }
+            }
+        };
+        self.inner.execute_with_clean_policy(
+            &self.preview,
+            approval,
+            cancellation,
+            store,
+            self.clean_policy_context.clone(),
+            &mut guard,
+        )
+    }
+}
+
+fn clean_policy_context_record(
+    root: &Path,
+    snapshot: &PolicySnapshot,
+) -> io::Result<CleanPolicyContextRecord> {
+    let root_meta = fs::symlink_metadata(root)?;
+    let root_path = display_path_record(root);
+    let file_state = match &snapshot.file_state {
+        PolicyFileState::Absent {
+            expected_path,
+            nearest_existing_parent,
+            nearest_existing_parent_identity,
+        } => serde_json::json!({
+            "state": "absent",
+            "expected_path": display_path_record(expected_path),
+            "nearest_existing_parent": nearest_existing_parent.as_ref().map(|path| display_path_record(path)),
+            "nearest_existing_parent_identity": nearest_existing_parent_identity.as_ref().map(|id| serde_json::json!({"device": id.device, "inode": id.inode})),
+        }),
+        PolicyFileState::Present {
+            path,
+            identity,
+            length,
+            modified_unix_ms,
+            sha256,
+        } => serde_json::json!({
+            "state": "present",
+            "path": display_path_record(path),
+            "identity": {"device": identity.device, "inode": identity.inode},
+            "length": length,
+            "modified_unix_ms": modified_unix_ms,
+            "sha256": sha256,
+        }),
+    };
+    Ok(CleanPolicyContextRecord {
+        schema_version: 1,
+        kind: "sayaka_clean_policy_context".into(),
+        root_path,
+        root_identity: CleanPolicyIdentityRecord {
+            device: root_meta.dev(),
+            inode: root_meta.ino(),
+        },
+        file_state,
+        effective_exclusions: snapshot
+            .effective_exclusions
+            .iter()
+            .map(|path| display_path_record(path))
+            .collect(),
+    })
+}
+
+fn display_path_record(path: &Path) -> CleanPolicyPathRecord {
+    let wire = NativePath::from_path(path);
+    CleanPolicyPathRecord {
+        encoding: wire.encoding,
+        bytes_hex: encode_hex(&wire.bytes),
+        display: wire.display,
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(&mut text, "{byte:02x}");
+    }
+    text
 }
