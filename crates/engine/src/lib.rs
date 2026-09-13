@@ -16,6 +16,7 @@ pub mod journal;
 pub mod model;
 pub mod plan;
 pub mod receipt;
+pub mod rules;
 pub mod scan;
 pub mod status;
 

@@ -2,7 +2,7 @@
 
 An open-source local maintenance engine and CLI, targeting macOS and Windows.
 
-**Status: bounded scanning, macOS native Trash, and an initial terminal browser.** macOS and
+**Status: bounded scanning, read-only rules preview, macOS native Trash, and an initial terminal browser.** macOS and
 initial Windows local fixed-NTFS scanning support explicit roots, bounded resources,
 cancellation and structured output. See [Windows scope and native evidence](docs/WINDOWS.md)
 for remaining acceptance gates and platform differences. The
@@ -99,6 +99,19 @@ being modified by other apps. There is no permanent-delete or elevation fallback
 
 `sayaka receipt --json` reads local records without retrying interrupted work.
 See [execution, state storage, and recovery limits](docs/EXECUTION.md).
+
+Read-only built-in rule discovery currently includes one CPython `__pycache__`
+source-backed `.pyc` rule:
+
+```sh
+sayaka rules list
+sayaka rules list --json
+sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc
+sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc --json
+```
+
+This preview never executes effects. Candidate bytes are observed bytes, not
+freed space, and actions remain `preview_only` / `manual_review`.
 
 `scan .` scans the current directory and prints a readable terminal report with
 sizes, largest files and actionable scan notes. Replace `.` with another

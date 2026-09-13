@@ -6,6 +6,7 @@ mod history;
 mod human;
 mod lifecycle;
 mod output;
+mod rules;
 mod status;
 mod terminal;
 mod trash;
@@ -92,7 +93,7 @@ fn command() -> Command {
         .bin_name("sayaka")
         .version(env!("CARGO_PKG_VERSION"))
         .about("An open-source local maintenance engine and CLI")
-        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and Trash previews never modify targets. Trash requires --execute and terminal confirmation.")
+        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka rules list      Built-in read-only rule catalog\n  sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and previews never modify targets. Trash requires --execute and terminal confirmation.")
         .arg_required_else_help(true)
         .subcommand(scan)
         .subcommand(trash::command())
@@ -100,6 +101,7 @@ fn command() -> Command {
         .subcommand(browser::command())
         .subcommand(status::command())
         .subcommand(history::command())
+        .subcommand(rules::command())
         .subcommand(completions::command())
         .subcommand(lifecycle::install_command())
         .subcommand(lifecycle::update_command())
@@ -107,7 +109,7 @@ fn command() -> Command {
         .subcommand(lifecycle::remove_command())
 }
 
-fn limits(args: &ArgMatches) -> ScanLimits {
+pub(crate) fn limits(args: &ArgMatches) -> ScanLimits {
     let mut limits = ScanLimits::default();
     for (name, destination) in [
         ("workers", &mut limits.workers),
@@ -252,6 +254,7 @@ fn run() -> io::Result<u8> {
         Some(("browse" | "analyze", args)) => browser::run(args),
         Some(("status", args)) => status::run(args),
         Some(("history", args)) => history::run(args),
+        Some(("rules", args)) => rules::run(args),
         Some(("completions", args)) => completions::run(args),
         Some(("install", args)) => lifecycle::run(args, "install"),
         Some(("update", args)) => lifecycle::run(args, "update"),

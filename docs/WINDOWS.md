@@ -7,6 +7,9 @@ is a separate follow-up. ARM64 all-target compilation checks pass, but a complet
 linked build and native execution are not verified. Windows writes and provider/
 network/removable environments remain unsupported. A tested Insider host is not
 evidence that every Windows 11 release or architecture has been run.
+The new read-only CPython `rules preview` flow reuses this scanner but its
+runtime owner/link metadata checks are currently verified on macOS only; Windows
+rule-runtime evidence remains unverified in this slice.
 
 ## Contract
 

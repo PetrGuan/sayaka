@@ -61,6 +61,7 @@ mod tests {
                 "receipt",
                 "status",
                 "history",
+                "rules",
                 "completions",
                 "install",
                 "update",
