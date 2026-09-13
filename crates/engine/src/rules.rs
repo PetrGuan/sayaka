@@ -12,16 +12,21 @@ use std::path::{Path, PathBuf};
 
 pub const PREVIEW_SCHEMA_VERSION: u32 = 1;
 pub const RULESET_SCHEMA_VERSION: u32 = 1;
-pub const BUILTIN_RULESET_REVISION: u32 = 1;
+pub const BUILTIN_RULESET_REVISION: u32 = 2;
 
 pub const CPYTHON_SOURCE_BACKED_PYC_RULE_ID: &str = "org.python.cpython.pep3147.source_backed_pyc";
-pub const CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION: u32 = 1;
+pub const CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION: u32 = 2;
+pub const CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS: &str =
+    "cpython_source_backed_pyc_explicit_trash_v1";
+pub const CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST: &str =
+    "sha256:2a85f813982f253a1177f95ec4f2dc7e30cf5f34cbaf17e08e6d334f4315fcd8";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleAction {
     PreviewOnly,
     ManualReview,
+    ExplicitNativeTrash,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -78,7 +83,11 @@ const CPYTHON_RULE: RuleDefinition = RuleDefinition {
         "read-only evidence from scan and native metadata, never source parsing",
         "target and source identities must still match observed scan identities",
     ],
-    actions: &[RuleAction::PreviewOnly, RuleAction::ManualReview],
+    actions: &[
+        RuleAction::PreviewOnly,
+        RuleAction::ManualReview,
+        RuleAction::ExplicitNativeTrash,
+    ],
     rebuild_cost: "Rebuild requires CPython writeable environment and source availability; concurrent compilation can recreate cache files.",
     recovery_cost: "Read-only preview only. Matched bytes are observed bytes, not reclaimable capacity.",
     concurrency: "Concurrent imports/compileall can replace cache files between observations.",
@@ -117,6 +126,35 @@ pub fn builtin_rules() -> &'static [RuleDefinition] {
 
 pub fn is_builtin_rule(rule_id: &str) -> bool {
     builtin_rules().iter().any(|rule| rule.id == rule_id)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExplicitRuleSelection {
+    pub target_path: PathBuf,
+    pub source_path: PathBuf,
+    pub cache_tag: String,
+    pub optimization_tag: Option<String>,
+}
+
+pub fn explicit_selection_for_target(path: &Path) -> Option<ExplicitRuleSelection> {
+    if !looks_like_pyc(path) {
+        return None;
+    }
+    let parent = path.parent()?;
+    if parent.file_name().is_none_or(|name| name != "__pycache__") {
+        return None;
+    }
+    let file_name = path.file_name()?;
+    let parsed = parse_cpython_name(file_name)?;
+    let source_path = parent
+        .parent()?
+        .join(format!("{}.py", parsed.module_basename));
+    Some(ExplicitRuleSelection {
+        target_path: path.to_path_buf(),
+        source_path,
+        cache_tag: parsed.cache_tag,
+        optimization_tag: parsed.optimization,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

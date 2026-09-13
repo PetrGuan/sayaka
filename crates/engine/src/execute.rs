@@ -14,8 +14,6 @@ use std::io;
 #[cfg(any(target_os = "macos", test))]
 use std::path::Path;
 use std::path::PathBuf;
-#[cfg(any(target_os = "macos", test))]
-use std::time::Duration;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SelectionIssue {
@@ -122,6 +120,70 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                 "model-only approval cannot authorize native execution",
             ));
         }
+
+        #[cfg(any(target_os = "macos", test))]
+        fn item_rule_binding(binding: &RuleBinding) -> journal::RuleBindingRecord {
+            journal::RuleBindingRecord {
+                schema_version: binding.schema_version(),
+                rule_id: binding.rule_id().to_owned(),
+                rule_version: binding.rule_version(),
+                ruleset_schema_version: binding.ruleset_schema_version(),
+                ruleset_revision: binding.ruleset_revision(),
+                semantics: binding.semantics().to_owned(),
+                semantics_digest: binding.semantics_digest().to_owned(),
+                selected_root: NativePath::from_path(binding.selected_root()),
+                exclusions: binding
+                    .exclusions()
+                    .iter()
+                    .map(|path| NativePath::from_path(path))
+                    .collect(),
+                target: item_witness(binding.target()),
+                source: item_witness(binding.source()),
+                root: item_witness(binding.root()),
+                target_ancestors: binding
+                    .target_ancestors()
+                    .iter()
+                    .map(item_witness)
+                    .collect(),
+                source_ancestors: binding
+                    .source_ancestors()
+                    .iter()
+                    .map(item_witness)
+                    .collect(),
+                warnings: binding.warnings().to_vec(),
+            }
+        }
+
+        #[cfg(any(target_os = "macos", test))]
+        fn item_witness(witness: &RuleWitness) -> journal::RuleWitnessRecord {
+            journal::RuleWitnessRecord {
+                path: NativePath::from_path(&witness.path),
+                device: match witness.identity {
+                    FileIdentity::Unix { device, .. } => device,
+                    FileIdentity::Windows { .. } => 0,
+                },
+                inode: match witness.identity {
+                    FileIdentity::Unix { inode, .. } => inode,
+                    FileIdentity::Windows { .. } => 0,
+                },
+                kind: match witness.kind {
+                    ResourceKind::File => "file",
+                    ResourceKind::Directory => "directory",
+                    ResourceKind::Link => "link",
+                    ResourceKind::Other => "other",
+                }
+                .into(),
+                logical_bytes: witness.logical_bytes,
+                modified: journal::NativeTime::from_system_time(witness.modified_at),
+                changed: journal::NativeTime::from_system_time(witness.changed_at),
+                created: journal::NativeTime::from_system_time(witness.created_at),
+                uid: witness.uid,
+                gid: witness.gid,
+                mode: witness.mode,
+                nlink: witness.nlink,
+                flags: witness.flags,
+            }
+        }
         let validated = self
             .planner
             .validate(preview, approval, &mut self.platform, cancellation)
@@ -146,14 +208,20 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                     state: ItemState::Planned,
                     reason: None,
                     destination: None,
+                    rule_binding: item.rule_binding().map(item_rule_binding),
                     recovery_evidence: None,
                     updated_unix_ms: now,
                 })
             })
             .collect::<io::Result<Vec<_>>>()?;
+        let schema_version = if preview.schema_version() == 3 {
+            journal::SCHEMA_VERSION
+        } else {
+            1
+        };
         let mut report = ExecutionReport {
             record: Record {
-                schema_version: journal::SCHEMA_VERSION,
+                schema_version,
                 plan_schema_version: preview.schema_version(),
                 engine_version: preview.versions().engine,
                 rules_version: preview.versions().rules,
@@ -300,6 +368,18 @@ pub struct TrashSession {
 #[cfg(not(target_os = "macos"))]
 impl TrashSession {
     pub fn prepare(_: Scope, _: &[PathBuf], _: &[PathBuf], _: &Cancellation) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native Trash is macOS-only",
+        ))
+    }
+    pub fn prepare_rule_selection(
+        _: Scope,
+        _: &str,
+        _: &[PathBuf],
+        _: &[PathBuf],
+        _: &Cancellation,
+    ) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "native Trash is macOS-only",

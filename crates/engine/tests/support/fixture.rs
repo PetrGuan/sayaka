@@ -13,7 +13,11 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new() -> io::Result<Self> {
-        let directory = TempDir::new(&std::env::temp_dir(), "sayaka-m1-")?;
+        Self::new_in(&std::env::temp_dir())
+    }
+
+    pub fn new_in(parent: &Path) -> io::Result<Self> {
+        let directory = TempDir::new(parent, "sayaka-m1-")?;
         let fixture = Self {
             directory: Some(directory),
         };

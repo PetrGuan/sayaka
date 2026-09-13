@@ -113,6 +113,26 @@ journal storage, child-process crash interpretation and preview/refusal CLI
 checks. These do not run real Trash actions. See [EXECUTION.md](EXECUTION.md)
 for the approved revalidation contract: the residual final path race is disclosed,
 not a native safety property that a happy-path test can certify.
+The rule-bound slice adds default tests for `rules trash` explicit selection,
+schema v3 plan / schema v2 journal binding validation, and source-witness
+revalidation ordering (including checks after durable intent and before native
+effect). Default tests still must not invoke real Trash.
+
+The rule-bound real native case is ignored by default and must only be invoked
+once under explicit authorization:
+
+```sh
+SAYAKA_M3_TRASH_TEST=1 SAYAKA_M3_TRASH_TEST_QUIESCENT=1 \
+  cargo test -p sayaka-engine --locked \
+  --test rules_native real_rule_bound_trash_session_round_trip_owned_fixture \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+Prerequisites: macOS, no concurrent Trash operations, synthetic source/cache
+fixture only, identity-verified destination, and no-overwrite restore via
+native exclusive rename semantics. The test fixture root is created under
+`<repo>/crates/engine/target/native-test-fixtures` (non-hidden project-owned
+location on the same approved volume), not system temporary directories.
 
 | Area | Cases that cannot be omitted |
 | --- | --- |

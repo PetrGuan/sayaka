@@ -132,7 +132,7 @@ pub fn query(read: JournalRead, query: &Query) -> io::Result<Page> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::journal::{ItemRecord, NativePath};
+    use crate::journal::{ItemRecord, NativePath, RuleBindingRecord, RuleWitnessRecord};
 
     fn record(id: &str, created: u64, state: ItemState) -> Record {
         Record {
@@ -152,6 +152,7 @@ mod tests {
                 state,
                 reason: None,
                 destination: None,
+                rule_binding: None,
                 recovery_evidence: None,
                 updated_unix_ms: created,
             }],
@@ -161,6 +162,173 @@ mod tests {
         JournalRead {
             records,
             uncommitted_snapshots: vec!["a-1.pending".into()],
+        }
+    }
+
+    fn rule_bound_record(id: &str, created: u64, state: ItemState) -> Record {
+        Record {
+            schema_version: 2,
+            plan_schema_version: 3,
+            engine_version: 2,
+            rules_version: 2,
+            operation_id: id.into(),
+            contract: "revalidated_trash_v1".into(),
+            scope: NativePath::unix_fixture("/fixture"),
+            created_unix_ms: created,
+            items: vec![ItemRecord {
+                path: NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc"),
+                device: 1,
+                inode: 12,
+                logical_bytes: 7,
+                state,
+                reason: None,
+                destination: None,
+                rule_binding: Some(RuleBindingRecord {
+                    schema_version: 1,
+                    rule_id: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID.into(),
+                    rule_version: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+                    ruleset_schema_version: crate::rules::RULESET_SCHEMA_VERSION,
+                    ruleset_revision: crate::rules::BUILTIN_RULESET_REVISION,
+                    semantics: crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS.into(),
+                    semantics_digest:
+                        crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST.into(),
+                    selected_root: NativePath::unix_fixture("/fixture"),
+                    exclusions: vec![],
+                    target: RuleWitnessRecord {
+                        path: NativePath::unix_fixture(
+                            "/fixture/pkg/__pycache__/module.cpython-39.pyc",
+                        ),
+                        device: 1,
+                        inode: 12,
+                        kind: "file".into(),
+                        logical_bytes: 7,
+                        modified: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        changed: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        created: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        uid: 1,
+                        gid: 1,
+                        mode: 0o100600,
+                        nlink: 1,
+                        flags: 0,
+                    },
+                    source: RuleWitnessRecord {
+                        path: NativePath::unix_fixture("/fixture/pkg/module.py"),
+                        device: 1,
+                        inode: 11,
+                        kind: "file".into(),
+                        logical_bytes: 8,
+                        modified: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        changed: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        created: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        uid: 1,
+                        gid: 1,
+                        mode: 0o100600,
+                        nlink: 1,
+                        flags: 0,
+                    },
+                    root: RuleWitnessRecord {
+                        path: NativePath::unix_fixture("/fixture"),
+                        device: 1,
+                        inode: 1,
+                        kind: "directory".into(),
+                        logical_bytes: 0,
+                        modified: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        changed: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        created: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        uid: 1,
+                        gid: 1,
+                        mode: 0o040700,
+                        nlink: 1,
+                        flags: 0,
+                    },
+                    target_ancestors: vec![
+                        RuleWitnessRecord {
+                            path: NativePath::unix_fixture("/fixture/pkg"),
+                            device: 1,
+                            inode: 2,
+                            kind: "directory".into(),
+                            logical_bytes: 0,
+                            modified: crate::journal::NativeTime::from_system_time(
+                                std::time::UNIX_EPOCH,
+                            ),
+                            changed: crate::journal::NativeTime::from_system_time(
+                                std::time::UNIX_EPOCH,
+                            ),
+                            created: crate::journal::NativeTime::from_system_time(
+                                std::time::UNIX_EPOCH,
+                            ),
+                            uid: 1,
+                            gid: 1,
+                            mode: 0o040700,
+                            nlink: 1,
+                            flags: 0,
+                        },
+                        RuleWitnessRecord {
+                            path: NativePath::unix_fixture("/fixture/pkg/__pycache__"),
+                            device: 1,
+                            inode: 3,
+                            kind: "directory".into(),
+                            logical_bytes: 0,
+                            modified: crate::journal::NativeTime::from_system_time(
+                                std::time::UNIX_EPOCH,
+                            ),
+                            changed: crate::journal::NativeTime::from_system_time(
+                                std::time::UNIX_EPOCH,
+                            ),
+                            created: crate::journal::NativeTime::from_system_time(
+                                std::time::UNIX_EPOCH,
+                            ),
+                            uid: 1,
+                            gid: 1,
+                            mode: 0o040700,
+                            nlink: 1,
+                            flags: 0,
+                        },
+                    ],
+                    source_ancestors: vec![RuleWitnessRecord {
+                        path: NativePath::unix_fixture("/fixture/pkg"),
+                        device: 1,
+                        inode: 2,
+                        kind: "directory".into(),
+                        logical_bytes: 0,
+                        modified: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        changed: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        created: crate::journal::NativeTime::from_system_time(
+                            std::time::UNIX_EPOCH,
+                        ),
+                        uid: 1,
+                        gid: 1,
+                        mode: 0o040700,
+                        nlink: 1,
+                        flags: 0,
+                    }],
+                    warnings: vec!["metadata-only".into()],
+                }),
+                recovery_evidence: None,
+                updated_unix_ms: created,
+            }],
         }
     }
 
@@ -281,5 +449,22 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn mixed_legacy_and_rule_bound_records_are_queryable() {
+        let page = query(
+            read(vec![
+                record("a-1", 10, ItemState::Failed),
+                rule_bound_record("b-2", 20, ItemState::Skipped),
+            ]),
+            &Query::default(),
+        )
+        .unwrap();
+        assert_eq!(page.total_records, 2);
+        assert_eq!(page.records[0].operation_id, "b-2");
+        assert_eq!(page.records[0].schema_version, 2);
+        assert_eq!(page.records[1].operation_id, "a-1");
+        assert_eq!(page.records[1].schema_version, 1);
     }
 }

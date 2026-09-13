@@ -6,8 +6,21 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::{collections::HashSet, ffi::OsStr, os::unix::ffi::OsStrExt};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
+const LEGACY_PLAN_SCHEMA_VERSION: u32 = 2;
+const LEGACY_ENGINE_VERSION: u32 = 2;
+const LEGACY_RULES_VERSION: u32 = 1;
+const RULE_BOUND_PLAN_SCHEMA_VERSION: u32 = 3;
+const RULE_BOUND_ENGINE_VERSION: u32 = 2;
+const RULE_BOUND_RULES_VERSION: u32 = 2;
+const SF_DATALESS: u32 = 0x40000000;
+const SF_RESTRICTED: u32 = 0x00080000;
+const SF_NOUNLINK: u32 = 0x00100000;
+const ORDINARY_FLAGS: u32 = 0x00000001 | 0x00000020 | 0x00000040 | 0x00008000;
 pub const MAX_ITEMS: usize = 32;
 pub const MAX_RECORD_BYTES: u64 = 1024 * 1024;
 pub const MAX_RECORDS: usize = 1024;
@@ -140,6 +153,44 @@ pub struct FileEvidence {
     pub modified: NativeTime,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleWitnessRecord {
+    pub path: NativePath,
+    pub device: u64,
+    pub inode: u64,
+    pub kind: String,
+    pub logical_bytes: u64,
+    pub modified: NativeTime,
+    pub changed: NativeTime,
+    pub created: NativeTime,
+    pub uid: u32,
+    pub gid: u32,
+    pub mode: u32,
+    pub nlink: u64,
+    pub flags: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleBindingRecord {
+    pub schema_version: u32,
+    pub rule_id: String,
+    pub rule_version: u32,
+    pub ruleset_schema_version: u32,
+    pub ruleset_revision: u32,
+    pub semantics: String,
+    pub semantics_digest: String,
+    pub selected_root: NativePath,
+    pub exclusions: Vec<NativePath>,
+    pub target: RuleWitnessRecord,
+    pub source: RuleWitnessRecord,
+    pub root: RuleWitnessRecord,
+    pub target_ancestors: Vec<RuleWitnessRecord>,
+    pub source_ancestors: Vec<RuleWitnessRecord>,
+    pub warnings: Vec<String>,
+}
+
 /// Read-only observations, not verified restore targets or authorizations.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,6 +213,8 @@ pub struct ItemRecord {
     pub reason: Option<String>,
     pub destination: Option<NativePath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_binding: Option<RuleBindingRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_evidence: Option<RecoveryEvidence>,
     pub updated_unix_ms: u64,
 }
@@ -182,10 +235,15 @@ pub struct Record {
 
 impl Record {
     pub fn validate(&self) -> io::Result<()> {
-        if self.schema_version != SCHEMA_VERSION
-            || self.plan_schema_version != 2
-            || self.engine_version != 2
-            || self.rules_version != 1
+        let legacy = self.schema_version == LEGACY_SCHEMA_VERSION
+            && self.plan_schema_version == LEGACY_PLAN_SCHEMA_VERSION
+            && self.engine_version == LEGACY_ENGINE_VERSION
+            && self.rules_version == LEGACY_RULES_VERSION;
+        let rule_bound = self.schema_version == SCHEMA_VERSION
+            && self.plan_schema_version == RULE_BOUND_PLAN_SCHEMA_VERSION
+            && self.engine_version == RULE_BOUND_ENGINE_VERSION
+            && self.rules_version == RULE_BOUND_RULES_VERSION;
+        if !(legacy || rule_bound)
             || self.contract != "revalidated_trash_v1"
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
@@ -200,6 +258,14 @@ impl Record {
             item.path.validate()?;
             if let Some(destination) = &item.destination {
                 destination.validate()?;
+            }
+            match (&item.rule_binding, rule_bound) {
+                (Some(binding), true) => validate_rule_binding(item, binding)?,
+                (None, true) => return Err(invalid("missing rule binding for rule-bound record")),
+                (Some(_), false) => {
+                    return Err(invalid("legacy record must not contain rule binding"));
+                }
+                (None, false) => {}
             }
             if let Some(evidence) = &item.recovery_evidence {
                 if item.state != ItemState::Unknown
@@ -276,6 +342,201 @@ pub(crate) fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
+fn validate_rule_binding(item: &ItemRecord, binding: &RuleBindingRecord) -> io::Result<()> {
+    #[cfg(not(unix))]
+    {
+        let _ = (item, binding);
+        return Err(invalid(
+            "rule-bound journal records require unix path semantics",
+        ));
+    }
+    #[cfg(unix)]
+    if binding.schema_version != 1
+        || binding.rule_id != crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID
+        || binding.rule_version != crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION
+        || binding.ruleset_schema_version != crate::rules::RULESET_SCHEMA_VERSION
+        || binding.ruleset_revision != crate::rules::BUILTIN_RULESET_REVISION
+        || binding.semantics != crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS
+        || binding.semantics_digest
+            != crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST
+        || binding.warnings.is_empty()
+        || binding.target_ancestors.len() > MAX_ITEMS
+        || binding.source_ancestors.len() > MAX_ITEMS
+        || binding.exclusions.len() > MAX_ITEMS
+    {
+        return Err(invalid("invalid rule binding metadata"));
+    }
+    binding.selected_root.validate()?;
+    for path in &binding.exclusions {
+        path.validate()?;
+    }
+    for witness in [&binding.target, &binding.source, &binding.root]
+        .into_iter()
+        .chain(binding.target_ancestors.iter())
+        .chain(binding.source_ancestors.iter())
+    {
+        witness.path.validate()?;
+        if witness.kind.is_empty()
+            || witness.modified.nanoseconds >= 1_000_000_000
+            || witness.changed.nanoseconds >= 1_000_000_000
+            || witness.created.nanoseconds >= 1_000_000_000
+        {
+            return Err(invalid("invalid rule witness"));
+        }
+    }
+    if binding.target.path != item.path
+        || binding.target.device != item.device
+        || binding.target.inode != item.inode
+        || binding.target.logical_bytes != item.logical_bytes
+    {
+        return Err(invalid("rule binding target does not match item identity"));
+    }
+    #[cfg(unix)]
+    {
+        let regular_kind = u32::from(libc::S_IFREG);
+        let directory_kind = u32::from(libc::S_IFDIR);
+        let target_kind = binding.target.mode & u32::from(libc::S_IFMT);
+        let source_kind = binding.source.mode & u32::from(libc::S_IFMT);
+        let root_kind = binding.root.mode & u32::from(libc::S_IFMT);
+        if target_kind != regular_kind
+            || source_kind != regular_kind
+            || root_kind != directory_kind
+            || binding.target.mode & 0o7022 != 0
+            || binding.source.mode & 0o7022 != 0
+            || binding.root.mode & 0o7022 != 0
+            || binding.target.nlink != 1
+            || binding.source.nlink != 1
+            || binding.target.flags & !ORDINARY_FLAGS != 0
+            || binding.source.flags & !ORDINARY_FLAGS != 0
+            || binding.root.flags & !(ORDINARY_FLAGS | SF_RESTRICTED | SF_NOUNLINK) != 0
+            || binding.target.flags & SF_DATALESS != 0
+            || binding.source.flags & SF_DATALESS != 0
+            || binding.root.flags & SF_DATALESS != 0
+        {
+            return Err(invalid(
+                "rule binding witness metadata is outside admissible bounds",
+            ));
+        }
+        if binding.target.kind != "file"
+            || binding.source.kind != "file"
+            || binding.root.kind != "directory"
+            || binding
+                .target_ancestors
+                .iter()
+                .chain(binding.source_ancestors.iter())
+                .any(|entry| entry.kind != "directory")
+        {
+            return Err(invalid("invalid rule witness kind"));
+        }
+        for entry in binding
+            .target_ancestors
+            .iter()
+            .chain(binding.source_ancestors.iter())
+        {
+            let kind = entry.mode & u32::from(libc::S_IFMT);
+            if kind != directory_kind
+                || entry.mode & 0o7022 != 0
+                || entry.flags & !(ORDINARY_FLAGS | SF_RESTRICTED | SF_NOUNLINK) != 0
+                || entry.flags & SF_DATALESS != 0
+            {
+                return Err(invalid(
+                    "ancestor witness metadata is outside admissible bounds",
+                ));
+            }
+        }
+        let target_path = native_to_path(&binding.target.path)?;
+        let source_path = native_to_path(&binding.source.path)?;
+        let selected_root = native_to_path(&binding.selected_root)?;
+        let root_path = native_to_path(&binding.root.path)?;
+        if selected_root != root_path {
+            return Err(invalid("selected root disagrees with root witness path"));
+        }
+        if !target_path.starts_with(&selected_root)
+            || !source_path.starts_with(&selected_root)
+            || target_path == selected_root
+            || source_path == selected_root
+        {
+            return Err(invalid("target/source path is outside selected root"));
+        }
+        let expected = crate::rules::explicit_selection_for_target(&target_path)
+            .ok_or_else(|| invalid("target path does not match CPython explicit rule"))?;
+        if expected.source_path != source_path {
+            return Err(invalid("source path does not match CPython sibling source"));
+        }
+        validate_ancestor_chain(
+            &selected_root,
+            &target_path,
+            &binding.target_ancestors,
+            "target",
+        )?;
+        validate_ancestor_chain(
+            &selected_root,
+            &source_path,
+            &binding.source_ancestors,
+            "source",
+        )?;
+        let mut exclusions = HashSet::new();
+        for exclusion in &binding.exclusions {
+            let path = native_to_path(exclusion)?;
+            if !path.starts_with(&selected_root) {
+                return Err(invalid("exclusion path is outside selected root"));
+            }
+            if !exclusions.insert(path) {
+                return Err(invalid("duplicate exclusion path in rule binding"));
+            }
+        }
+    }
+    if binding.source.path == binding.target.path
+        || binding.source.device == binding.target.device
+            && binding.source.inode == binding.target.inode
+    {
+        return Err(invalid("rule binding source and target must be distinct"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn native_to_path(path: &NativePath) -> io::Result<PathBuf> {
+    if path.encoding != "unix_bytes" || path.bytes.is_empty() {
+        return Err(invalid("invalid native path encoding"));
+    }
+    Ok(PathBuf::from(OsStr::from_bytes(&path.bytes)))
+}
+
+#[cfg(unix)]
+fn validate_ancestor_chain(
+    root: &Path,
+    leaf: &Path,
+    ancestors: &[RuleWitnessRecord],
+    _label: &str,
+) -> io::Result<()> {
+    if !leaf.starts_with(root) || leaf == root {
+        return Err(invalid("witness path must be inside root"));
+    }
+    let relative = leaf
+        .strip_prefix(root)
+        .map_err(|_| invalid("witness path must be inside root"))?;
+    let mut current = root.to_path_buf();
+    let mut expected = Vec::new();
+    let component_count = relative.components().count();
+    for (index, component) in relative.components().enumerate() {
+        if index + 1 == component_count {
+            break;
+        }
+        current.push(component.as_os_str());
+        expected.push(current.clone());
+    }
+    if expected.len() != ancestors.len() {
+        return Err(invalid("ancestor witness count mismatch"));
+    }
+    for (entry, path) in ancestors.iter().zip(expected.iter()) {
+        if native_to_path(&entry.path)? != *path {
+            return Err(invalid("ancestor witness path mismatch"));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 100
@@ -335,10 +596,10 @@ mod tests {
 
     fn record() -> Record {
         Record {
-            schema_version: SCHEMA_VERSION,
-            plan_schema_version: 2,
-            engine_version: 2,
-            rules_version: 1,
+            schema_version: LEGACY_SCHEMA_VERSION,
+            plan_schema_version: LEGACY_PLAN_SCHEMA_VERSION,
+            engine_version: LEGACY_ENGINE_VERSION,
+            rules_version: LEGACY_RULES_VERSION,
             operation_id: "a-1".into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
@@ -351,6 +612,7 @@ mod tests {
                 state: ItemState::Started,
                 reason: None,
                 destination: None,
+                rule_binding: None,
                 recovery_evidence: None,
                 updated_unix_ms: 1,
             }],
@@ -370,14 +632,399 @@ mod tests {
     fn rejects_future_schema_duplicate_identity_and_false_success() {
         let mut value = record();
         value.validate().unwrap();
-        value.schema_version += 1;
+        value.schema_version = 99;
         assert!(value.validate().is_err());
-        value.schema_version = SCHEMA_VERSION;
+        value.schema_version = LEGACY_SCHEMA_VERSION;
         value.items.push(value.items[0].clone());
         assert!(value.validate().is_err());
         value.items.pop();
         value.items[0].state = ItemState::Succeeded;
         assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn rule_bound_schema_requires_complete_binding() {
+        let mut value = record();
+        value.schema_version = SCHEMA_VERSION;
+        value.plan_schema_version = RULE_BOUND_PLAN_SCHEMA_VERSION;
+        value.rules_version = RULE_BOUND_RULES_VERSION;
+        value.items[0].path =
+            NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc");
+        value.items[0].logical_bytes = 12;
+        value.items[0].rule_binding = Some(RuleBindingRecord {
+            schema_version: 1,
+            rule_id: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID.into(),
+            rule_version: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+            ruleset_schema_version: crate::rules::RULESET_SCHEMA_VERSION,
+            ruleset_revision: crate::rules::BUILTIN_RULESET_REVISION,
+            semantics: crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS.into(),
+            semantics_digest: crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST.into(),
+            selected_root: NativePath::unix_fixture("/fixture"),
+            exclusions: vec![],
+            target: RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc"),
+                device: 1,
+                inode: 2,
+                kind: "file".into(),
+                logical_bytes: 12,
+                modified: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                changed: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                created: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                uid: 1,
+                gid: 1,
+                mode: 0o100600,
+                nlink: 1,
+                flags: 0,
+            },
+            source: RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture/pkg/module.py"),
+                device: 1,
+                inode: 3,
+                kind: "file".into(),
+                logical_bytes: 6,
+                modified: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                changed: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                created: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                uid: 1,
+                gid: 1,
+                mode: 0o100600,
+                nlink: 1,
+                flags: 0,
+            },
+            root: RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture"),
+                device: 1,
+                inode: 1,
+                kind: "directory".into(),
+                logical_bytes: 0,
+                modified: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                changed: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                created: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                uid: 1,
+                gid: 1,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            },
+            target_ancestors: vec![
+                RuleWitnessRecord {
+                    path: NativePath::unix_fixture("/fixture/pkg"),
+                    device: 1,
+                    inode: 4,
+                    kind: "directory".into(),
+                    logical_bytes: 0,
+                    modified: NativeTime {
+                        before_unix_epoch: false,
+                        seconds: 1,
+                        nanoseconds: 0,
+                    },
+                    changed: NativeTime {
+                        before_unix_epoch: false,
+                        seconds: 1,
+                        nanoseconds: 0,
+                    },
+                    created: NativeTime {
+                        before_unix_epoch: false,
+                        seconds: 1,
+                        nanoseconds: 0,
+                    },
+                    uid: 1,
+                    gid: 1,
+                    mode: 0o040700,
+                    nlink: 1,
+                    flags: 0,
+                },
+                RuleWitnessRecord {
+                    path: NativePath::unix_fixture("/fixture/pkg/__pycache__"),
+                    device: 1,
+                    inode: 5,
+                    kind: "directory".into(),
+                    logical_bytes: 0,
+                    modified: NativeTime {
+                        before_unix_epoch: false,
+                        seconds: 1,
+                        nanoseconds: 0,
+                    },
+                    changed: NativeTime {
+                        before_unix_epoch: false,
+                        seconds: 1,
+                        nanoseconds: 0,
+                    },
+                    created: NativeTime {
+                        before_unix_epoch: false,
+                        seconds: 1,
+                        nanoseconds: 0,
+                    },
+                    uid: 1,
+                    gid: 1,
+                    mode: 0o040700,
+                    nlink: 1,
+                    flags: 0,
+                },
+            ],
+            source_ancestors: vec![RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture/pkg"),
+                device: 1,
+                inode: 4,
+                kind: "directory".into(),
+                logical_bytes: 0,
+                modified: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                changed: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                created: NativeTime {
+                    before_unix_epoch: false,
+                    seconds: 1,
+                    nanoseconds: 0,
+                },
+                uid: 1,
+                gid: 1,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            }],
+            warnings: vec!["metadata-only".into()],
+        });
+        value.validate().unwrap();
+        let mut missing = value.clone();
+        missing.items[0].rule_binding = None;
+        assert!(missing.validate().is_err());
+        let mut legacy = value;
+        legacy.schema_version = LEGACY_SCHEMA_VERSION;
+        legacy.plan_schema_version = LEGACY_PLAN_SCHEMA_VERSION;
+        legacy.rules_version = LEGACY_RULES_VERSION;
+        assert!(legacy.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_tampered_rule_binding_tuple_fields() {
+        let mut value = record();
+        value.schema_version = SCHEMA_VERSION;
+        value.plan_schema_version = RULE_BOUND_PLAN_SCHEMA_VERSION;
+        value.rules_version = RULE_BOUND_RULES_VERSION;
+        value.items[0].path =
+            NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc");
+        value.items[0].logical_bytes = 12;
+        value.items[0].rule_binding = Some(RuleBindingRecord {
+            schema_version: 1,
+            rule_id: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID.into(),
+            rule_version: crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+            ruleset_schema_version: crate::rules::RULESET_SCHEMA_VERSION,
+            ruleset_revision: crate::rules::BUILTIN_RULESET_REVISION,
+            semantics: crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS.into(),
+            semantics_digest: crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST.into(),
+            selected_root: NativePath::unix_fixture("/fixture"),
+            exclusions: vec![NativePath::unix_fixture("/fixture/pkg/ignore")],
+            target: RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc"),
+                device: 1,
+                inode: 2,
+                kind: "file".into(),
+                logical_bytes: 12,
+                modified: NativeTime::from_system_time(UNIX_EPOCH),
+                changed: NativeTime::from_system_time(UNIX_EPOCH),
+                created: NativeTime::from_system_time(UNIX_EPOCH),
+                uid: 1,
+                gid: 1,
+                mode: 0o100600,
+                nlink: 1,
+                flags: 0,
+            },
+            source: RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture/pkg/module.py"),
+                device: 1,
+                inode: 3,
+                kind: "file".into(),
+                logical_bytes: 6,
+                modified: NativeTime::from_system_time(UNIX_EPOCH),
+                changed: NativeTime::from_system_time(UNIX_EPOCH),
+                created: NativeTime::from_system_time(UNIX_EPOCH),
+                uid: 1,
+                gid: 1,
+                mode: 0o100600,
+                nlink: 1,
+                flags: 0,
+            },
+            root: RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture"),
+                device: 1,
+                inode: 1,
+                kind: "directory".into(),
+                logical_bytes: 0,
+                modified: NativeTime::from_system_time(UNIX_EPOCH),
+                changed: NativeTime::from_system_time(UNIX_EPOCH),
+                created: NativeTime::from_system_time(UNIX_EPOCH),
+                uid: 1,
+                gid: 1,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            },
+            target_ancestors: vec![
+                RuleWitnessRecord {
+                    path: NativePath::unix_fixture("/fixture/pkg"),
+                    device: 1,
+                    inode: 4,
+                    kind: "directory".into(),
+                    logical_bytes: 0,
+                    modified: NativeTime::from_system_time(UNIX_EPOCH),
+                    changed: NativeTime::from_system_time(UNIX_EPOCH),
+                    created: NativeTime::from_system_time(UNIX_EPOCH),
+                    uid: 1,
+                    gid: 1,
+                    mode: 0o040700,
+                    nlink: 1,
+                    flags: 0,
+                },
+                RuleWitnessRecord {
+                    path: NativePath::unix_fixture("/fixture/pkg/__pycache__"),
+                    device: 1,
+                    inode: 5,
+                    kind: "directory".into(),
+                    logical_bytes: 0,
+                    modified: NativeTime::from_system_time(UNIX_EPOCH),
+                    changed: NativeTime::from_system_time(UNIX_EPOCH),
+                    created: NativeTime::from_system_time(UNIX_EPOCH),
+                    uid: 1,
+                    gid: 1,
+                    mode: 0o040700,
+                    nlink: 1,
+                    flags: 0,
+                },
+            ],
+            source_ancestors: vec![RuleWitnessRecord {
+                path: NativePath::unix_fixture("/fixture/pkg"),
+                device: 1,
+                inode: 4,
+                kind: "directory".into(),
+                logical_bytes: 0,
+                modified: NativeTime::from_system_time(UNIX_EPOCH),
+                changed: NativeTime::from_system_time(UNIX_EPOCH),
+                created: NativeTime::from_system_time(UNIX_EPOCH),
+                uid: 1,
+                gid: 1,
+                mode: 0o040700,
+                nlink: 1,
+                flags: 0,
+            }],
+            warnings: vec!["metadata-only".into()],
+        });
+        value.validate().unwrap();
+
+        let mut tampered = value.clone();
+        tampered.items[0].rule_binding.as_mut().unwrap().rule_id = "evil".into();
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0]
+            .rule_binding
+            .as_mut()
+            .unwrap()
+            .rule_version += 1;
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0]
+            .rule_binding
+            .as_mut()
+            .unwrap()
+            .ruleset_revision += 1;
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0]
+            .rule_binding
+            .as_mut()
+            .unwrap()
+            .semantics_digest = "sha256:forged".into();
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0].rule_binding.as_mut().unwrap().source.path =
+            NativePath::unix_fixture("/fixture/pkg/other.py");
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0]
+            .rule_binding
+            .as_mut()
+            .unwrap()
+            .target_ancestors
+            .pop();
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0].rule_binding.as_mut().unwrap().exclusions =
+            vec![NativePath::unix_fixture("/outside")];
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0].rule_binding.as_mut().unwrap().target.kind = "directory".into();
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0]
+            .rule_binding
+            .as_mut()
+            .unwrap()
+            .target
+            .nlink = 2;
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0]
+            .rule_binding
+            .as_mut()
+            .unwrap()
+            .target
+            .flags = SF_DATALESS;
+        assert!(tampered.validate().is_err());
+
+        tampered = value.clone();
+        tampered.items[0].rule_binding.as_mut().unwrap().target.mode = 0o040700;
+        assert!(tampered.validate().is_err());
     }
 
     #[test]

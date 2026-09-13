@@ -101,17 +101,22 @@ being modified by other apps. There is no permanent-delete or elevation fallback
 See [execution, state storage, and recovery limits](docs/EXECUTION.md).
 
 Read-only built-in rule discovery currently includes one CPython `__pycache__`
-source-backed `.pyc` rule:
+source-backed `.pyc` rule, and explicit rule-bound Trash preview/execute:
 
 ```sh
 sayaka rules list
 sayaka rules list --json
 sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc
 sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc --json
+sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc
+sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc --json
 ```
 
 This preview never executes effects. Candidate bytes are observed bytes, not
-freed space, and actions remain `preview_only` / `manual_review`.
+freed space, and candidate actions remain `preview_only` / `manual_review`.
+`rules trash` requires explicit `--select` targets (max 32), keeps metadata-only
+source/target rule witnesses in the v3 plan and v2 journal, and still uses the
+same exact interactive `trash N` confirmation for `--execute`.
 
 `scan .` scans the current directory and prints a readable terminal report with
 sizes, largest files and actionable scan notes. Replace `.` with another

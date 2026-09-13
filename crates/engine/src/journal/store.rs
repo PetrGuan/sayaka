@@ -373,7 +373,7 @@ mod tests {
 
     fn sample() -> Record {
         Record {
-            schema_version: SCHEMA_VERSION,
+            schema_version: 1,
             plan_schema_version: 2,
             engine_version: 2,
             rules_version: 1,
@@ -389,6 +389,7 @@ mod tests {
                 state: ItemState::Planned,
                 reason: None,
                 destination: None,
+                rule_binding: None,
                 recovery_evidence: None,
                 updated_unix_ms: 1,
             }],

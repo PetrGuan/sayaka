@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use super::{NativeFileInfo, NativeRecoveryEvidence, NativeTrashOutcome};
+use super::{
+    NativeFileInfo, NativeRecoveryEvidence, NativeRuleBindingWitness, NativeTrashOutcome,
+    NativeWitnessInfo,
+};
 use crate::{ReadOnlyPolicy, VolumeInfo, volume_info};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, Metadata, OpenOptions};
@@ -12,6 +15,8 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use std::{cell::Cell, thread_local};
 
 #[path = "foundation.rs"]
 mod foundation;
@@ -75,12 +80,97 @@ impl Stamp {
             && (self.mode & u32::from(libc::S_IFMT) == u32::from(libc::S_IFDIR)
                 || self.links == other.links)
     }
+
+    fn same_post_move_stable_fields(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+            && self.mode == other.mode
+            && self.uid == other.uid
+            && self.gid == other.gid
+            && self.links == other.links
+            && self.size == other.size
+            && self.blocks == other.blocks
+            && self.flags == other.flags
+            && self.created == other.created
+            && self.modified == other.modified
+    }
+
+    fn post_move_stable_differences(&self, other: &Self) -> Vec<&'static str> {
+        let mut differences = Vec::new();
+        if self.device != other.device {
+            differences.push("device");
+        }
+        if self.inode != other.inode {
+            differences.push("inode");
+        }
+        if self.mode != other.mode {
+            differences.push("mode");
+        }
+        if self.uid != other.uid {
+            differences.push("uid");
+        }
+        if self.gid != other.gid {
+            differences.push("gid");
+        }
+        if self.links != other.links {
+            differences.push("nlink");
+        }
+        if self.size != other.size {
+            differences.push("logical_bytes");
+        }
+        if self.blocks != other.blocks {
+            differences.push("blocks");
+        }
+        if self.flags != other.flags {
+            differences.push("flags");
+        }
+        if self.created != other.created {
+            differences.push("created");
+        }
+        if self.modified != other.modified {
+            differences.push("modified");
+        }
+        differences
+    }
+
+    fn differences(&self, other: &Self) -> Vec<&'static str> {
+        let mut differences = self.post_move_stable_differences(other);
+        if self.changed != other.changed {
+            differences.push("changed");
+        }
+        differences
+    }
 }
 
 #[derive(Clone, Copy)]
 enum Binding {
     FullTarget,
     Safety,
+    PostMoveTarget,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TestProbeStage {
+    OpenHandle,
+    Complete,
+    HeldAfterCapture,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(super) enum TestProbeMutation {
+    Device,
+    Inode,
+    Mode,
+    Uid,
+    Gid,
+    Nlink,
+    Size,
+    Blocks,
+    Flags,
+    Modified,
+    Changed,
+    Created,
+    ChangedAndSize,
 }
 
 impl Binding {
@@ -88,6 +178,7 @@ impl Binding {
         match self {
             Self::FullTarget => before == current,
             Self::Safety => before.same_safety(current),
+            Self::PostMoveTarget => before.same_post_move_stable_fields(current),
         }
     }
 }
@@ -127,7 +218,8 @@ impl Evidence {
             // O_EVTONLY does not request file content; NONBLOCK avoids FIFO waits.
             .custom_flags(O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_EVTONLY | libc::O_CLOEXEC)
             .open(path)?;
-        let stamp = Stamp::read(&file.metadata()?);
+        let mut stamp = Stamp::read(&file.metadata()?);
+        apply_test_probe_hook(TestProbeStage::OpenHandle, &mut stamp);
         if !binding.matches(&stamp, &Stamp::read(&before)) {
             return Err(refused("object changed during no-follow capture"));
         }
@@ -137,14 +229,19 @@ impl Evidence {
     fn complete(path: &Path, binding: Binding, file: File, stamp: Stamp) -> io::Result<Self> {
         let physical = physical_path(&file)?;
         let acl = crate::acl::snapshot(&file)?;
-        if !binding.matches(&stamp, &Stamp::read(&file.metadata()?)) {
-            return Err(refused("object safety changed during ACL capture"));
+        let mut observed = Stamp::read(&file.metadata()?);
+        apply_test_probe_hook(TestProbeStage::Complete, &mut observed);
+        if !binding.matches(&stamp, &observed) {
+            return Err(refused(&format!(
+                "object safety changed during ACL capture: {}",
+                describe_stamp_delta(&stamp, &observed)
+            )));
         }
         Ok(Self {
             path: path.to_owned(),
             physical,
             file,
-            stamp,
+            stamp: observed,
             acl,
             binding,
         })
@@ -176,6 +273,244 @@ impl Evidence {
     }
 }
 
+fn describe_stamp_delta(before: &Stamp, after: &Stamp) -> String {
+    let mut fields = Vec::new();
+    if before.device != after.device {
+        fields.push("device");
+    }
+    if before.inode != after.inode {
+        fields.push("inode");
+    }
+    if before.mode != after.mode {
+        fields.push("mode");
+    }
+    if before.uid != after.uid {
+        fields.push("uid");
+    }
+    if before.gid != after.gid {
+        fields.push("gid");
+    }
+    if before.links != after.links {
+        fields.push("nlink");
+    }
+    if before.size != after.size {
+        fields.push("logical_bytes");
+    }
+    if before.blocks != after.blocks {
+        fields.push("blocks");
+    }
+    if before.flags != after.flags {
+        fields.push("flags");
+    }
+    if before.modified != after.modified {
+        fields.push("modified");
+    }
+    if before.changed != after.changed {
+        fields.push("changed");
+    }
+    if before.created != after.created {
+        fields.push("created");
+    }
+    if fields.is_empty() {
+        "none".into()
+    } else {
+        fields.join(",")
+    }
+}
+
+fn verify_post_move_consistency(
+    expected: &Stamp,
+    held: &Stamp,
+    result: &Stamp,
+    acl_matches: bool,
+) -> io::Result<()> {
+    if expected != held {
+        let changed = expected.differences(held);
+        return Err(refused(&format!(
+            "retained source diverged from approved object after move: {}",
+            changed.join(",")
+        )));
+    }
+    if expected != result || !acl_matches {
+        let changed = expected.differences(result);
+        return Err(refused(&format!(
+            "result is not the unchanged, retained original file: {}{}",
+            if changed.is_empty() {
+                "none".into()
+            } else {
+                changed.join(",")
+            },
+            if !acl_matches {
+                if changed.is_empty() {
+                    "acl".into()
+                } else {
+                    ",acl".into()
+                }
+            } else {
+                String::new()
+            }
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_PROBE_HOOK: Cell<Option<(TestProbeStage, TestProbeMutation)>> = const { Cell::new(None) };
+}
+
+#[cfg(not(test))]
+fn apply_test_probe_hook(_: TestProbeStage, _: &mut Stamp) {}
+
+#[cfg(test)]
+fn apply_test_probe_hook(stage: TestProbeStage, stamp: &mut Stamp) {
+    TEST_PROBE_HOOK.with(|hook| {
+        if let Some((hook_stage, mutation)) = hook.get()
+            && hook_stage == stage
+        {
+            match mutation {
+                TestProbeMutation::Device => stamp.device = stamp.device.saturating_add(1),
+                TestProbeMutation::Inode => stamp.inode = stamp.inode.saturating_add(1),
+                TestProbeMutation::Mode => stamp.mode ^= 0o100,
+                TestProbeMutation::Uid => stamp.uid = stamp.uid.saturating_add(1),
+                TestProbeMutation::Gid => stamp.gid = stamp.gid.saturating_add(1),
+                TestProbeMutation::Nlink => stamp.links = stamp.links.saturating_add(1),
+                TestProbeMutation::Size => stamp.size = stamp.size.saturating_add(1),
+                TestProbeMutation::Blocks => stamp.blocks = stamp.blocks.saturating_add(1),
+                TestProbeMutation::Flags => stamp.flags ^= 0x1,
+                TestProbeMutation::Modified => {
+                    stamp.modified.1 = (stamp.modified.1 + 1).min(999_999_999)
+                }
+                TestProbeMutation::Changed => {
+                    stamp.changed.1 = (stamp.changed.1 + 1).min(999_999_999)
+                }
+                TestProbeMutation::Created => {
+                    stamp.created.1 = (stamp.created.1 + 1).min(999_999_999)
+                }
+                TestProbeMutation::ChangedAndSize => {
+                    stamp.changed.1 = (stamp.changed.1 + 1).min(999_999_999);
+                    stamp.size = stamp.size.saturating_add(1);
+                }
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+pub(super) fn set_test_probe_hook(hook: Option<(TestProbeStage, TestProbeMutation)>) {
+    TEST_PROBE_HOOK.with(|value| value.set(hook));
+}
+
+#[cfg(test)]
+pub(super) fn verify_destination_probe_for_test(path: &Path) -> io::Result<()> {
+    let (file, stamp) = Evidence::open_handle(path, Binding::PostMoveTarget)?;
+    reject_destination_attributes(&file)?;
+    let _evidence = Evidence::complete(path, Binding::PostMoveTarget, file, stamp)?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn verify_destination_anchor_probe_for_test(
+    path: &Path,
+    revalidate_hook: Option<(TestProbeStage, TestProbeMutation)>,
+) -> io::Result<()> {
+    set_test_probe_hook(None);
+    let (file, stamp) = Evidence::open_handle(path, Binding::PostMoveTarget)?;
+    reject_destination_attributes(&file)?;
+    let mut evidence = Evidence::complete(path, Binding::PostMoveTarget, file, stamp)?;
+    evidence.binding = Binding::FullTarget;
+    evidence.stamp = evidence.stamp.clone();
+    set_test_probe_hook(revalidate_hook);
+    let result = evidence.revalidate();
+    set_test_probe_hook(None);
+    result
+}
+
+#[cfg(test)]
+pub(super) fn full_target_capture_probe_for_test(path: &Path) -> io::Result<()> {
+    let _evidence = Evidence::open(path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn post_move_consistency_probe_for_test(
+    held_mutation: Option<TestProbeMutation>,
+    result_mutation: Option<TestProbeMutation>,
+    acl_matches: bool,
+) -> io::Result<()> {
+    let base = Stamp {
+        device: 1,
+        inode: 2,
+        mode: 0o100600,
+        uid: 501,
+        gid: 20,
+        links: 1,
+        size: 44,
+        blocks: 8,
+        flags: 0,
+        modified: (1, 0),
+        changed: (1, 0),
+        created: (1, 0),
+    };
+    let approved = base.clone();
+    let mut expected = approved.clone();
+    expected.changed = (2, 0);
+    let mut held = expected.clone();
+    let mut result = expected.clone();
+
+    let apply_mutation = |stamp: &mut Stamp, mutation: TestProbeMutation| match mutation {
+        TestProbeMutation::Device => stamp.device += 1,
+        TestProbeMutation::Inode => stamp.inode += 1,
+        TestProbeMutation::Mode => stamp.mode ^= 0o100,
+        TestProbeMutation::Uid => stamp.uid += 1,
+        TestProbeMutation::Gid => stamp.gid += 1,
+        TestProbeMutation::Nlink => stamp.links += 1,
+        TestProbeMutation::Size => stamp.size += 1,
+        TestProbeMutation::Blocks => stamp.blocks += 1,
+        TestProbeMutation::Flags => stamp.flags ^= 1,
+        TestProbeMutation::Modified => stamp.modified.1 += 1,
+        TestProbeMutation::Changed => stamp.changed.1 += 1,
+        TestProbeMutation::Created => stamp.created.1 += 1,
+        TestProbeMutation::ChangedAndSize => {
+            stamp.changed.1 += 1;
+            stamp.size += 1;
+        }
+    };
+
+    if let Some(mutation) = held_mutation {
+        apply_mutation(&mut held, mutation);
+    }
+    if let Some(mutation) = result_mutation {
+        apply_mutation(&mut result, mutation);
+    }
+    verify_post_move_consistency(&expected, &held, &result, acl_matches)
+}
+
+#[cfg(test)]
+pub(super) fn post_move_capture_anchor_probe_for_test() -> io::Result<()> {
+    let approved = Stamp {
+        device: 1,
+        inode: 2,
+        mode: 0o100600,
+        uid: 501,
+        gid: 20,
+        links: 1,
+        size: 44,
+        blocks: 8,
+        flags: 0,
+        modified: (1, 0),
+        changed: (1, 0),
+        created: (1, 0),
+    };
+    let mut held = approved.clone();
+    let mut result = approved.clone();
+    held.changed = (2, 0);
+    result.changed = (2, 0);
+    let mut expected = approved.clone();
+    expected.changed = result.changed;
+    verify_post_move_consistency(&expected, &held, &result, true)
+}
+
 pub(super) struct Candidate {
     pub(super) info: NativeFileInfo,
     pub(super) path: PathBuf,
@@ -183,17 +518,33 @@ pub(super) struct Candidate {
     uid: u32,
     ancestors: Vec<Evidence>,
     target: Evidence,
+    source: Option<Evidence>,
     protections: Vec<Evidence>,
     volume: VolumeInfo,
     attempted: AtomicBool,
+    rule_binding_witness: Option<NativeRuleBindingWitness>,
 }
 
 impl Candidate {
     pub(super) fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
-        with_policy(|| Self::capture_inner(scope, path, protected))
+        with_policy(|| Self::capture_inner(scope, path, None, protected))
     }
 
-    fn capture_inner(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
+    pub(super) fn capture_with_source(
+        scope: &Path,
+        target: &Path,
+        source: &Path,
+        protected: &[PathBuf],
+    ) -> io::Result<Self> {
+        with_policy(|| Self::capture_inner(scope, target, Some(source), protected))
+    }
+
+    fn capture_inner(
+        scope: &Path,
+        path: &Path,
+        source_path: Option<&Path>,
+        protected: &[PathBuf],
+    ) -> io::Result<Self> {
         let uid = ordinary_authority()?;
         valid_path(scope)?;
         valid_path(path)?;
@@ -216,6 +567,20 @@ impl Candidate {
         let target = Evidence::open(path)?;
         admissible_file(&target.stamp, uid)?;
         reject_cloud_attributes(&target.file)?;
+        let source = if let Some(source_path) = source_path {
+            if source_path == path {
+                return Err(refused("source and target must be different files"));
+            }
+            let source = Evidence::open(source_path)?;
+            if source.stamp.identity() == target.stamp.identity() {
+                return Err(refused("source and target identity must be different"));
+            }
+            admissible_file(&source.stamp, uid)?;
+            reject_cloud_attributes(&source.file)?;
+            Some(source)
+        } else {
+            None
+        };
         let scope_evidence = ancestors
             .iter()
             .find(|ancestor| ancestor.path == scope)
@@ -223,6 +588,11 @@ impl Candidate {
         let physical_scope = &scope_evidence.physical;
         if !target.physical.starts_with(physical_scope) || target.physical == *physical_scope {
             return Err(refused("physical target is outside scope"));
+        }
+        if let Some(source) = &source
+            && (!source.physical.starts_with(physical_scope) || source.physical == *physical_scope)
+        {
+            return Err(refused("physical source is outside scope"));
         }
         let mut protections = Vec::with_capacity(protected.len());
         for protection in protected {
@@ -256,12 +626,20 @@ impl Candidate {
             uid,
             ancestors,
             target,
+            source,
             protections,
             volume,
             attempted: AtomicBool::new(false),
+            rule_binding_witness: None,
         };
         candidate.revalidate_inner()?;
+        let mut candidate = candidate;
+        candidate.rule_binding_witness = candidate.build_rule_binding_witness()?;
         Ok(candidate)
+    }
+
+    pub(super) fn rule_binding_witness(&self) -> Option<&NativeRuleBindingWitness> {
+        self.rule_binding_witness.as_ref()
     }
 
     pub(super) fn revalidate(&self) -> io::Result<()> {
@@ -326,6 +704,14 @@ impl Candidate {
         self.target.revalidate()?;
         admissible_file(&self.target.stamp, self.uid)?;
         reject_cloud_attributes(&self.target.file)?;
+        if let Some(source) = &self.source {
+            source.revalidate()?;
+            admissible_file(&source.stamp, self.uid)?;
+            reject_cloud_attributes(&source.file)?;
+            if source.stamp.identity() == self.target.stamp.identity() {
+                return Err(refused("source and target identity must stay distinct"));
+            }
+        }
         for protection in &self.protections {
             let canonical = fs::canonicalize(&protection.path)?;
             protection.revalidate_at(&canonical)?;
@@ -344,7 +730,11 @@ impl Candidate {
             let canonical = fs::canonicalize(&protection.path)?;
             protection.revalidate_at(&canonical)?;
         }
-        self.target.revalidate()
+        self.target.revalidate()?;
+        if let Some(source) = &self.source {
+            source.revalidate()?;
+        }
+        Ok(())
     }
 
     fn check_protection(&self) -> io::Result<()> {
@@ -358,7 +748,19 @@ impl Candidate {
         for protection in &self.protections {
             if folded_beneath(&self.path, &protection.path)
                 || folded_beneath(&self.target.physical, &protection.physical)
+                || self
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| folded_beneath(&source.path, &protection.path))
+                || self
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| folded_beneath(&source.physical, &protection.physical))
                 || self.target.stamp.identity() == protection.stamp.identity()
+                || self
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| source.stamp.identity() == protection.stamp.identity())
                 || self
                     .ancestors
                     .iter()
@@ -480,28 +882,34 @@ impl Candidate {
     }
 
     fn verify_destination(&self, destination: &Path) -> io::Result<()> {
-        let (file, stamp) = Evidence::open_handle(destination, Binding::FullTarget)?;
-        let held = Stamp::read(&self.target.file.metadata()?);
-        if stamp.identity() != self.target.stamp.identity()
-            || held.identity() != self.target.stamp.identity()
-        {
+        let (file, stamp) = Evidence::open_handle(destination, Binding::PostMoveTarget)?;
+        if stamp.identity() != self.target.stamp.identity() {
             return Err(refused(
                 "returned destination identity does not match the retained original",
             ));
         }
         admissible_file(&stamp, self.uid)?;
-        admissible_file(&held, self.uid)?;
         reject_destination_attributes(&file)?;
-        let result = Evidence::complete(destination, Binding::FullTarget, file, stamp)?;
-        // A move may update ctime. It must not change identity, contents, mode,
-        // owner, flags, or link count. Never inspect file contents or hydrate.
-        let mut approved_after_move = self.target.stamp.clone();
-        approved_after_move.changed = held.changed;
-        if held != approved_after_move || result.stamp != held || result.acl != self.target.acl {
+        let mut result = Evidence::complete(destination, Binding::PostMoveTarget, file, stamp)?;
+        let mut held = Stamp::read(&self.target.file.metadata()?);
+        apply_test_probe_hook(TestProbeStage::HeldAfterCapture, &mut held);
+        if held.identity() != self.target.stamp.identity() {
             return Err(refused(
-                "result is not the unchanged, retained original file",
+                "retained source identity changed after reported move",
             ));
         }
+        admissible_file(&held, self.uid)?;
+        // The initial destination observation tolerates bounded ctime evolution
+        // while metadata/ACL capture settles. Afterwards, pin the observed ctime
+        // and require full target equality for held/source and final revalidation.
+        let mut expected = self.target.stamp.clone();
+        expected.changed = result.stamp.changed;
+        verify_post_move_consistency(
+            &expected,
+            &held,
+            &result.stamp,
+            result.acl == self.target.acl,
+        )?;
         if physical_path(&self.target.file)? != result.physical {
             return Err(refused("retained source and resulting URL disagree"));
         }
@@ -510,8 +918,91 @@ impl Candidate {
             Err(error) => return Err(error),
             Ok(_) => return Err(refused("source path still exists after reported move")),
         }
+        result.binding = Binding::FullTarget;
+        result.stamp = expected;
         result.revalidate()?;
         Ok(())
+    }
+
+    fn build_rule_binding_witness(&self) -> io::Result<Option<NativeRuleBindingWitness>> {
+        let Some(source) = &self.source else {
+            return Ok(None);
+        };
+        let root = self
+            .ancestors
+            .iter()
+            .find(|ancestor| ancestor.path == self.scope)
+            .ok_or_else(|| refused("scope identity is absent from ancestry"))?;
+        let target_ancestors = self
+            .ancestors
+            .iter()
+            .filter(|ancestor| {
+                ancestor.path != self.scope && ancestor.path.starts_with(&self.scope)
+            })
+            .map(native_witness)
+            .collect();
+        let source_ancestors = ancestors_between(&self.scope, &source.path)?
+            .into_iter()
+            .map(|path| Evidence::open_safety(&path))
+            .collect::<io::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|evidence| native_witness(&evidence))
+            .collect();
+        Ok(Some(NativeRuleBindingWitness {
+            target: native_witness(&self.target),
+            source: native_witness(source),
+            root: native_witness(root),
+            target_ancestors,
+            source_ancestors,
+        }))
+    }
+}
+
+fn ancestors_between(scope: &Path, leaf: &Path) -> io::Result<Vec<PathBuf>> {
+    if !leaf.starts_with(scope) || leaf == scope {
+        return Err(refused("leaf must be inside scope"));
+    }
+    let relative = leaf
+        .strip_prefix(scope)
+        .map_err(|_| refused("leaf must be inside scope"))?;
+    let mut current = scope.to_path_buf();
+    let mut ancestors = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return Err(refused("leaf path must be normal components"));
+        };
+        current.push(name);
+        if current != leaf {
+            ancestors.push(current.clone());
+        }
+    }
+    Ok(ancestors)
+}
+
+fn native_witness(evidence: &Evidence) -> NativeWitnessInfo {
+    let kind = match evidence.stamp.mode & u32::from(libc::S_IFMT) {
+        x if x == u32::from(libc::S_IFREG) => "file",
+        x if x == u32::from(libc::S_IFDIR) => "directory",
+        x if x == u32::from(libc::S_IFLNK) => "link",
+        _ => "other",
+    };
+    NativeWitnessInfo {
+        path: evidence.path.clone(),
+        kind,
+        device: evidence.stamp.device,
+        inode: evidence.stamp.inode,
+        logical_bytes: evidence.stamp.size,
+        modified_unix_seconds: evidence.stamp.modified.0,
+        modified_nanoseconds: evidence.stamp.modified.1,
+        changed_unix_seconds: evidence.stamp.changed.0,
+        changed_nanoseconds: evidence.stamp.changed.1,
+        created_unix_seconds: evidence.stamp.created.0,
+        created_nanoseconds: evidence.stamp.created.1,
+        uid: evidence.stamp.uid,
+        gid: evidence.stamp.gid,
+        mode: evidence.stamp.mode,
+        nlink: evidence.stamp.links,
+        flags: evidence.stamp.flags,
     }
 }
 

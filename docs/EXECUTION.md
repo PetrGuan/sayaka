@@ -60,10 +60,16 @@ the engine remains `forbid(unsafe_code)`.
 sayaka trash --scope . ./file.txt
 sayaka trash --scope . ./file.txt --json
 sayaka trash --scope . ./file.txt --execute
+sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc
+sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc --json
+sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc --execute
 sayaka receipt --json
 ```
 
-Use existing physical paths; replace the example filename. `..` traversal is
+Use existing physical paths; replace the example filename. `rules trash` requires
+an explicit root, `--rule`, and one or more explicit `--select` files (max 32);
+it never imports `rules preview --json` and never broadens to additional
+candidates after selection. `..` traversal is
 rejected, not normalized into another allowed selection. Exclusions are
 repeatable with `--exclude PATH`; lexical overlap and native identity/ancestry
 checks prevent differently spelled filesystem aliases from bypassing an
@@ -104,7 +110,15 @@ An exclusive OS file lock serializes both writers and readers. Process exit
 releases it; the lock file is not a PID-based stale-lock authority. A receipt
 reader refuses a busy store instead of classifying an active operation as crashed.
 
-Each operation has a schema-versioned JSON record. Before publishing an update,
+Each operation has a schema-versioned JSON record. Legacy explicit-file records
+(`schema_version:1`, `plan_schema_version:2`, `engine_version:2`, `rules_version:1`)
+remain readable unchanged. Rule-bound records use
+`schema_version:2`, `plan_schema_version:3`, `engine_version:2`, `rules_version:2`
+and require complete per-item rule binding evidence (rule id/version/ruleset
+revision/semantics digest, selected root/exclusions, target/source/root/ancestor
+witnesses). Unknown tuples, missing/malformed bindings, and mismatched
+target/source identities are rejected.
+Before publishing an update,
 a separate `.pending` conservative receipt is written, full-synced, directory-
 synced and full-synced again. It retains earlier completed outcomes while treating
 new terminal outcomes as unconfirmed. A `.next` snapshot carries the proposed
@@ -162,8 +176,13 @@ stops the batch. System-reported failure is distinct from refusal before the cal
 No timeout is interpreted as proof that an effect did not happen.
 
 Source admission and post-effect verification are distinct policies: the system
-may add `com.apple.macl` during Trash. Only post-effect verification accommodates
-that established metadata change; source restrictions and unknown/cloud/resource-
+may add `com.apple.macl` during Trash. During the initial destination metadata
+and ACL observation, verification tolerates bounded ctime settling only. After
+that capture anchor is established, later held-handle checks and final
+revalidation require full target equality again (including ctime), while still
+requiring stable identity, mode, uid/gid, nlink, logical size, allocated
+blocks, flags, created time, modified time, and ACL consistency. Source
+restrictions and unknown/cloud/resource-
 fork refusals remain in force. Attributes are never removed to make a check pass.
 
 Ambiguous outcomes preserve structured `recovery_evidence`: the approved native
@@ -221,17 +240,20 @@ returned destination, restores only that object without overwrite and verifies
 contents before exact cleanup. Ambiguity after a call preserves recovery evidence
 instead of searching or deleting guessed Trash entries.
 
-The first authorized local invocation was blocked by an overly restrictive
-empty-ACL recovery precheck before any Foundation Trash call. The test now
-distinguishes non-granting deny-only entries without modifying host permissions.
-Native Trash/recovery acceptance requires an actual completed roundtrip, not
-merely passing default checks or compiling this system test.
+The first authorized parent invocation of this ignored test failed **before any
+effect** because the fixture root was created in system temp (hidden/protected
+path class). Tests now require a non-hidden project-owned fixture parent at
+`<repo>/crates/engine/target/native-test-fixtures`.
 
-The corrected one-file roundtrip passed on local internal APFS, macOS 26.6.2
-arm64, with Rust 1.93.1. It verified the returned identity, restored without
-overwrite and completed exact fixture cleanup. This evidence covers that narrow
-native case and host, not Windows, every macOS version, or broader maintenance
-actions. No Trash permission changes or directory-wide cleanup were performed.
+The second authorized parent invocation reached Foundation and returned an
+`Unknown` outcome because destination verification observed a metadata transition
+during ACL capture (`object safety changed during ACL capture`). Recovery
+evidence preserved exact returned path and approved/held identities; parent
+performed explicit identity-checked no-overwrite restore and fixture cleanup.
+That record did not include per-field deltas, so the exact changed field(s) are
+not known from that run alone. Default deterministic no-effect tests now
+reproduce and bound the ACL-window assumption used by post-move verification.
+This remains unresolved native evidence, not a pass claim.
 
 ## Native references
 
