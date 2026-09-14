@@ -100,16 +100,21 @@ being modified by other apps. There is no permanent-delete or elevation fallback
 `sayaka receipt --json` reads local records without retrying interrupted work.
 See [execution, state storage, and recovery limits](docs/EXECUTION.md).
 
-Read-only built-in rule discovery currently includes one CPython `__pycache__`
-source-backed `.pyc` rule, and explicit rule-bound Trash preview/execute:
+Read-only built-in rule discovery includes explicit CPython `__pycache__`
+source-backed `.pyc` and explicit OpenJDK `javac` same-directory source-backed
+`.class` rules, with explicit rule-bound Trash preview/execute:
 
 ```sh
 sayaka rules list
 sayaka rules list --json
 sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc
 sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc --json
+sayaka rules preview . --rule org.openjdk.javac.source_backed_class
+sayaka rules preview . --rule org.openjdk.javac.source_backed_class --json
 sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc
 sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc --json
+sayaka rules trash . --rule org.openjdk.javac.source_backed_class --select ./Foo.class
+sayaka rules trash . --rule org.openjdk.javac.source_backed_class --select ./Foo.class --json
 ```
 
 This preview never executes effects. Candidate bytes are observed bytes, not
@@ -148,11 +153,13 @@ read receipts/quarantine/user data, or infer uninstall scope. A `.app` suffix
 and declared bundle metadata are observations, not trust/install proofs. See
 [application inventory contract](docs/APPLICATIONS.md).
 
-`clean` wraps the CPython source-backed rule with persistent clean-only exclusions:
+`clean` defaults to the CPython source-backed rule, with optional explicit
+`--rule` selection and persistent clean-only exclusions:
 
 ```sh
 sayaka clean .
 sayaka clean . --execute
+sayaka clean . --rule org.openjdk.javac.source_backed_class
 sayaka clean exclusions list .
 ```
 

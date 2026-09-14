@@ -41,6 +41,11 @@ pub struct NativeRuleBindingWitness {
     pub source_ancestors: Vec<NativeWitnessInfo>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeTargetMarker {
+    Prefix4([u8; 4]),
+}
+
 #[derive(Debug)]
 pub enum NativeTrashOutcome {
     Moved {
@@ -132,14 +137,26 @@ impl TrashCandidate {
         source: &Path,
         protected: &[PathBuf],
     ) -> io::Result<Self> {
+        Self::capture_with_source_and_marker(scope, target, source, None, protected)
+    }
+
+    pub fn capture_with_source_and_marker(
+        scope: &Path,
+        target: &Path,
+        source: &Path,
+        marker: Option<NativeTargetMarker>,
+        protected: &[PathBuf],
+    ) -> io::Result<Self> {
         #[cfg(target_os = "macos")]
         {
-            native::Candidate::capture_with_source(scope, target, source, protected)
-                .map(|native| Self { native })
+            native::Candidate::capture_with_source_and_marker(
+                scope, target, source, marker, protected,
+            )
+            .map(|native| Self { native })
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (scope, target, source, protected);
+            let _ = (scope, target, source, marker, protected);
             Err(unsupported())
         }
     }

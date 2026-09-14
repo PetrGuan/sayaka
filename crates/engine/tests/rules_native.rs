@@ -53,6 +53,10 @@ fn clean_config_path(fixture: &Fixture) -> clean_policy::ConfigPath {
 }
 
 fn preview(root: &std::path::Path) -> rules::RulePreview {
+    preview_for_rule(root, rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID)
+}
+
+fn preview_for_rule(root: &std::path::Path, rule_id: &str) -> rules::RulePreview {
     let report = scan::scan(
         &[root.to_path_buf()],
         &ScanLimits::default(),
@@ -60,12 +64,7 @@ fn preview(root: &std::path::Path) -> rules::RulePreview {
         |_| {},
     )
     .unwrap();
-    rules::preview(
-        report,
-        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
-        &Cancellation::default(),
-    )
-    .unwrap()
+    rules::preview(report, rule_id, &Cancellation::default()).unwrap()
 }
 
 fn native_path(path: &sayaka_engine::journal::NativePath) -> PathBuf {
@@ -331,6 +330,99 @@ fn cpython_preview_refuses_ancestor_swap_to_symlinked_moved_directory() {
 }
 
 #[test]
+fn javac_preview_accepts_same_stem_sibling_and_refuses_invalid_markers() {
+    let fixture = Fixture::new().unwrap();
+    let root = scope(&fixture);
+    fs::create_dir_all(root.join("pkg")).unwrap();
+    fs::write(root.join("pkg/Foo.java"), b"class Foo {}\n").unwrap();
+    fs::write(
+        root.join("pkg/Foo.class"),
+        [0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x3D],
+    )
+    .unwrap();
+    fs::write(root.join("pkg/Wrong.java"), b"class Wrong {}\n").unwrap();
+    fs::write(root.join("pkg/Wrong.class"), [0x00, 0x01, 0x02, 0x03]).unwrap();
+    fs::write(root.join("pkg/Short.java"), b"class Short {}\n").unwrap();
+    fs::write(root.join("pkg/Short.class"), [0xCA, 0xFE, 0xBA]).unwrap();
+    fs::write(root.join("pkg/Outer$Inner.class"), [0xCA, 0xFE, 0xBA, 0xBE]).unwrap();
+    fs::write(root.join("pkg/Missing.class"), [0xCA, 0xFE, 0xBA, 0xBE]).unwrap();
+    let result = preview_for_rule(&root, rules::JAVAC_SOURCE_BACKED_CLASS_RULE_ID);
+    assert_eq!(result.candidates.len(), 1, "{:?}", result.refusals);
+    assert_eq!(result.candidates[0].target_path, root.join("pkg/Foo.class"));
+    assert!(
+        result
+            .refusals
+            .iter()
+            .any(|item| item.code == RefusalCode::TargetMarkerMismatch)
+    );
+    assert!(
+        result
+            .refusals
+            .iter()
+            .any(|item| item.code == RefusalCode::TargetMarkerShortRead)
+    );
+    assert!(
+        result
+            .refusals
+            .iter()
+            .any(|item| item.code == RefusalCode::InvalidJavacClassName)
+    );
+    assert!(
+        result
+            .refusals
+            .iter()
+            .any(|item| item.code == RefusalCode::SourceMissing)
+    );
+    fixture.close().unwrap();
+}
+
+#[test]
+fn javac_rule_bound_prepare_and_cancelled_execute_keep_files() {
+    let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    fs::create_dir_all(root.join("pkg")).unwrap();
+    let source = root.join("pkg/Foo.java");
+    let target = root.join("pkg/Foo.class");
+    let source_bytes = b"class Foo {}\n";
+    let target_bytes = vec![0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x3D];
+    fs::write(&source, source_bytes).unwrap();
+    fs::write(&target, &target_bytes).unwrap();
+
+    let scope = Scope::new(root.clone(), vec![]).unwrap();
+    let cancellation = Cancellation::default();
+    let mut session = TrashSession::prepare_rule_selection(
+        scope,
+        rules::JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+        std::slice::from_ref(&target),
+        &[],
+        &cancellation,
+    )
+    .unwrap();
+    let preview = session.preview().clone();
+    let binding = preview.items()[0].rule_binding().expect("rule binding");
+    assert_eq!(binding.rule_id(), rules::JAVAC_SOURCE_BACKED_CLASS_RULE_ID);
+    assert_eq!(
+        binding.semantics_digest(),
+        rules::JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS_DIGEST
+    );
+    let approval = session.approve(&preview).unwrap();
+    let cancel = Cancellation::default();
+    cancel.cancel();
+    let store = Store::open(
+        &fixture.path().join("state").join("rules-trash-javac"),
+        true,
+    )
+    .unwrap();
+    let report = session
+        .execute(&preview, &approval, &cancel, &store)
+        .unwrap();
+    assert_eq!(report.exit_code(), 130);
+    assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(fs::read(&target).unwrap(), target_bytes);
+    fixture.close().unwrap();
+}
+
+#[test]
 fn rule_bound_prepare_and_approve_succeed_without_native_effect() {
     let fixture = Fixture::new_in(&native_fixture_parent()).unwrap();
     let root = scope(&fixture);
@@ -384,6 +476,7 @@ fn clean_session_rejects_candidate_identity_change_before_native_plan() {
     let scope = Scope::new(root.clone(), vec![]).unwrap();
     let error = CleanSession::prepare_rule_selection(
         scope,
+        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         &preview.candidates,
         std::slice::from_ref(&target),
         config,
@@ -411,6 +504,7 @@ fn clean_session_approval_refuses_when_policy_created_after_preview() {
     let scope = Scope::new(root.clone(), vec![]).unwrap();
     let mut session = CleanSession::prepare_rule_selection(
         scope,
+        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         &preview.candidates,
         std::slice::from_ref(&target),
         config.clone(),
@@ -439,6 +533,7 @@ fn clean_session_approval_refuses_when_policy_removed_after_preview() {
     let scope = Scope::new(root.clone(), vec![]).unwrap();
     let mut session = CleanSession::prepare_rule_selection(
         scope,
+        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         &preview.candidates,
         std::slice::from_ref(&target),
         config.clone(),
@@ -467,6 +562,7 @@ fn clean_session_approval_refuses_when_policy_corrupt_after_preview() {
     let scope = Scope::new(root.clone(), vec![]).unwrap();
     let mut session = CleanSession::prepare_rule_selection(
         scope,
+        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         &preview.candidates,
         std::slice::from_ref(&target),
         config.clone(),
@@ -502,6 +598,7 @@ fn clean_session_approval_refuses_when_policy_same_inode_edited_after_preview() 
     let scope = Scope::new(root.clone(), vec![]).unwrap();
     let mut session = CleanSession::prepare_rule_selection(
         scope,
+        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         &preview.candidates,
         std::slice::from_ref(&target),
         config.clone(),
@@ -539,6 +636,7 @@ fn clean_session_approval_refuses_when_policy_replaced_after_preview() {
     let scope = Scope::new(root.clone(), vec![]).unwrap();
     let mut session = CleanSession::prepare_rule_selection(
         scope,
+        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         &preview.candidates,
         std::slice::from_ref(&target),
         config.clone(),
@@ -578,6 +676,7 @@ fn clean_session_approval_refuses_when_exclusion_ancestor_becomes_symlink() {
     let scope = Scope::new(root.clone(), vec![]).unwrap();
     let error = match CleanSession::prepare_rule_selection(
         scope,
+        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         &preview.candidates,
         std::slice::from_ref(&target),
         config,
@@ -620,6 +719,59 @@ fn preserve_fixture_evidence_pattern_keeps_state_until_explicit_close() {
     assert!(preserved.evidence_path.exists());
     assert!(preserved.fixture.path().exists());
     preserved.close_success();
+}
+
+#[test]
+fn javac_real_tool_fixture_matches_when_javac_is_available() {
+    let javac = std::env::var("SAYAKA_TEST_JAVAC").unwrap_or_else(|_| "javac".to_string());
+    if std::process::Command::new(&javac)
+        .arg("-version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: javac unavailable at {}", javac);
+        return;
+    }
+    let fixture = Fixture::new().unwrap();
+    let root = scope(&fixture);
+    fs::create_dir_all(root.join("real")).unwrap();
+    let source = root.join("real/Foo.java");
+    fs::write(
+        &source,
+        "public class Foo { private static final int SAFE = 42; }\n",
+    )
+    .unwrap();
+    let classpath = source.parent().expect("source parent");
+    let status = std::process::Command::new(&javac)
+        .args(["-proc:none", "-classpath"])
+        .arg(classpath)
+        .arg(source.file_name().expect("source name"))
+        .current_dir(classpath)
+        .env_remove("JDK_JAVAC_OPTIONS")
+        .env_remove("JDK_JAVA_OPTIONS")
+        .env_remove("JAVA_TOOL_OPTIONS")
+        .env_remove("_JAVA_OPTIONS")
+        .env_remove("CLASSPATH")
+        .status()
+        .unwrap();
+    if !status.success() {
+        eprintln!(
+            "skipping: javac compile failed with status {status} via {}",
+            javac
+        );
+        fixture.close().unwrap();
+        return;
+    }
+    let preview = preview_for_rule(&root, rules::JAVAC_SOURCE_BACKED_CLASS_RULE_ID);
+    assert!(
+        preview
+            .candidates
+            .iter()
+            .any(|candidate| candidate.target_path.ends_with("real/Foo.class")),
+        "{:?}",
+        preview.refusals
+    );
+    fixture.close().unwrap();
 }
 
 // Explicitly opt-in: this performs one real Trash move and one no-replace

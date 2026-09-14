@@ -70,6 +70,9 @@ sayaka trash --scope . ./file.txt --execute
 sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc
 sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc --json
 sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc --execute
+sayaka rules trash . --rule org.openjdk.javac.source_backed_class --select ./Foo.class
+sayaka rules trash . --rule org.openjdk.javac.source_backed_class --select ./Foo.class --json
+sayaka rules trash . --rule org.openjdk.javac.source_backed_class --select ./Foo.class --execute
 sayaka receipt --json
 ```
 
@@ -84,9 +87,10 @@ exclusion. ASCII case-overlap exclusions are deliberately conservative even on
 case-sensitive volumes. Unverifiable exclusion evidence aborts instead of permitting effects.
 Excluded/refused entries are shown separately.
 
-`clean` is a rule-specific workflow for source-backed CPython `__pycache__` `.pyc`
-entries. It always starts with a read-only preview. `--filter` only narrows the
-display list and does not change policy. `--execute` requires terminal stdin,
+`clean` defaults to source-backed CPython `__pycache__` `.pyc` entries and
+accepts explicit `--rule` for other built-in rules (for example
+`org.openjdk.javac.source_backed_class`). It always starts with a read-only
+preview. `--filter` only narrows the display list and does not change policy. `--execute` requires terminal stdin,
 stdout, and stderr; without explicit `--select`, it prompts for bounded numeric
 selection and then requires the exact `trash N` phrase. There is no implicit
 "all selected" execution path. The engine seals the exact native execution plan
@@ -139,7 +143,9 @@ remain readable unchanged. Rule-bound records use
 `schema_version:2`, `plan_schema_version:3`, `engine_version:2`, `rules_version:2`
 and require complete per-item rule binding evidence (rule id/version/ruleset
 revision/semantics digest, selected root/exclusions, target/source/root/ancestor
-witnesses). Unknown tuples, missing/malformed bindings, and mismatched
+witnesses). Supported tuples currently include CPython source-backed `.pyc`
+(historical ruleset r2 and current r3) and OpenJDK `javac` source-backed
+same-directory `.class` (ruleset r3). Unknown tuples, missing/malformed bindings, and mismatched
 target/source identities are rejected.
 Clean executions use `schema_version:3` with the same plan/rules tuple and must
 include a clean policy context record (policy file state witness, selected root

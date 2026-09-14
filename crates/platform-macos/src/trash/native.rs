@@ -2,7 +2,7 @@
 
 use super::{
     NativeFileInfo, NativeLastGuard, NativeRecoveryEvidence, NativeRuleBindingWitness,
-    NativeTrashOutcome, NativeWitnessInfo,
+    NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo,
 };
 use crate::{ReadOnlyPolicy, VolumeInfo, volume_info};
 use std::ffi::{OsStr, OsString};
@@ -12,6 +12,7 @@ use std::mem::MaybeUninit;
 use std::os::fd::AsRawFd;
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::fs::FileExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -519,6 +520,7 @@ pub(super) struct Candidate {
     ancestors: Vec<Evidence>,
     target: Evidence,
     source: Option<Evidence>,
+    target_marker: Option<NativeTargetMarker>,
     protections: Vec<Evidence>,
     volume: VolumeInfo,
     attempted: AtomicBool,
@@ -527,22 +529,24 @@ pub(super) struct Candidate {
 
 impl Candidate {
     pub(super) fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
-        with_policy(|| Self::capture_inner(scope, path, None, protected))
+        with_policy(|| Self::capture_inner(scope, path, None, None, protected))
     }
 
-    pub(super) fn capture_with_source(
+    pub(super) fn capture_with_source_and_marker(
         scope: &Path,
         target: &Path,
         source: &Path,
+        marker: Option<NativeTargetMarker>,
         protected: &[PathBuf],
     ) -> io::Result<Self> {
-        with_policy(|| Self::capture_inner(scope, target, Some(source), protected))
+        with_policy(|| Self::capture_inner(scope, target, Some(source), marker, protected))
     }
 
     fn capture_inner(
         scope: &Path,
         path: &Path,
         source_path: Option<&Path>,
+        marker: Option<NativeTargetMarker>,
         protected: &[PathBuf],
     ) -> io::Result<Self> {
         let uid = ordinary_authority()?;
@@ -627,6 +631,7 @@ impl Candidate {
             ancestors,
             target,
             source,
+            target_marker: marker,
             protections,
             volume,
             attempted: AtomicBool::new(false),
@@ -712,6 +717,7 @@ impl Candidate {
                 return Err(refused("source and target identity must stay distinct"));
             }
         }
+        self.verify_target_marker()?;
         for protection in &self.protections {
             let canonical = fs::canonicalize(&protection.path)?;
             protection.revalidate_at(&canonical)?;
@@ -733,6 +739,30 @@ impl Candidate {
         self.target.revalidate()?;
         if let Some(source) = &self.source {
             source.revalidate()?;
+        }
+        self.verify_target_marker()?;
+        Ok(())
+    }
+
+    fn verify_target_marker(&self) -> io::Result<()> {
+        let Some(NativeTargetMarker::Prefix4(expected)) = self.target_marker else {
+            return Ok(());
+        };
+        let before = Stamp::read(&self.target.file.metadata()?);
+        if !self.target.binding.matches(&self.target.stamp, &before) {
+            return Err(refused("target changed before marker verification"));
+        }
+        let mut prefix = [0_u8; 4];
+        let read = self.target.file.read_at(&mut prefix, 0)?;
+        if read < prefix.len() {
+            return Err(refused("target marker short read"));
+        }
+        let after = Stamp::read(&self.target.file.metadata()?);
+        if !self.target.binding.matches(&before, &after) {
+            return Err(refused("target changed during marker verification"));
+        }
+        if prefix != expected {
+            return Err(refused("target marker mismatch"));
         }
         Ok(())
     }

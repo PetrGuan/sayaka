@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 pub const PREVIEW_SCHEMA_VERSION: u32 = 1;
 pub const RULESET_SCHEMA_VERSION: u32 = 1;
-pub const BUILTIN_RULESET_REVISION: u32 = 2;
+pub const BUILTIN_RULESET_REVISION: u32 = 3;
 
 pub const CPYTHON_SOURCE_BACKED_PYC_RULE_ID: &str = "org.python.cpython.pep3147.source_backed_pyc";
 pub const CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION: u32 = 2;
@@ -20,6 +20,12 @@ pub const CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS: &str =
     "cpython_source_backed_pyc_explicit_trash_v1";
 pub const CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST: &str =
     "sha256:2a85f813982f253a1177f95ec4f2dc7e30cf5f34cbaf17e08e6d334f4315fcd8";
+pub const JAVAC_SOURCE_BACKED_CLASS_RULE_ID: &str = "org.openjdk.javac.source_backed_class";
+pub const JAVAC_SOURCE_BACKED_CLASS_RULE_VERSION: u32 = 1;
+pub const JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS: &str =
+    "openjdk_javac_source_backed_class_explicit_trash_v1";
+pub const JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS_DIGEST: &str =
+    "sha256:bbb6e983ac89a3debc5fde6228800e9accd05f53529c377719444727fbf09a81";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,23 +126,146 @@ const CPYTHON_RULE: RuleDefinition = RuleDefinition {
     ],
 };
 
+const JAVAC_RULE: RuleDefinition = RuleDefinition {
+    id: JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+    version: JAVAC_SOURCE_BACKED_CLASS_RULE_VERSION,
+    title: "OpenJDK javac source-backed same-directory .class",
+    ruleset_schema_version: RULESET_SCHEMA_VERSION,
+    ruleset_revision: BUILTIN_RULESET_REVISION,
+    platforms: &[
+        "macos (metadata-backed preview verified)",
+        "windows (read-only scanner available; rule runtime unverified in this slice)",
+    ],
+    software: &["OpenJDK/Oracle javac class output and JVM ClassFile marker"],
+    targets: &[
+        "regular files named <stem>.class with sibling <stem>.java in the same directory",
+        "same explicit root for source and target with single-link identities",
+        "target prefix marker is exactly cafebabe (4-byte JVM class-file magic)",
+    ],
+    non_targets: &[
+        "nested/anonymous classes such as Outer$Inner.class",
+        "source-less class files, inferred -d output trees, archives and directories",
+        "links, protected paths, cloud-only placeholders, unknown ownership, hardlinks",
+    ],
+    prerequisites: &[
+        "explicit root scan only; no implicit HOME/cwd scan",
+        "bounded no-follow metadata and marker verification only",
+        "target/source identities must still match observed scan identities",
+    ],
+    actions: &[
+        RuleAction::PreviewOnly,
+        RuleAction::ManualReview,
+        RuleAction::ExplicitNativeTrash,
+    ],
+    rebuild_cost: "Rebuild requires a compatible JDK, compiler options/dependencies, and source availability; marker evidence does not guarantee recompilability.",
+    recovery_cost: "Read-only preview only. Matched bytes are observed bytes, not reclaimable capacity.",
+    concurrency: "Concurrent javac/IDE tooling can replace class/source files between observations.",
+    failure: "Unknown ownership, incomplete evidence, marker mismatch/short read, identity drift or unsupported platform yields explicit refusal.",
+    evidence: &[
+        EvidenceSource {
+            title: "javac man page (JDK 21)",
+            url: "https://docs.oracle.com/en/java/javase/21/docs/specs/man/javac.html",
+            reviewed_utc: "2026-09-14",
+            license_note: "Oracle Java documentation terms",
+        },
+        EvidenceSource {
+            title: "JVM Spec SE21 §4.1 ClassFile magic",
+            url: "https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.1",
+            reviewed_utc: "2026-09-14",
+            license_note: "Oracle specification terms",
+        },
+    ],
+};
+
 pub fn builtin_rules() -> &'static [RuleDefinition] {
-    &[CPYTHON_RULE]
+    &[CPYTHON_RULE, JAVAC_RULE]
 }
 
 pub fn is_builtin_rule(rule_id: &str) -> bool {
     builtin_rules().iter().any(|rule| rule.id == rule_id)
 }
 
+#[derive(Clone, Copy)]
+enum RuleKind {
+    CpythonPyc,
+    JavacClass,
+}
+
+fn builtin_rule(rule_id: &str) -> Option<(&'static RuleDefinition, RuleKind)> {
+    if rule_id == CPYTHON_SOURCE_BACKED_PYC_RULE_ID {
+        Some((&CPYTHON_RULE, RuleKind::CpythonPyc))
+    } else if rule_id == JAVAC_SOURCE_BACKED_CLASS_RULE_ID {
+        Some((&JAVAC_RULE, RuleKind::JavacClass))
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuleBindingMetadata {
+    pub rule_id: &'static str,
+    pub rule_version: u32,
+    pub ruleset_schema_version: u32,
+    pub ruleset_revision: u32,
+    pub semantics: &'static str,
+    pub semantics_digest: &'static str,
+}
+
+pub fn binding_metadata(rule_id: &str) -> Option<RuleBindingMetadata> {
+    match rule_id {
+        CPYTHON_SOURCE_BACKED_PYC_RULE_ID => Some(RuleBindingMetadata {
+            rule_id: CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
+            rule_version: CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+            ruleset_schema_version: RULESET_SCHEMA_VERSION,
+            ruleset_revision: BUILTIN_RULESET_REVISION,
+            semantics: CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS,
+            semantics_digest: CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST,
+        }),
+        JAVAC_SOURCE_BACKED_CLASS_RULE_ID => Some(RuleBindingMetadata {
+            rule_id: JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+            rule_version: JAVAC_SOURCE_BACKED_CLASS_RULE_VERSION,
+            ruleset_schema_version: RULESET_SCHEMA_VERSION,
+            ruleset_revision: BUILTIN_RULESET_REVISION,
+            semantics: JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS,
+            semantics_digest: JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS_DIGEST,
+        }),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExplicitRuleSelection {
+    pub rule_id: &'static str,
     pub target_path: PathBuf,
     pub source_path: PathBuf,
+    pub source_relation: &'static str,
+    pub marker: RuleTargetMarker,
     pub cache_tag: String,
     pub optimization_tag: Option<String>,
 }
 
 pub fn explicit_selection_for_target(path: &Path) -> Option<ExplicitRuleSelection> {
+    explicit_selection_for_rule_target(CPYTHON_SOURCE_BACKED_PYC_RULE_ID, path)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuleTargetMarker {
+    None,
+    Prefix4([u8; 4]),
+}
+
+pub fn explicit_selection_for_rule_target(
+    rule_id: &str,
+    path: &Path,
+) -> Option<ExplicitRuleSelection> {
+    match rule_id {
+        CPYTHON_SOURCE_BACKED_PYC_RULE_ID => explicit_selection_for_cpython(path),
+        JAVAC_SOURCE_BACKED_CLASS_RULE_ID => explicit_selection_for_javac(path),
+        _ => None,
+    }
+}
+
+fn explicit_selection_for_cpython(path: &Path) -> Option<ExplicitRuleSelection> {
     if !looks_like_pyc(path) {
         return None;
     }
@@ -150,10 +279,35 @@ pub fn explicit_selection_for_target(path: &Path) -> Option<ExplicitRuleSelectio
         .parent()?
         .join(format!("{}.py", parsed.module_basename));
     Some(ExplicitRuleSelection {
+        rule_id: CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
         target_path: path.to_path_buf(),
         source_path,
+        source_relation: "pep3147_parent_source_py",
+        marker: RuleTargetMarker::None,
         cache_tag: parsed.cache_tag,
         optimization_tag: parsed.optimization,
+    })
+}
+
+fn explicit_selection_for_javac(path: &Path) -> Option<ExplicitRuleSelection> {
+    if !looks_like_class(path) {
+        return None;
+    }
+    let parent = path.parent()?;
+    let file_name = path.file_name()?.to_str()?;
+    let stem = file_name.strip_suffix(".class")?;
+    if stem.is_empty() || stem.contains('$') || stem.contains(std::path::MAIN_SEPARATOR) {
+        return None;
+    }
+    let source_path = parent.join(format!("{stem}.java"));
+    Some(ExplicitRuleSelection {
+        rule_id: JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+        target_path: path.to_path_buf(),
+        source_path,
+        source_relation: "same_stem_sibling",
+        marker: RuleTargetMarker::Prefix4([0xCA, 0xFE, 0xBA, 0xBE]),
+        cache_tag: String::new(),
+        optimization_tag: None,
     })
 }
 
@@ -166,6 +320,7 @@ pub enum RefusalCode {
     CandidateDatalessOrCloud,
     NotPycacheChild,
     InvalidPep3147Name,
+    InvalidJavacClassName,
     SourceMissing,
     SourceNotRegularFile,
     SourceIsLink,
@@ -176,6 +331,9 @@ pub enum RefusalCode {
     IdentityChanged,
     DuplicateOrHardlinkAmbiguous,
     NativePolicyFailure,
+    TargetMarkerReadFailed,
+    TargetMarkerShortRead,
+    TargetMarkerMismatch,
     OwnerUnknownOrRunning,
     Cancelled,
     BudgetExceeded,
@@ -204,6 +362,8 @@ pub struct RuleCandidate {
     pub target_identity: FileIdentity,
     pub source_identity: FileIdentity,
     pub matched_logical_bytes: Option<u64>,
+    pub source_relation: &'static str,
+    pub observed_target_marker: Option<String>,
     pub observed_cache_tag: String,
     pub observed_optimization_tag: Option<String>,
 }
@@ -268,6 +428,8 @@ enum NativeInspectError {
     PolicyFailure,
     Unsupported,
     Cancelled,
+    ReadFailed,
+    ShortRead,
 }
 
 trait NativeEvidence {
@@ -280,6 +442,15 @@ trait NativeEvidence {
         ancestor_identities: &[(PathBuf, FileIdentity)],
         cancellation: &Cancellation,
     ) -> Result<NativeFacts, NativeInspectError>;
+    fn read_prefix4_with_ancestry(
+        &self,
+        root: &Path,
+        root_identity: FileIdentity,
+        relative_path: &Path,
+        ancestor_identities: &[(PathBuf, FileIdentity)],
+        expected_identity: FileIdentity,
+        cancellation: &Cancellation,
+    ) -> Result<[u8; 4], NativeInspectError>;
 }
 
 #[derive(Default)]
@@ -399,6 +570,158 @@ impl NativeEvidence for HostNativeEvidence {
                 root_identity,
                 relative_path,
                 ancestor_identities,
+                cancellation,
+            );
+            Err(NativeInspectError::Unsupported)
+        }
+    }
+
+    fn read_prefix4_with_ancestry(
+        &self,
+        root: &Path,
+        root_identity: FileIdentity,
+        relative_path: &Path,
+        ancestor_identities: &[(PathBuf, FileIdentity)],
+        expected_identity: FileIdentity,
+        cancellation: &Cancellation,
+    ) -> Result<[u8; 4], NativeInspectError> {
+        #[cfg(target_os = "macos")]
+        {
+            use rustix::fd::OwnedFd;
+            use rustix::fs::{self, AtFlags, Mode, OFlags, Stat};
+            use rustix::io;
+            use sayaka_platform_macos::ReadOnlyPolicy;
+            if !matches!(root_identity, FileIdentity::Unix { .. })
+                || !matches!(expected_identity, FileIdentity::Unix { .. })
+            {
+                return Err(NativeInspectError::Unsupported);
+            }
+
+            fn directory_flags() -> OFlags {
+                OFlags::RDONLY
+                    | OFlags::DIRECTORY
+                    | OFlags::CLOEXEC
+                    | OFlags::NONBLOCK
+                    | OFlags::from_bits_retain(0x2000_0000)
+            }
+
+            fn read_file_flags() -> OFlags {
+                OFlags::RDONLY
+                    | OFlags::CLOEXEC
+                    | OFlags::NONBLOCK
+                    | OFlags::from_bits_retain(0x2000_0000)
+            }
+
+            fn from_stat(stat: &Stat) -> NativeFacts {
+                let kind = match stat.st_mode & libc::S_IFMT {
+                    libc::S_IFREG => ResourceKind::File,
+                    libc::S_IFDIR => ResourceKind::Directory,
+                    libc::S_IFLNK => ResourceKind::Link,
+                    _ => ResourceKind::Other,
+                };
+                NativeFacts {
+                    identity: FileIdentity::Unix {
+                        device: u64::from(stat.st_dev.cast_unsigned()),
+                        inode: stat.st_ino,
+                    },
+                    kind,
+                    nlink: Some(u64::from(stat.st_nlink)),
+                    uid: Some(stat.st_uid),
+                    dataless: stat.st_flags & 0x4000_0000 != 0,
+                }
+            }
+
+            let policy = ReadOnlyPolicy::enter().map_err(|_| NativeInspectError::PolicyFailure)?;
+            let checked = (|| {
+                let root_fd = fs::open(root, directory_flags(), Mode::empty())
+                    .map_err(|_| NativeInspectError::Changed)?;
+                let root_stat = fs::fstat(&root_fd).map_err(|_| NativeInspectError::Changed)?;
+                let root_facts = from_stat(&root_stat);
+                if root_facts.kind != ResourceKind::Directory
+                    || root_facts.identity != root_identity
+                    || root_facts.dataless
+                {
+                    return Err(NativeInspectError::Changed);
+                }
+
+                let mut current_fd: OwnedFd = root_fd;
+                for (name, expected_ancestor) in ancestor_identities {
+                    if cancellation.is_cancelled() {
+                        return Err(NativeInspectError::Cancelled);
+                    }
+                    let child_fd = fs::openat(&current_fd, name, directory_flags(), Mode::empty())
+                        .map_err(|_| NativeInspectError::Changed)?;
+                    let child_stat =
+                        fs::fstat(&child_fd).map_err(|_| NativeInspectError::Changed)?;
+                    let observed = from_stat(&child_stat);
+                    if observed.kind != ResourceKind::Directory
+                        || observed.identity != *expected_ancestor
+                        || observed.dataless
+                    {
+                        return Err(NativeInspectError::Changed);
+                    }
+                    current_fd = child_fd;
+                }
+
+                let leaf_name = relative_path
+                    .file_name()
+                    .ok_or(NativeInspectError::Changed)?;
+                let before = fs::statat(&current_fd, leaf_name, AtFlags::SYMLINK_NOFOLLOW)
+                    .map_err(|_| NativeInspectError::Changed)?;
+                let before_facts = from_stat(&before);
+                if before_facts.identity != expected_identity
+                    || before_facts.kind != ResourceKind::File
+                    || before_facts.dataless
+                {
+                    return Err(NativeInspectError::Changed);
+                }
+                let file_fd = fs::openat(&current_fd, leaf_name, read_file_flags(), Mode::empty())
+                    .map_err(|_| NativeInspectError::Changed)?;
+                let opened = fs::fstat(&file_fd).map_err(|_| NativeInspectError::Changed)?;
+                let opened_facts = from_stat(&opened);
+                if opened_facts.identity != expected_identity
+                    || opened_facts.kind != ResourceKind::File
+                    || opened_facts.dataless
+                {
+                    return Err(NativeInspectError::Changed);
+                }
+                let mut bytes = [0_u8; 4];
+                let mut read_total = 0usize;
+                while read_total < bytes.len() {
+                    if cancellation.is_cancelled() {
+                        return Err(NativeInspectError::Cancelled);
+                    }
+                    let read = io::read(&file_fd, &mut bytes[read_total..])
+                        .map_err(|_| NativeInspectError::ReadFailed)?;
+                    if read == 0 {
+                        return Err(NativeInspectError::ShortRead);
+                    }
+                    read_total += read;
+                }
+                let after = fs::fstat(&file_fd).map_err(|_| NativeInspectError::Changed)?;
+                let after_facts = from_stat(&after);
+                if after_facts.identity != expected_identity
+                    || after_facts.kind != ResourceKind::File
+                    || after_facts.dataless
+                {
+                    return Err(NativeInspectError::Changed);
+                }
+                Ok(bytes)
+            })();
+            match (checked, policy.restore()) {
+                (Ok(bytes), Ok(())) => Ok(bytes),
+                (Err(error), Ok(())) => Err(error),
+                (_, Err(_)) => Err(NativeInspectError::PolicyFailure),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (
+                root,
+                root_identity,
+                relative_path,
+                ancestor_identities,
+                expected_identity,
                 cancellation,
             );
             Err(NativeInspectError::Unsupported)
@@ -742,7 +1065,10 @@ fn preview_with_provider(
                     ));
                     continue;
                 }
-                Err(NativeInspectError::Changed) | Err(NativeInspectError::Cancelled) => {
+                Err(NativeInspectError::Changed)
+                | Err(NativeInspectError::Cancelled)
+                | Err(NativeInspectError::ReadFailed)
+                | Err(NativeInspectError::ShortRead) => {
                     refusals.push(refusal(
                         entry,
                         RefusalCode::IdentityChanged,
@@ -799,7 +1125,10 @@ fn preview_with_provider(
                     ));
                     continue;
                 }
-                Err(NativeInspectError::Changed) | Err(NativeInspectError::Cancelled) => {
+                Err(NativeInspectError::Changed)
+                | Err(NativeInspectError::Cancelled)
+                | Err(NativeInspectError::ReadFailed)
+                | Err(NativeInspectError::ShortRead) => {
                     refusals.push(refusal(
                         entry,
                         RefusalCode::IdentityChanged,
@@ -908,6 +1237,8 @@ fn preview_with_provider(
                 target_identity: entry.identity,
                 source_identity: source.identity,
                 matched_logical_bytes: entry.logical_bytes,
+                source_relation: "pep3147_parent_source_py",
+                observed_target_marker: None,
                 observed_cache_tag: parsed.cache_tag,
                 observed_optimization_tag: parsed.optimization,
             });
@@ -940,22 +1271,597 @@ fn preview_with_provider(
     }
 }
 
+fn preview_javac_with_provider(
+    tree: &ScanTree,
+    cancellation: &Cancellation,
+    provider: &dyn NativeEvidence,
+) -> RulePreview {
+    let rule = &JAVAC_RULE;
+    let mut candidates = Vec::new();
+    let mut refusals = Vec::new();
+    let mut matched_bytes_known = 0u64;
+    let mut matched_bytes_unknown_files = 0u64;
+    let roots = tree.report().roots.clone();
+    let scopes: Vec<_> = roots
+        .iter()
+        .filter_map(|root| Scope::new(root.clone(), vec![]).ok())
+        .collect();
+    let entries = &tree.report().entries;
+    let mut by_path = HashMap::with_capacity(entries.len());
+    let mut root_by_entry = HashMap::with_capacity(entries.len());
+    let mut status = if tree.report().complete {
+        RuleRunStatus::Complete
+    } else {
+        RuleRunStatus::Partial
+    };
+
+    if facts_cancelled(cancellation) {
+        status = RuleRunStatus::Cancelled;
+        refusals.push(rule_global_refusal(
+            rule,
+            RefusalCode::Cancelled,
+            "rule preview cancelled before indexing",
+        ));
+    } else {
+        for entry in entries {
+            if facts_cancelled(cancellation) {
+                status = RuleRunStatus::Cancelled;
+                refusals.push(rule_global_refusal(
+                    rule,
+                    RefusalCode::Cancelled,
+                    "rule preview cancelled during indexing",
+                ));
+                break;
+            };
+            by_path.insert(entry.path.clone(), entry);
+            root_by_entry.insert(
+                entry.id,
+                explicit_root_for_path(&roots, &entry.path).map(PathBuf::from),
+            );
+        }
+    }
+    if !tree.report().complete {
+        refusals.push(rule_global_refusal(
+            rule,
+            RefusalCode::ScanIncomplete,
+            "scan is partial; preview reflects observed subset only",
+        ));
+    }
+
+    if !matches!(status, RuleRunStatus::Cancelled) {
+        for entry in entries {
+            if facts_cancelled(cancellation) {
+                status = RuleRunStatus::Cancelled;
+                refusals.push(rule_global_refusal(
+                    rule,
+                    RefusalCode::Cancelled,
+                    "rule preview cancelled during rule matching",
+                ));
+                break;
+            }
+            if !looks_like_class(&entry.path) {
+                continue;
+            }
+            if entry.kind != ResourceKind::File {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::CandidateNotRegularFile,
+                    "candidate is not a regular file",
+                ));
+                continue;
+            }
+            if entry.dataless {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::CandidateDatalessOrCloud,
+                    "candidate is cloud-only or dataless",
+                ));
+                continue;
+            }
+            if protected(&scopes, &entry.path) {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::ProtectedPath,
+                    "candidate path is protected",
+                ));
+                continue;
+            }
+            let Some(selection) = explicit_selection_for_javac(&entry.path) else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::InvalidJavacClassName,
+                    "candidate name is not a supported same-stem javac .class target",
+                ));
+                continue;
+            };
+            let Some(source) = by_path.get(&selection.source_path).copied() else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::SourceMissing,
+                    "source .java is not observed in this scan",
+                ));
+                continue;
+            };
+            if root_by_entry.get(&entry.id) != root_by_entry.get(&source.id) {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::SourceOutsideRoot,
+                    "source and class are not in the same explicit root",
+                ));
+                continue;
+            }
+            if source.kind == ResourceKind::Link {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::SourceIsLink,
+                    "source is a link and is not accepted",
+                ));
+                continue;
+            }
+            if source.kind != ResourceKind::File {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::SourceNotRegularFile,
+                    "source is not a regular file",
+                ));
+                continue;
+            }
+            if source.dataless {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::SourceDatalessOrCloud,
+                    "source is cloud-only or dataless",
+                ));
+                continue;
+            }
+            if protected(&scopes, &source.path) {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::ProtectedPath,
+                    "source path is protected",
+                ));
+                continue;
+            }
+            if !entry.counted || !source.counted || entry.identity == source.identity {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::DuplicateOrHardlinkAmbiguous,
+                    "hardlink or duplicate identity ambiguity",
+                ));
+                continue;
+            }
+
+            let Some(target_root) = root_by_entry
+                .get(&entry.id)
+                .and_then(|root| root.as_deref())
+            else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "candidate has no explicit root membership",
+                ));
+                continue;
+            };
+            let Some(source_root) = root_by_entry
+                .get(&source.id)
+                .and_then(|root| root.as_deref())
+            else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "source has no explicit root membership",
+                ));
+                continue;
+            };
+            let Some(target_root_entry) = directory_entry(by_path.get(target_root).copied()) else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "target root directory identity is unavailable in scan facts",
+                ));
+                continue;
+            };
+            let Some(source_root_entry) = directory_entry(by_path.get(source_root).copied()) else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "source root directory identity is unavailable in scan facts",
+                ));
+                continue;
+            };
+            let Some(target_relative) = entry.path.strip_prefix(target_root).ok() else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "target relative path cannot be derived from explicit root",
+                ));
+                continue;
+            };
+            let Some(source_relative) = source.path.strip_prefix(source_root).ok() else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "source relative path cannot be derived from explicit root",
+                ));
+                continue;
+            };
+            let Some(target_ancestors) =
+                ancestor_identities(target_root, target_relative, &by_path)
+            else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "target ancestor identities are unavailable in scan facts",
+                ));
+                continue;
+            };
+            let Some(source_ancestors) =
+                ancestor_identities(source_root, source_relative, &by_path)
+            else {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityUnknown,
+                    "source ancestor identities are unavailable in scan facts",
+                ));
+                continue;
+            };
+            let current_uid = provider.current_uid();
+            let target_facts = match provider.inspect_with_ancestry(
+                target_root,
+                target_root_entry.identity,
+                target_relative,
+                &target_ancestors,
+                cancellation,
+            ) {
+                Ok(target) => target,
+                Err(NativeInspectError::Cancelled) if facts_cancelled(cancellation) => {
+                    status = RuleRunStatus::Cancelled;
+                    refusals.push(rule_global_refusal(
+                        rule,
+                        RefusalCode::Cancelled,
+                        "rule preview cancelled during metadata verification",
+                    ));
+                    break;
+                }
+                Err(NativeInspectError::PolicyFailure) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::NativePolicyFailure,
+                        "native read-only policy setup or restoration failed",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Dataless) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::CandidateDatalessOrCloud,
+                        "target or target ancestor became cloud-only or dataless",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Unsupported) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::UnsupportedRulePlatform,
+                        "native owner/link evidence unavailable on this platform",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Changed)
+                | Err(NativeInspectError::Cancelled)
+                | Err(NativeInspectError::ReadFailed)
+                | Err(NativeInspectError::ShortRead) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::IdentityChanged,
+                        "target or target ancestry changed after scan",
+                    ));
+                    continue;
+                }
+            };
+            let source_facts = match provider.inspect_with_ancestry(
+                source_root,
+                source_root_entry.identity,
+                source_relative,
+                &source_ancestors,
+                cancellation,
+            ) {
+                Ok(source) => source,
+                Err(NativeInspectError::Cancelled) if facts_cancelled(cancellation) => {
+                    status = RuleRunStatus::Cancelled;
+                    refusals.push(rule_global_refusal(
+                        rule,
+                        RefusalCode::Cancelled,
+                        "rule preview cancelled during metadata verification",
+                    ));
+                    break;
+                }
+                Err(NativeInspectError::PolicyFailure) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::NativePolicyFailure,
+                        "native read-only policy setup or restoration failed",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Dataless) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::SourceDatalessOrCloud,
+                        "source or source ancestor became cloud-only or dataless",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Unsupported) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::UnsupportedRulePlatform,
+                        "native owner/link evidence unavailable on this platform",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Changed)
+                | Err(NativeInspectError::Cancelled)
+                | Err(NativeInspectError::ReadFailed)
+                | Err(NativeInspectError::ShortRead) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::IdentityChanged,
+                        "source or source ancestry changed after scan",
+                    ));
+                    continue;
+                }
+            };
+            if target_facts.dataless || source_facts.dataless {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::CandidateDatalessOrCloud,
+                    "target/source became cloud-only or dataless after scan",
+                ));
+                continue;
+            }
+            if target_facts.identity != entry.identity || source_facts.identity != source.identity {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityChanged,
+                    "target or source identity changed after scan",
+                ));
+                continue;
+            }
+            if target_facts.kind != ResourceKind::File || source_facts.kind != ResourceKind::File {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::IdentityChanged,
+                    "target or source kind changed after scan",
+                ));
+                continue;
+            }
+            if !matches!(target_facts.nlink, Some(1)) || !matches!(source_facts.nlink, Some(1)) {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::DuplicateOrHardlinkAmbiguous,
+                    "link count is not exactly one for target/source",
+                ));
+                continue;
+            }
+            let ownership_matches = matches!(
+                (current_uid, target_facts.uid, source_facts.uid),
+                (Some(current), Some(target), Some(source)) if current == target && current == source
+            );
+            if !ownership_matches {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::OwnerUnknownOrRunning,
+                    "owner evidence is unknown or not current user",
+                ));
+                continue;
+            }
+
+            let marker = match provider.read_prefix4_with_ancestry(
+                target_root,
+                target_root_entry.identity,
+                target_relative,
+                &target_ancestors,
+                entry.identity,
+                cancellation,
+            ) {
+                Ok(bytes) => bytes,
+                Err(NativeInspectError::Cancelled) if facts_cancelled(cancellation) => {
+                    status = RuleRunStatus::Cancelled;
+                    refusals.push(rule_global_refusal(
+                        rule,
+                        RefusalCode::Cancelled,
+                        "rule preview cancelled during marker verification",
+                    ));
+                    break;
+                }
+                Err(NativeInspectError::PolicyFailure) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::NativePolicyFailure,
+                        "native read-only policy setup or restoration failed",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::ShortRead) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::TargetMarkerShortRead,
+                        "class marker read returned fewer than 4 bytes",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::ReadFailed) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::TargetMarkerReadFailed,
+                        "class marker read failed",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Dataless) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::CandidateDatalessOrCloud,
+                        "target became cloud-only or dataless during marker verification",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Unsupported) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::UnsupportedRulePlatform,
+                        "native marker verification is unavailable on this platform",
+                    ));
+                    continue;
+                }
+                Err(NativeInspectError::Changed) | Err(NativeInspectError::Cancelled) => {
+                    refusals.push(rule_refusal(
+                        rule,
+                        entry,
+                        RefusalCode::IdentityChanged,
+                        "target changed during marker verification",
+                    ));
+                    continue;
+                }
+            };
+            if marker != [0xCA, 0xFE, 0xBA, 0xBE] {
+                refusals.push(rule_refusal(
+                    rule,
+                    entry,
+                    RefusalCode::TargetMarkerMismatch,
+                    "class marker mismatch: expected cafebabe",
+                ));
+                continue;
+            }
+
+            match entry.logical_bytes {
+                Some(bytes) => {
+                    if let Some(sum) = matched_bytes_known.checked_add(bytes) {
+                        matched_bytes_known = sum;
+                    } else {
+                        refusals.push(rule_refusal(
+                            rule,
+                            entry,
+                            RefusalCode::BudgetExceeded,
+                            "matched-bytes sum overflow",
+                        ));
+                        continue;
+                    }
+                }
+                None => {
+                    if let Some(sum) = matched_bytes_unknown_files.checked_add(1) {
+                        matched_bytes_unknown_files = sum;
+                    } else {
+                        refusals.push(rule_refusal(
+                            rule,
+                            entry,
+                            RefusalCode::BudgetExceeded,
+                            "unknown-byte file counter overflow",
+                        ));
+                        continue;
+                    }
+                }
+            }
+
+            candidates.push(RuleCandidate {
+                rule_id: JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+                rule_version: JAVAC_SOURCE_BACKED_CLASS_RULE_VERSION,
+                ruleset_revision: BUILTIN_RULESET_REVISION,
+                action: RuleAction::ManualReview,
+                target_entry_id: entry.id,
+                source_entry_id: source.id,
+                target_path: entry.path.clone(),
+                source_path: source.path.clone(),
+                target_identity: entry.identity,
+                source_identity: source.identity,
+                matched_logical_bytes: entry.logical_bytes,
+                source_relation: selection.source_relation,
+                observed_target_marker: Some("cafebabe".into()),
+                observed_cache_tag: String::new(),
+                observed_optimization_tag: None,
+            });
+        }
+    }
+    if matches!(status, RuleRunStatus::Cancelled) {
+        candidates.clear();
+        matched_bytes_known = 0;
+        matched_bytes_unknown_files = 0;
+    }
+    RulePreview {
+        schema_version: PREVIEW_SCHEMA_VERSION,
+        kind: "rule_preview",
+        ruleset_schema_version: RULESET_SCHEMA_VERSION,
+        ruleset_revision: BUILTIN_RULESET_REVISION,
+        rule_id: JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+        rule_version: JAVAC_SOURCE_BACKED_CLASS_RULE_VERSION,
+        scan_task_id: tree.report().task_id.to_string(),
+        status: status.as_str(),
+        complete: status.complete(),
+        roots,
+        issues: tree.report().issues.clone(),
+        issues_omitted: tree.report().issues_omitted,
+        candidates,
+        refusals,
+        matched_bytes_known,
+        matched_bytes_unknown_files,
+        effects_performed: false,
+    }
+}
+
 pub fn preview(
     report: ScanReport,
     rule_id: &str,
     cancellation: &Cancellation,
 ) -> Result<RulePreview, PreviewError> {
-    if rule_id != CPYTHON_SOURCE_BACKED_PYC_RULE_ID {
+    let Some((rule, kind)) = builtin_rule(rule_id) else {
         return Err(PreviewError::InvalidRuleId);
-    }
+    };
     if facts_cancelled(cancellation) {
         return Ok(RulePreview {
             schema_version: PREVIEW_SCHEMA_VERSION,
             kind: "rule_preview",
             ruleset_schema_version: RULESET_SCHEMA_VERSION,
             ruleset_revision: BUILTIN_RULESET_REVISION,
-            rule_id: CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
-            rule_version: CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+            rule_id: rule.id,
+            rule_version: rule.version,
             scan_task_id: report.task_id.to_string(),
             status: ScanStatus::Cancelled.as_str(),
             complete: false,
@@ -963,7 +1869,8 @@ pub fn preview(
             issues: report.issues,
             issues_omitted: report.issues_omitted,
             candidates: Vec::new(),
-            refusals: vec![global_refusal(
+            refusals: vec![rule_global_refusal(
+                rule,
                 RefusalCode::Cancelled,
                 "rule preview cancelled before scan indexing",
             )],
@@ -973,11 +1880,12 @@ pub fn preview(
         });
     }
     let tree = ScanTree::build(report, cancellation).map_err(PreviewError::Scan)?;
-    Ok(preview_with_provider(
-        &tree,
-        cancellation,
-        &HostNativeEvidence,
-    ))
+    Ok(match kind {
+        RuleKind::CpythonPyc => preview_with_provider(&tree, cancellation, &HostNativeEvidence),
+        RuleKind::JavacClass => {
+            preview_javac_with_provider(&tree, cancellation, &HostNativeEvidence)
+        }
+    })
 }
 
 fn explicit_root_for_path<'a>(roots: &'a [PathBuf], path: &Path) -> Option<&'a Path> {
@@ -988,26 +1896,39 @@ fn explicit_root_for_path<'a>(roots: &'a [PathBuf], path: &Path) -> Option<&'a P
         .max_by_key(|root| root.as_os_str().len())
 }
 
-fn refusal(entry: &ScanEntry, code: RefusalCode, message: &str) -> RuleRefusal {
+fn rule_refusal(
+    rule: &RuleDefinition,
+    entry: &ScanEntry,
+    code: RefusalCode,
+    message: &str,
+) -> RuleRefusal {
     RuleRefusal {
-        rule_id: CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
-        rule_version: CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
-        ruleset_revision: BUILTIN_RULESET_REVISION,
+        rule_id: rule.id,
+        rule_version: rule.version,
+        ruleset_revision: rule.ruleset_revision,
         code,
         path: Some(entry.path.clone()),
         message: message.to_owned(),
     }
 }
 
-fn global_refusal(code: RefusalCode, message: &str) -> RuleRefusal {
+fn rule_global_refusal(rule: &RuleDefinition, code: RefusalCode, message: &str) -> RuleRefusal {
     RuleRefusal {
-        rule_id: CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
-        rule_version: CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
-        ruleset_revision: BUILTIN_RULESET_REVISION,
+        rule_id: rule.id,
+        rule_version: rule.version,
+        ruleset_revision: rule.ruleset_revision,
         code,
         path: None,
         message: message.to_owned(),
     }
+}
+
+fn refusal(entry: &ScanEntry, code: RefusalCode, message: &str) -> RuleRefusal {
+    rule_refusal(&CPYTHON_RULE, entry, code, message)
+}
+
+fn global_refusal(code: RefusalCode, message: &str) -> RuleRefusal {
+    rule_global_refusal(&CPYTHON_RULE, code, message)
 }
 
 struct ParsedCacheName {
@@ -1057,6 +1978,12 @@ fn looks_like_pyc(path: &Path) -> bool {
     path.file_name()
         .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|name| name.ends_with(".pyc"))
+}
+
+fn looks_like_class(path: &Path) -> bool {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| name.ends_with(".class"))
 }
 
 fn protected(scopes: &[Scope], path: &Path) -> bool {

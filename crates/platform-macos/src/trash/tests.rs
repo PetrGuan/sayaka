@@ -241,6 +241,23 @@ fn source_bound_revalidate_refuses_replaced_source_identity_before_effect() {
 }
 
 #[test]
+fn source_bound_marker_refuses_mismatch_before_native_effect() {
+    let mut fixture = Fixture::new();
+    fixture.directory("pkg");
+    let source = fixture.file("pkg/Foo.java", b"class Foo {}\n");
+    let target = fixture.file("pkg/Foo.class", &[0, 1, 2, 3, 4, 5]);
+    let candidate = TrashCandidate::capture_with_source_and_marker(
+        &fixture.root,
+        &target,
+        &source,
+        Some(super::NativeTargetMarker::Prefix4([0xCA, 0xFE, 0xBA, 0xBE])),
+        &[],
+    );
+    assert!(candidate.is_err());
+    fixture.finish();
+}
+
+#[test]
 fn destination_probe_tolerates_changed_time_during_acl_capture_after_owned_rename() {
     let mut fixture = Fixture::new();
     let source = fixture.file("before.pyc", b"synthetic-cache");

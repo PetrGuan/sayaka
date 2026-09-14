@@ -123,11 +123,37 @@ impl NativeEvidence for FakeEvidence {
             .copied()
             .unwrap_or(Err(NativeInspectError::Unsupported))
     }
+
+    fn read_prefix4_with_ancestry(
+        &self,
+        root: &Path,
+        _root_identity: FileIdentity,
+        relative_path: &Path,
+        _ancestor_identities: &[(PathBuf, FileIdentity)],
+        _expected_identity: FileIdentity,
+        _cancellation: &Cancellation,
+    ) -> Result<[u8; 4], NativeInspectError> {
+        let full_path = root.join(relative_path);
+        match self
+            .facts
+            .get(&full_path)
+            .copied()
+            .unwrap_or(Err(NativeInspectError::Unsupported))
+        {
+            Ok(_) => Ok([0xCA, 0xFE, 0xBA, 0xBE]),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 fn preview_with(report: ScanReport, provider: &dyn NativeEvidence) -> RulePreview {
     let tree = ScanTree::build(report, &Cancellation::default()).unwrap();
     preview_with_provider(&tree, &Cancellation::default(), provider)
+}
+
+fn preview_javac_with(report: ScanReport, provider: &dyn NativeEvidence) -> RulePreview {
+    let tree = ScanTree::build(report, &Cancellation::default()).unwrap();
+    preview_javac_with_provider(&tree, &Cancellation::default(), provider)
 }
 
 #[test]
@@ -433,6 +459,18 @@ fn preview_cancellation_during_rule_phase_sets_cancelled_status() {
                 dataless: false,
             })
         }
+
+        fn read_prefix4_with_ancestry(
+            &self,
+            _root: &Path,
+            _root_identity: FileIdentity,
+            _relative_path: &Path,
+            _ancestor_identities: &[(PathBuf, FileIdentity)],
+            _expected_identity: FileIdentity,
+            _cancellation: &Cancellation,
+        ) -> Result<[u8; 4], NativeInspectError> {
+            Ok([0xCA, 0xFE, 0xBA, 0xBE])
+        }
     }
     let report = report(vec![
         directory(1, ""),
@@ -515,6 +553,18 @@ fn preview_cancellation_after_successful_target_probe_clears_candidates_and_stop
                 uid: self.uid,
                 dataless: false,
             })
+        }
+
+        fn read_prefix4_with_ancestry(
+            &self,
+            _root: &Path,
+            _root_identity: FileIdentity,
+            _relative_path: &Path,
+            _ancestor_identities: &[(PathBuf, FileIdentity)],
+            _expected_identity: FileIdentity,
+            _cancellation: &Cancellation,
+        ) -> Result<[u8; 4], NativeInspectError> {
+            Ok([0xCA, 0xFE, 0xBA, 0xBE])
         }
     }
 
@@ -609,6 +659,18 @@ fn preview_cancellation_after_successful_source_probe_clears_candidates_and_stop
                 uid: self.uid,
                 dataless: false,
             })
+        }
+
+        fn read_prefix4_with_ancestry(
+            &self,
+            _root: &Path,
+            _root_identity: FileIdentity,
+            _relative_path: &Path,
+            _ancestor_identities: &[(PathBuf, FileIdentity)],
+            _expected_identity: FileIdentity,
+            _cancellation: &Cancellation,
+        ) -> Result<[u8; 4], NativeInspectError> {
+            Ok([0xCA, 0xFE, 0xBA, 0xBE])
         }
     }
 
@@ -819,4 +881,99 @@ fn cpython_rule_catalog_includes_explicit_native_trash_action() {
     assert_eq!(rule.ruleset_revision, BUILTIN_RULESET_REVISION);
     assert!(rule.actions.contains(&RuleAction::ManualReview));
     assert!(rule.actions.contains(&RuleAction::ExplicitNativeTrash));
+}
+
+#[test]
+fn javac_selection_and_preview_accept_same_stem_class_with_magic() {
+    let target = file(4, "pkg/Foo.class", Some(128));
+    let source = file(5, "pkg/Foo.java", Some(64));
+    let preview = preview_javac_with(
+        report(vec![
+            directory(1, ""),
+            directory(2, "pkg"),
+            target.clone(),
+            source.clone(),
+        ]),
+        &FakeEvidence {
+            uid: Some(1000),
+            facts: HashMap::from([
+                (
+                    target.path.clone(),
+                    Ok(NativeFacts {
+                        identity: target.identity,
+                        kind: ResourceKind::File,
+                        nlink: Some(1),
+                        uid: Some(1000),
+                        dataless: false,
+                    }),
+                ),
+                (
+                    source.path.clone(),
+                    Ok(NativeFacts {
+                        identity: source.identity,
+                        kind: ResourceKind::File,
+                        nlink: Some(1),
+                        uid: Some(1000),
+                        dataless: false,
+                    }),
+                ),
+            ]),
+        },
+    );
+    assert_eq!(preview.rule_id, JAVAC_SOURCE_BACKED_CLASS_RULE_ID);
+    assert_eq!(preview.candidates.len(), 1);
+    assert_eq!(preview.candidates[0].source_relation, "same_stem_sibling");
+    assert_eq!(
+        preview.candidates[0].observed_target_marker.as_deref(),
+        Some("cafebabe")
+    );
+}
+
+#[test]
+fn javac_preview_refuses_source_missing_and_dollar_class_name() {
+    let preview = preview_javac_with(
+        report(vec![
+            directory(1, ""),
+            directory(2, "pkg"),
+            file(4, "pkg/Foo.class", Some(10)),
+            file(5, "pkg/Outer$Inner.class", Some(10)),
+        ]),
+        &FakeEvidence {
+            uid: Some(1000),
+            facts: HashMap::new(),
+        },
+    );
+    assert!(preview.candidates.is_empty());
+    assert!(
+        preview
+            .refusals
+            .iter()
+            .any(|item| item.code == RefusalCode::SourceMissing)
+    );
+    assert!(
+        preview
+            .refusals
+            .iter()
+            .any(|item| item.code == RefusalCode::InvalidJavacClassName)
+    );
+}
+
+#[test]
+fn javac_rule_catalog_and_explicit_selection_are_exposed() {
+    let selection = explicit_selection_for_rule_target(
+        JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+        &path("pkg/Foo.class"),
+    )
+    .expect("valid javac class selection");
+    assert_eq!(selection.source_path, path("pkg/Foo.java"));
+    assert_eq!(selection.rule_id, JAVAC_SOURCE_BACKED_CLASS_RULE_ID);
+    assert!(matches!(
+        selection.marker,
+        RuleTargetMarker::Prefix4([0xCA, 0xFE, 0xBA, 0xBE])
+    ));
+    assert!(
+        builtin_rules()
+            .iter()
+            .any(|rule| rule.id == JAVAC_SOURCE_BACKED_CLASS_RULE_ID)
+    );
 }

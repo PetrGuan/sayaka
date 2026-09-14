@@ -113,7 +113,7 @@ pub fn command() -> Command {
                 .action(ArgAction::Append)
                 .required(true)
                 .value_parser(value_parser!(PathBuf))
-                .help("Explicit target .pyc file; repeatable, max 32"),
+                .help("Explicit target file for the selected rule; repeatable, max 32"),
         )
         .arg(
             Arg::new("exclude")
@@ -466,7 +466,7 @@ fn validate_rule_trash_request(
     values: &[PathBuf],
     option_name: &str,
 ) -> io::Result<()> {
-    if rule_id != rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID {
+    if !rules::is_builtin_rule(rule_id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("unknown rule ID: {rule_id}"),
@@ -486,11 +486,11 @@ fn validate_rule_trash_request(
         return Ok(());
     }
     for selection in values {
-        if rules::explicit_selection_for_target(selection).is_none() {
+        if rules::explicit_selection_for_rule_target(rule_id, selection).is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
-                    "invalid --select target (expected CPython __pycache__ .pyc path): {}",
+                    "invalid --select target for rule {rule_id}: {}",
                     display_path(selection)
                 ),
             ));
@@ -530,6 +530,10 @@ fn write_preview_human(preview: &RulePreview) -> io::Result<()> {
             display_path(&candidate.source_path),
             action_label(&candidate.action)
         )?;
+        writeln!(out, "    source_relation: {}", candidate.source_relation)?;
+        if let Some(marker) = &candidate.observed_target_marker {
+            writeln!(out, "    target_marker: {marker}")?;
+        }
     }
     if !preview.issues.is_empty() {
         writeln!(out, "  scan issues:")?;
@@ -627,7 +631,9 @@ struct JsonCandidate<'a> {
     target_identity: sayaka_engine::model::FileIdentity,
     source_identity: sayaka_engine::model::FileIdentity,
     matched_logical_bytes: Option<u64>,
-    observed_cache_tag: &'a str,
+    source_relation: &'a str,
+    observed_target_marker: Option<&'a str>,
+    observed_cache_tag: Option<&'a str>,
     observed_optimization_tag: Option<&'a str>,
 }
 
@@ -686,7 +692,10 @@ fn write_preview_json(preview: &RulePreview) -> io::Result<()> {
             target_identity: candidate.target_identity,
             source_identity: candidate.source_identity,
             matched_logical_bytes: candidate.matched_logical_bytes,
-            observed_cache_tag: &candidate.observed_cache_tag,
+            source_relation: candidate.source_relation,
+            observed_target_marker: candidate.observed_target_marker.as_deref(),
+            observed_cache_tag: (!candidate.observed_cache_tag.is_empty())
+                .then_some(candidate.observed_cache_tag.as_str()),
             observed_optimization_tag: candidate.observed_optimization_tag.as_deref(),
         })
         .collect();
