@@ -48,6 +48,20 @@ C0 source/ledger/protocol manifests are now pinned in:
 - `benchmarks/c0-fixtures-v1.json` (includes sparse, denied-subtree, overlapping-root, controlled-churn, history/lifecycle, and owned-prefix fixtures)
 - `benchmarks/c0-statistics-v1.json` (frozen scenario matrix, fixture/ledger/source hashes, equal-work checks, candidate-not-runnable blocked adapters, and required failure/skip retention schema)
 - `benchmarks/results/c0-blocked-results-v1.json` (machine-readable blocked/not-measured result record for current preregistration state)
+- `benchmarks/c0-batch2-manifest-v1.json` (Phase A guarded-host preregistration for one flat regular-file JSON scenario with frozen 31-pair AB/BA schedule)
+- `benchmarks/c0-batch2-results-schema-v1.json` (strict shareable Phase A result schema with unknown-field rejection)
+- `benchmarks/results/c0-batch2-phase-a-ready-v1.json` (current blocked guard record; the filename does not imply readiness)
+- `benchmarks/results/c0-batch2-phase-b-results-v1.json` (Phase B pipeline artifact produced without execution; `--execute` remains required and parent authorization is still required before any Mole execution)
+- `benchmarks/c0-sayaka-capability-current-v2.json` (machine-readable current Sayaka feature-subset capability ledger for batch-2 planning)
+
+Batch 2 currently closes as tooling and preregistration only, not measured
+Mole installation or performance evidence. The pinned official installer calls
+`/bin/ps` in its install-lock path; on the recorded macOS host that OS helper is
+setuid and Seatbelt refuses it as `forbidden-exec-sugid`. The preflight now
+detects required setuid/setgid helpers from metadata before launching canaries.
+No privilege exception, replacement system tool, patched installer, or
+unsandboxed fallback is permitted. A new disposable-environment contract and
+explicit authorization are required before runtime work resumes.
 
 Protocol-only validation is explicitly protocol-only. It verifies preregistered
 shape/locks and blocked-state disclosure, but it is never a supported result,

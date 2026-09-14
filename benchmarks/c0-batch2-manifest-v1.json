@@ -1,0 +1,789 @@
+{
+  "benchmark_id": "c0-batch2-phase-a-v1",
+  "current_batch_decision": {
+    "mode": "finish_blocked_tools",
+    "runtime_execution_authorized": false,
+    "reason": "On the current macOS host, the unchanged official installer requires setuid /bin/ps; the sandbox rejects it as forbidden-exec-sugid.",
+    "next_runtime_requires": "A separately reviewed disposable macOS environment and new explicit authorization; no setuid exception, system-tool replacement, or installer patch is approved."
+  },
+  "scope": "Batch-2 tooling and preregistration close-out with explicit blocked host evidence. Current runtime execution is disabled; a future environment requires new review and authorization.",
+  "reference_lock": {
+    "tag": "V1.53.0",
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+    "target_commitish": "main",
+    "source_archive_sha256": "4de6c5ab78d2c723a6ff43418b52bfc5a229a8a01c98d9fe487a1bc42d3a73ac",
+    "assets": {
+      "analyze-darwin-arm64": {
+        "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb",
+        "size_bytes": 3620258
+      },
+      "status-darwin-arm64": {
+        "sha256": "46b8aded69d013d00f858908b02d35ea2d39087ccc474bcb8c2e65988fe0028e",
+        "size_bytes": 4065586
+      },
+      "binaries-darwin-arm64.tar.gz": {
+        "sha256": "3193b2322039680bf617f2e6794f85fbf1cad4992cc2457dd23c66e25b59db10",
+        "size_bytes": 3010562
+      },
+      "SHA256SUMS": {
+        "sha256": "faa5212910f42765a4e9707de6b924bb097a47968a7a562d4af46ddefcea05e0",
+        "size_bytes": 536
+      }
+    }
+  },
+  "sayaka_reference": {
+    "source_commit": "88d77f491e081a8958de20456e1c5fffc7314ac1",
+    "binary_path": "target/release/sayaka",
+    "binary_sha256": "7bc576ab8ceaf137fa6b2f2482cd8afb4f20e6dfe92a0dc14df43f2ba7394cba",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "product_source_diff_empty": true,
+    "installation_measured": false,
+    "competitive_runtime_measured": false
+  },
+  "ordering": {
+    "seed": 260026,
+    "method": "deterministic_ab_ba_pairs"
+  },
+  "repetitions": {
+    "paired_ab_ba": 31,
+    "warmup_per_tool": 1
+  },
+  "scenario": {
+    "scenario_id": "c0-b2-analyze-flat-regular-json-v1",
+    "pair_schedule": [
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "BA",
+      "AB",
+      "BA",
+      "BA",
+      "BA",
+      "BA",
+      "AB",
+      "BA",
+      "BA",
+      "AB",
+      "AB",
+      "AB",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "AB",
+      "AB",
+      "AB"
+    ],
+    "fixture_truth": {
+      "fixture_id": "c0-b2-flat-regular-v1",
+      "file_count": 1024,
+      "bytes_per_file": 4096,
+      "logical_bytes": 4194304,
+      "allocated_bytes_policy": "allocated_must_be_gte_logical_per_file",
+      "filename_prefix": "f",
+      "name_width": 6,
+      "filename_suffix": ".bin",
+      "filename_range": "f000000.bin ... f001023.bin",
+      "payload_algorithm": "SHAKE256(seed_u64_be || file_index_u32_be).digest(4096)",
+      "payload_seed": 260026,
+      "eligible_invariants": [
+        "all entries are regular files with link_count=1",
+        "all file paths are flat depth-1 with deterministic names",
+        "allocated_bytes >= logical_bytes for each file",
+        "exact path set/count/logical bytes match prereg truth lock",
+        "no symlinks/hardlinks/sparse/unknown entries"
+      ]
+    },
+    "command_contract": {
+      "mole_command": [
+        "<allowed>/mole/prefix/mole",
+        "analyze",
+        "--json",
+        "<allowed>/common/fixture"
+      ],
+      "sayaka_command": [
+        "<allowed>/sayaka/installation/package/bin/sayaka",
+        "scan",
+        "--json",
+        "<allowed>/common/fixture"
+      ],
+      "normalizers": {
+        "mole": {
+          "source": "cmd/analyze/json.go",
+          "required_fields": [
+            "overview",
+            "entries",
+            "total_size",
+            "total_files"
+          ],
+          "entry_fields": [
+            "name",
+            "path",
+            "size",
+            "is_dir"
+          ],
+          "constraints": [
+            "overview must be false",
+            "all entries is_dir=false",
+            "entry paths must be flat files under fixture root",
+            "exact path set and sizes must match truth",
+            "total_files and total_size must equal normalized entries",
+            "directories are not expected in Mole entries for this fixture; every entry must set is_dir=false"
+          ]
+        },
+        "sayaka": {
+          "source": "engine/src/output.rs",
+          "required_fields": [
+            "schema_version",
+            "status",
+            "complete",
+            "roots",
+            "entries",
+            "issues",
+            "issues_omitted",
+            "totals"
+          ],
+          "entry_fields": [
+            "path.raw",
+            "path.encoding",
+            "kind",
+            "logical_bytes",
+            "allocated_bytes",
+            "counted",
+            "dataless",
+            "depth"
+          ],
+          "constraints": [
+            "schema_version=1 status=complete complete=true",
+            "roots has one unix_bytes_hex fixture root",
+            "allow exactly one directory entry for root depth=0 counted=false",
+            "all file entries depth=1 counted=true dataless=false",
+            "issues empty issues_omitted=0",
+            "totals regular_files/unique_files/logical_bytes_known match truth and unknown counters are zero",
+            "entries must include exactly 1 depth=0 root directory and exactly 1024 depth=1 file entries"
+          ]
+        },
+        "cross_tool_projection": [
+          "exact same file path set hash",
+          "exact same file count",
+          "exact same logical bytes",
+          "allocated bytes not compared directly across tools in this scenario"
+        ]
+      }
+    },
+    "metrics_prereg": {
+      "first_useful_result_ms": "timestamp when first complete parseable payload is available before parser post-processing",
+      "complete_result_ms": "timestamp at process wait return for successful complete output",
+      "peak_rss_bytes": "per-child from fresh measurement broker process, Darwin bytes",
+      "p95_method": "nearest-rank over complete_result_ms for passed runs",
+      "cache_freshness_policy": "fresh owned HOME/TMP/XDG per run for each tool; same warmup count and env policy",
+      "cancellation_latency_ms": "not_measured in this scenario unless exact shared cancellation method is preregistered for both tools"
+    },
+    "ab_mapping": {
+      "A": "mole",
+      "B": "sayaka"
+    }
+  },
+  "profile_classes": {
+    "mole_official_local_source_profile": "owned run root + source archive extraction + canonical helper additions + dedicated mole prefix/config/home/tmp",
+    "sayaka_dedicated_profile": "owned sayaka source-binary + dedicated sayaka prefix/home/tmp under same sandbox policy",
+    "download_cache_and_staging_counts": "tracked separately from installed footprint; never double-count into installed size"
+  },
+  "archive_validation": {
+    "max_member_count": 400,
+    "max_member_size_bytes": 20971520,
+    "reject_member_types": [
+      "hardlink",
+      "character",
+      "block",
+      "fifo"
+    ],
+    "allowed_symlinks": [
+      {
+        "path": ".agents/skills/bugs",
+        "target": "../../.claude/skills/bugs"
+      },
+      {
+        "path": ".agents/skills/mole",
+        "target": "../../.claude/skills/mole"
+      },
+      {
+        "path": ".agents/skills/release-flow",
+        "target": "../../.claude/skills/release-flow"
+      },
+      {
+        "path": ".agents/skills/release-notes",
+        "target": "../../.claude/skills/release-notes"
+      },
+      {
+        "path": "CLAUDE.md",
+        "target": "AGENTS.md"
+      }
+    ],
+    "materialization_order": "extract directories and regular files first, then exact preregistered symlinks; reject any member under symlink ancestor"
+  },
+  "source_staging": {
+    "canonical_helper_additions": [
+      "bin/analyze-go",
+      "bin/status-go"
+    ]
+  },
+  "sandbox": {
+    "process_coordination": {
+      "target": "same-sandbox",
+      "operations": ["signal", "process-info-pidinfo"],
+      "source_evidence": "install.sh:499-535; Apple application.sb uses signal with target same-sandbox",
+      "authorization": "explicit maintainer selection: same-sandbox-only",
+      "outside_process_canaries_required": true
+    },
+    "runtime_read_literals": [
+      "/",
+      "/dev/null"
+    ],
+    "runtime_read_allowlist": [
+      "/bin",
+      "/usr/bin",
+      "/usr/lib",
+      "/usr/share",
+      "/System/Library"
+    ],
+    "helper_exec_allowlist": [
+      {
+        "path": "/bin/sh",
+        "source_evidence": "install.sh:363,499-535",
+        "canary_command": [
+          "/bin/bash", "--noprofile", "--norc", "-c",
+          "/bin/sh -c 'kill -0 \"$PPID\" && /bin/ps -p \"$PPID\" -o lstart='; result=$?; exit \"$result\""
+        ]
+      },
+      {
+        "path": "/usr/bin/lockf",
+        "source_evidence": "install.sh:462-470,534",
+        "canary_command": [
+          "/bin/bash", "--noprofile", "--norc", "-c",
+          "f=\"$TMPDIR/c0-lockf-$$\"; test ! -e \"$f\" || exit 1; /usr/bin/lockf -k -s -t 0 -w \"$f\" /usr/bin/true; result=$?; /bin/rm -f \"$f\"; exit \"$result\""
+        ]
+      },
+      {
+        "path": "/bin/cat",
+        "source_evidence": "install.sh:499",
+        "canary_command": [
+          "/bin/bash", "--noprofile", "--norc", "-c",
+          "f=\"$TMPDIR/c0-cat-$$\"; test ! -e \"$f\" || exit 1; printf 'owned\\n' >\"$f\"; /bin/cat \"$f\"; result=$?; /bin/rm \"$f\"; exit \"$result\""
+        ]
+      },
+      {
+        "path": "/bin/ps",
+        "source_evidence": "install.sh:326,505-521",
+        "canary_command": [
+          "/bin/bash", "--noprofile", "--norc", "-c",
+          "/bin/ps -p \"$$\" -o lstart="
+        ]
+      },
+      {
+        "path": "/bin/rmdir",
+        "source_evidence": "install.sh:512-527",
+        "canary_command": [
+          "/bin/bash", "--noprofile", "--norc", "-c",
+          "d=\"$TMPDIR/c0-rmdir-$$\"; /bin/mkdir \"$d\" && /bin/rmdir \"$d\""
+        ]
+      },
+      {
+        "path": "/bin/bash",
+        "source_evidence": "install.sh:1-3,1489-1516",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "exit 0"
+        ]
+      },
+      {
+        "path": "/usr/bin/env",
+        "source_evidence": "phase-b argv contract",
+        "canary_command": [
+          "/usr/bin/env",
+          "-i",
+          "PATH=/bin:/usr/bin",
+          "/usr/bin/true"
+        ]
+      },
+      {
+        "path": "/usr/bin/dirname",
+        "source_evidence": "install.sh:680,bin/analyze.sh:8",
+        "canary_command": [
+          "/usr/bin/dirname",
+          "/usr/bin/true"
+        ]
+      },
+      {
+        "path": "/bin/cp",
+        "source_evidence": "install.sh:1259-1268,1402-1456",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "s=\"$1\"; d=\"$2\"; echo x >\"$s\"; /bin/cp \"$s\" \"$d\"; /bin/rm \"$s\" \"$d\"",
+          "--",
+          "./cp-src",
+          "./cp-dst"
+        ]
+      },
+      {
+        "path": "/bin/chmod",
+        "source_evidence": "install.sh:1283-1284,1403,1461",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "f=\"$1\"; echo x >\"$f\"; /bin/chmod 600 \"$f\"; /bin/rm \"$f\"",
+          "--",
+          "./chmod-target"
+        ]
+      },
+      {
+        "path": "/bin/mv",
+        "source_evidence": "install.sh:1285,1404,1468",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "f=\"$1\"; g=\"$2\"; echo x >\"$f\"; /bin/mv \"$f\" \"$g\"; /bin/rm \"$g\"",
+          "--",
+          "./mv-src",
+          "./mv-dst"
+        ]
+      },
+      {
+        "path": "/bin/mkdir",
+        "source_evidence": "install.sh:184,486,584",
+        "canary_command": [
+          "/bin/mkdir",
+          "-p",
+          "./mkdir-target/sub"
+        ]
+      },
+      {
+        "path": "/bin/rm",
+        "source_evidence": "install.sh:1263,1272,1533",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "f=\"$1\"; echo x >\"$f\"; /bin/rm \"$f\"",
+          "--",
+          "./rm-target"
+        ]
+      },
+      {
+        "path": "/usr/bin/mktemp",
+        "source_evidence": "install.sh:695,1253",
+        "canary_command": [
+          "/usr/bin/mktemp",
+          "./mktemp.XXXXXX"
+        ]
+      },
+      {
+        "path": "/usr/bin/sed",
+        "source_evidence": "install.sh:1468",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "f=\"$1\"; echo test >\"$f\"; /usr/bin/sed -e s/test/ok/ \"$f\" >/dev/null; /bin/rm \"$f\"",
+          "--",
+          "./sed-target"
+        ]
+      },
+      {
+        "path": "/usr/bin/uname",
+        "source_evidence": "install.sh:1254",
+        "canary_command": [
+          "/usr/bin/uname",
+          "-s"
+        ]
+      },
+      {
+        "path": "/usr/bin/stat",
+        "source_evidence": "install.sh:835-843",
+        "canary_command": [
+          "/usr/bin/stat",
+          "-f",
+          "%z",
+          "/dev/null"
+        ]
+      },
+      {
+        "path": "/usr/bin/grep",
+        "source_evidence": "install.sh:771-772,833",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "f=\"$1\"; echo needle >\"$f\"; /usr/bin/grep -q needle \"$f\"; /bin/rm \"$f\"",
+          "--",
+          "./grep-target"
+        ]
+      },
+      {
+        "path": "/usr/bin/head",
+        "source_evidence": "install.sh:833",
+        "canary_command": [
+          "/bin/bash",
+          "--noprofile",
+          "--norc",
+          "-c",
+          "f=\"$1\"; printf \"a\nb\n\" >\"$f\"; /usr/bin/head -n 1 \"$f\" >/dev/null; /bin/rm \"$f\"",
+          "--",
+          "./head-target"
+        ]
+      },
+      {
+        "path": "/bin/sleep",
+        "source_evidence": "install.sh:769-776",
+        "canary_command": [
+          "/bin/sleep",
+          "0"
+        ]
+      },
+      {
+        "path": "/bin/test",
+        "source_evidence": "install.sh condition checks",
+        "canary_command": [
+          "/bin/test",
+          "-d",
+          "."
+        ]
+      },
+      {
+        "path": "/usr/bin/true",
+        "source_evidence": "runtime preflight",
+        "canary_command": [
+          "/usr/bin/true"
+        ]
+      }
+    ]
+  },
+  "canary_contract": {
+    "required_ids": [
+      "denied-signal-outside-sandbox",
+      "denied-process-info-outside-sandbox",
+      "allowed-rw",
+      "denied-read-owned-outside-allow",
+      "literal-root-runtime-only",
+      "denied-write-owned-outside-allow",
+      "denied-exec-readable-control",
+      "denied-network-loopback"
+    ]
+  },
+  "canary_timeouts_seconds": {
+    "allowed_rw": 10,
+    "denied_read": 10,
+    "denied_write": 10,
+    "denied_exec": 10,
+    "helper_each": 10,
+    "network": 10,
+    "sayaka_control_scan": 120
+  },
+  "superseded_proofs": {
+    "invalidated_profile_hashes": [
+      "7cf711aa43bd56cdca5460cf0df6d5036d37728d26fe98797ce988fb40a33bfd",
+      "55bbe4bdef6efc0789e8707dc6d223ba3a779236aa42a6e22cd646eaee26706a"
+    ],
+    "reason": "Independent Phase A review rejected prior broad-read and weak canary profile; superseded records retained privately only."
+  },
+  "phase_b_gate": {
+    "must_not_execute_mole_before_authorization": true,
+    "requires_independent_review": true,
+    "requires_explicit_parent_message": true
+  },
+  "source_audit": {
+    "checks": [
+      {
+        "id": "install-local-source-resolution",
+        "file": "install.sh",
+        "requirements": [
+          {
+            "snippet": "resolve_source_dir() {",
+            "line_ranges": [
+              "673-690"
+            ]
+          },
+          {
+            "snippet": "if [[ -f \"$script_dir/mole\" ]]; then",
+            "line_ranges": [
+              "673-690"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "install-preseeded-helper-priority",
+        "file": "install.sh",
+        "requirements": [
+          {
+            "snippet": "if [[ -f \"$SOURCE_DIR/bin/${binary_name}-go\" ]]; then",
+            "line_ranges": [
+              "1249-1277"
+            ]
+          },
+          {
+            "snippet": "elif [[ -f \"$SOURCE_DIR/bin/${binary_name}-darwin-${arch_suffix}\" ]]; then",
+            "line_ranges": [
+              "1249-1277"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "install-files-and-verification-path",
+        "file": "install.sh",
+        "requirements": [
+          {
+            "snippet": "if ! maybe_sudo cp \"$SOURCE_DIR/mole\" \"$INSTALL_DIR/mole.new\"",
+            "line_ranges": [
+              "1368-1425"
+            ]
+          },
+          {
+            "snippet": "local -a bin_files=(\"$SOURCE_DIR/bin\"/*)",
+            "line_ranges": [
+              "1424-1436"
+            ]
+          },
+          {
+            "snippet": "if run_install_probe_with_timeout 5 \"$INSTALL_DIR/mole\" --help > /dev/null 2>&1; then",
+            "line_ranges": [
+              "1489-1516"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "analyze-dispatch-and-target-selection",
+        "file": "mole",
+        "requirements": [
+          {
+            "snippet": "\"analyze\" | \"analyse\")",
+            "line_ranges": [
+              "245-255"
+            ]
+          },
+          {
+            "snippet": "exec \"$SCRIPT_DIR/bin/analyze.sh\" \"${args[@]:1}\"",
+            "line_ranges": [
+              "245-255"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "analyze-sh-wrapper",
+        "file": "bin/analyze.sh",
+        "requirements": [
+          {
+            "snippet": "exec \"$GO_BIN\" \"$@\"",
+            "line_ranges": [
+              "8-15"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "analyze-overview-default-and-system-roots",
+        "file": "cmd/analyze/main.go",
+        "requirements": [
+          {
+            "snippet": "resolveScanTarget(os.Getenv(\"MO_ANALYZE_PATH\"), flag.Args())",
+            "line_ranges": [
+              "26-60"
+            ]
+          },
+          {
+            "snippet": "return []dirEntry{",
+            "line_ranges": [
+              "159-168"
+            ]
+          },
+          {
+            "snippet": "{Name: \"Applications\", Path: \"/Applications\", IsDir: true, Size: -1},",
+            "line_ranges": [
+              "159-168"
+            ]
+          },
+          {
+            "snippet": "{Name: \"System Library\", Path: \"/Library\", IsDir: true, Size: -1},",
+            "line_ranges": [
+              "159-168"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "analyze-cache-and-helper-side-effects",
+        "file": "cmd/analyze/cache.go",
+        "requirements": [
+          {
+            "snippet": "return filepath.Join(home, \".cache\", \"mole\")",
+            "line_ranges": [
+              "266-317"
+            ]
+          },
+          {
+            "snippet": "if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {",
+            "line_ranges": [
+              "300-320"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "homebrew-probe-branch-still-reachable",
+        "file": "install.sh",
+        "requirements": [
+          {
+            "snippet": "brew uninstall --force mole > /dev/null 2>&1 || true",
+            "line_ranges": [
+              "1153-1179"
+            ]
+          },
+          {
+            "snippet": "brew_bin=$(command -v brew 2> /dev/null || true)",
+            "line_ranges": [
+              "1578-1615"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "source_helper_mapping": {
+    "owned_executable_paths_for_phase_b_profile": [
+      {
+        "path": "allowed/mole/source/install.sh",
+        "role": "official installer script copy from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/mole",
+        "role": "launcher copied from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/bin/analyze.sh",
+        "role": "analyze wrapper copied from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/bin/status.sh",
+        "role": "status wrapper copied from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/bin/analyze-go",
+        "role": "canonical helper addition from verified asset"
+      },
+      {
+        "path": "allowed/mole/source/bin/status-go",
+        "role": "canonical helper addition from verified asset"
+      },
+      {
+        "path": "allowed/sayaka/source-binary/sayaka",
+        "role": "staged Sayaka comparator artifact inside allowed root"
+      },
+      {
+        "path": "allowed/sayaka/installation/package/bin/sayaka",
+        "role": "installed Sayaka comparator binary (Phase B execute only)"
+      }
+    ],
+    "execution_policy": "single frozen SBPL profile shared by Mole/Sayaka runtime, allowing only static OS helpers and ALLOWED_ROOT executables"
+  },
+  "runtime_only_preflight_evidence": {
+    "kernel_abort_reason": "deny file-read-data on path / triggered dyld boot_boot abort (reason 35/code 2) under strict profile without literal root read",
+    "successful_minimal_fix": "add (literal \"/\") within file-read* block; do not add (subpath \"/\")",
+    "metadata_prerequisite_reason": "sayaka volume metadata query required literal metadata read on /System/Volumes/Data",
+    "metadata_minimal_fix": "add (literal \"/System/Volumes/Data\") only to file-read-metadata block; no /System/Volumes or child-subpath grants",
+    "successful_probe_profile_sha256": "ce645f0f6cfa7dc0e53975f4e54155125743e5b7e91e5236168a8eb87df3d57c",
+    "evidence_label": "private-session-runtime-probe"
+  },
+  "phase_b": {
+    "approved_profile_sha256": "ce2424e7b59fe5742cb2fb12bb15c44aad9e68e5bea4e093f39d752ff7a83edf",
+    "requires_operator_execute_flag": true,
+    "requires_phase_a_revalidation": true,
+    "output_public_sanitization": "relative synthetic paths only; no host absolute paths or private logs",
+    "runtime_profiles": {
+      "mole": {
+        "home": "allowed/mole/home",
+        "tmp": "allowed/mole/tmp",
+        "prefix": "allowed/mole/prefix",
+        "config": "allowed/mole/config",
+        "source": "allowed/mole/source"
+      },
+      "sayaka": {
+        "home": "allowed/sayaka/home",
+        "tmp": "allowed/sayaka/tmp",
+        "install_container": "allowed/sayaka/installation",
+        "prefix": "allowed/sayaka/installation/package",
+        "source_binary": "allowed/sayaka/source-binary/sayaka"
+      }
+    },
+    "measurement_retention": {
+      "keep_failures": true,
+      "keep_timeouts": true,
+      "keep_output_mismatch": true,
+      "keep_cleanup_failures": true
+    },
+    "cancellation": "not_measured",
+    "cancellation_reason": "no exact shared cancellation method preregistered for both tools in this scenario",
+    "measurement_fixed": {
+      "timestamp_points": [
+        "process_start_monotonic_ns",
+        "first_full_payload_monotonic_ns",
+        "process_exit_monotonic_ns"
+      ],
+      "first_useful_result_ms_definition": "first_full_payload_monotonic_ns - process_start_monotonic_ns",
+      "complete_result_ms_definition": "process_exit_monotonic_ns - process_start_monotonic_ns",
+      "timestamp_observation": "start before Popen; full-payload receipt before JSON parsing; completion immediately at wait4 return after bounded pipe capture",
+      "per_child_rss_source": "wait4 for the exact executed child, Darwin ru_maxrss bytes; never cumulative RUSAGE_CHILDREN",
+      "stdout_capture_cap_bytes": 8388608,
+      "stderr_capture_cap_bytes": 8388608,
+      "timeout_seconds_per_sample": 180,
+      "cache_policy": {
+        "fresh_home_per_run": true,
+        "fresh_tmp_per_run": true,
+        "fresh_xdg_per_run": true,
+        "global_os_cache_flush_allowed": false,
+        "integrity_reads_before_each_invocation": "fixture and installed program files are read and hashed; no OS-cold claim",
+        "warmup_per_tool": 1
+      },
+      "statistics": {
+        "p95": "nearest_rank",
+        "summary_requires_all_preregistered_measurement_samples_passed": true,
+        "retain_every_attempt_including_failures": true
+      }
+    },
+    "runtime_classes": {
+      "installed_cli_runtime": {
+        "mole": "<allowed>/mole/prefix/mole analyze --json <allowed>/common/fixture",
+        "sayaka": "<allowed>/sayaka/installation/package/bin/sayaka scan --json <allowed>/common/fixture"
+      },
+      "direct_verified_artifact_runtime": {
+        "mole": "<allowed>/mole/source/bin/analyze-go --json <allowed>/common/fixture",
+        "status": "planned_not_executed_in_this_phase"
+      }
+    }
+  }
+}

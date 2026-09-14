@@ -1,5 +1,14 @@
 # Testing policy
 
+C0 batch-2 collector regressions use unique owned workspaces and synthetic
+children; they do not execute Mole. The measurement runner keeps raw process
+captures private, stops on output limits or failed correctness/integrity gates,
+and requires a separately reviewed guard plus explicit execution authorization.
+Required setuid/setgid OS helpers are a blocked precondition, not a canary to
+execute with elevated permissions. A blocked preflight marks remaining probes
+as not run and prevents Phase B; current batch-2 preregistration also explicitly
+disallows runtime execution.
+
 ## Authorization and limits
 
 For this repository, contributors and coding agents are authorized to run local
@@ -105,6 +114,23 @@ The dedicated [M2 benchmark runner](../scripts/check_m2_benchmark.py) uses only
 generated fixtures and validates byte/count truth before accepting timing. Its
 [versioned budgets](../benchmarks/m2-v1.json) are local regression gates; a fast
 partial scan or an incomplete fixture is a failure, not a performance result.
+
+Guarded-host C0 batch-2 Phase A uses
+[`scripts/check_c0_batch2_phase_a.py`](../scripts/check_c0_batch2_phase_a.py)
+to validate pinned source/assets, stage an owned install root, freeze a sandbox
+profile hash, and execute owned allow/deny canaries (read/write/exec/network).
+This phase does not execute Mole program commands or collect performance samples.
+The current profile includes a runtime-only literal `"/"` read exception (not a
+recursive root allowlist) to avoid dyld bootstrap aborts while preserving denied
+child-path reads outside owned allow roots. It also includes metadata-only
+literal `"/System/Volumes/Data"` (no recursive subpath grant) to satisfy
+Sayaka's volume metadata lookup without expanding data-read scope. The final
+host preflight is blocked by required setuid `/bin/ps`; current canaries and the
+Sayaka control scan are marked `not_run_precondition`. Earlier successful
+runtime-only probes are historical validation, not current execution approval.
+The blocked record carries a nonzero exit and a concrete `blocked_prerequisite`
+code. Phase B remains disabled by the current manifest; any future execution
+requires a newly reviewed environment and explicit authorization.
 
 ## Required case inventory
 

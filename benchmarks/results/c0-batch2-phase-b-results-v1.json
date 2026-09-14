@@ -1,0 +1,135 @@
+{
+  "benchmark_id": "c0-batch2-phase-a-v1",
+  "phase": "B",
+  "status": "not_executed_phase_a_not_ready",
+  "execution_performed": false,
+  "manifest_sha256": "e78d6bbed7ba740bf67e1a03ec2da52b4a49a1b765ba04473a92eae0aba00885",
+  "phase_a_result_sha256": "fbf15ee24c0e3d5ed36e5094aa8f3601f65f68207f5fb963e207c47a54d60d37",
+  "approved_profile_sha256": "ce2424e7b59fe5742cb2fb12bb15c44aad9e68e5bea4e093f39d752ff7a83edf",
+  "phase_a_profile_sha256": "ce2424e7b59fe5742cb2fb12bb15c44aad9e68e5bea4e093f39d752ff7a83edf",
+  "scenario_id": "c0-b2-analyze-flat-regular-json-v1",
+  "pair_schedule": [
+    "BA",
+    "AB",
+    "BA",
+    "AB",
+    "BA",
+    "AB",
+    "BA",
+    "BA",
+    "AB",
+    "BA",
+    "BA",
+    "BA",
+    "BA",
+    "AB",
+    "BA",
+    "BA",
+    "AB",
+    "AB",
+    "AB",
+    "AB",
+    "BA",
+    "AB",
+    "BA",
+    "AB",
+    "BA",
+    "AB",
+    "BA",
+    "AB",
+    "AB",
+    "AB",
+    "AB"
+  ],
+  "ab_mapping": {
+    "A": "mole",
+    "B": "sayaka"
+  },
+  "pair_repetitions": 31,
+  "fixture_contract": {
+    "fixture_id": "c0-b2-flat-regular-v1",
+    "file_count": 1024,
+    "bytes_per_file": 4096,
+    "logical_bytes": 4194304,
+    "payload_seed": 260026
+  },
+  "phase_b_contract": {
+    "approved_profile_sha256": "ce2424e7b59fe5742cb2fb12bb15c44aad9e68e5bea4e093f39d752ff7a83edf",
+    "requires_operator_execute_flag": true,
+    "requires_phase_a_revalidation": true,
+    "output_public_sanitization": "relative synthetic paths only; no host absolute paths or private logs",
+    "runtime_profiles": {
+      "mole": {
+        "home": "allowed/mole/home",
+        "tmp": "allowed/mole/tmp",
+        "prefix": "allowed/mole/prefix",
+        "config": "allowed/mole/config",
+        "source": "allowed/mole/source"
+      },
+      "sayaka": {
+        "home": "allowed/sayaka/home",
+        "tmp": "allowed/sayaka/tmp",
+        "install_container": "allowed/sayaka/installation",
+        "prefix": "allowed/sayaka/installation/package",
+        "source_binary": "allowed/sayaka/source-binary/sayaka"
+      }
+    },
+    "measurement_retention": {
+      "keep_failures": true,
+      "keep_timeouts": true,
+      "keep_output_mismatch": true,
+      "keep_cleanup_failures": true
+    },
+    "cancellation": "not_measured",
+    "cancellation_reason": "no exact shared cancellation method preregistered for both tools in this scenario",
+    "measurement_fixed": {
+      "timestamp_points": [
+        "process_start_monotonic_ns",
+        "first_full_payload_monotonic_ns",
+        "process_exit_monotonic_ns"
+      ],
+      "first_useful_result_ms_definition": "first_full_payload_monotonic_ns - process_start_monotonic_ns",
+      "complete_result_ms_definition": "process_exit_monotonic_ns - process_start_monotonic_ns",
+      "timestamp_observation": "start before Popen; full-payload receipt before JSON parsing; completion immediately at wait4 return after bounded pipe capture",
+      "per_child_rss_source": "wait4 for the exact executed child, Darwin ru_maxrss bytes; never cumulative RUSAGE_CHILDREN",
+      "stdout_capture_cap_bytes": 8388608,
+      "stderr_capture_cap_bytes": 8388608,
+      "timeout_seconds_per_sample": 180,
+      "cache_policy": {
+        "fresh_home_per_run": true,
+        "fresh_tmp_per_run": true,
+        "fresh_xdg_per_run": true,
+        "global_os_cache_flush_allowed": false,
+        "integrity_reads_before_each_invocation": "fixture and installed program files are read and hashed; no OS-cold claim",
+        "warmup_per_tool": 1
+      },
+      "statistics": {
+        "p95": "nearest_rank",
+        "summary_requires_all_preregistered_measurement_samples_passed": true,
+        "retain_every_attempt_including_failures": true
+      }
+    },
+    "runtime_classes": {
+      "installed_cli_runtime": {
+        "mole": "<allowed>/mole/prefix/mole analyze --json <allowed>/common/fixture",
+        "sayaka": "<allowed>/sayaka/installation/package/bin/sayaka scan --json <allowed>/common/fixture"
+      },
+      "direct_verified_artifact_runtime": {
+        "mole": "<allowed>/mole/source/bin/analyze-go --json <allowed>/common/fixture",
+        "status": "planned_not_executed_in_this_phase"
+      }
+    }
+  },
+  "notes": [
+    "Phase B code path is implemented and gated by explicit --execute.",
+    "No Mole command/help/install/analyze/status was executed in this run."
+  ],
+  "phase_a_status": "blocked",
+  "phase_a_blocked_prerequisite": {
+    "code": "required_privileged_system_helper",
+    "detail": "The unchanged official install path requires a setuid/setgid OS helper; guarded-host execution forbids privilege transitions.",
+    "helpers": [
+      "/bin/ps"
+    ]
+  }
+}
