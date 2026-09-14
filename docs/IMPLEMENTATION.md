@@ -29,7 +29,7 @@ This document describes public technical responsibilities, not staffing or dates
 | C0: comparative evidence | Benchmark fixtures/harness and result manifests when implemented | Frozen capability cases, full-install size baseline, paired timing protocol, usability tasks | Starts with M0; harness grows with T1/T2 |
 | T7: interactive CLI | `crates/cli/`, terminal event/rendering and process fixtures | Discoverable menu/disk explorer, filtering, multiselect, preview, cancellation | T2; T3 for actions |
 | T8: full cleanup workflows | Rules, project/installer discovery and CLI flows | Clean/purge/installer task coverage with positive and protected cases | T5 and T7 |
-| T9: app management | App discovery/platform operations/rules and CLI flows | Installed-app removal and related-data selection with shared-state protection | T5 and T7 |
+| T9: app management | App discovery/platform operations/rules and CLI flows | Installed-app removal and related-data selection with shared-state protection. Current implemented slice: read-only `apps-related` attribution preview (no uninstall/delete authorization). | T5 and T7 |
 | T10: specific system maintenance | Platform diagnostics/restricted maintenance operations and CLI flows | Explicit preconditions, reviewed privilege boundaries, native outcomes | T3 and T7 |
 | T11: status monitoring | Bounded platform collectors and CLI rendering/streaming | Accurate and fresh metrics, JSON/NDJSON, alerts, measured collector overhead | T2 |
 | T12: CLI lifecycle and convenience | CLI history, installation/update/removal support and completion/launch integration | Verifiable lifecycle and explicit OS-auth convenience | T3; T10 boundary for authentication setup |

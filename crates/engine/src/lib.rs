@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app_inventory;
+pub mod app_related;
 pub mod clean_policy;
 pub mod execute;
 pub mod history;

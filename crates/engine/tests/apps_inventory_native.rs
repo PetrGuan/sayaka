@@ -3,7 +3,8 @@
 #![cfg(target_os = "macos")]
 
 use sayaka_engine::app_inventory::{
-    AppInventoryLimits, AppInventoryOptions, PathStatus, inventory_apps,
+    AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, PathStatus,
+    inventory_apps,
 };
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::scan::{ScanLimits, scan_prune_app_bundles};
@@ -57,6 +58,7 @@ fn run_inventory(roots: &[PathBuf]) -> sayaka_engine::app_inventory::AppInventor
             filter: String::new(),
             excludes: vec![],
             limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
         },
         &cancellation,
         Duration::from_secs(30),

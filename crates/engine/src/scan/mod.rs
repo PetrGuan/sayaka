@@ -13,10 +13,17 @@ mod walk;
 mod windows;
 
 use crate::model::{Cancellation, FileIdentity, ResourceKind};
+#[cfg(target_os = "macos")]
+use rustix::fd::OwnedFd;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+pub(crate) fn validate_local_internal_volume_fd(fd: &OwnedFd) -> Result<(), ScanError> {
+    macos::validate_local_internal_volume_fd(fd)
+}
 
 static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 
@@ -378,6 +385,7 @@ pub fn verify_entry(scope: &ScanEntry, entry: &ScanEntry) -> Result<(), ScanErro
             "invalid observation scope",
         ));
     }
+
     #[cfg(target_os = "macos")]
     {
         macos::verify_entry(scope, entry)

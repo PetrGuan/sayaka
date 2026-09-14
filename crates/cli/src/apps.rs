@@ -4,7 +4,8 @@ use crate::{human, output};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use sayaka_engine::app_inventory::{
     APP_INVENTORY_KIND, APP_INVENTORY_SCHEMA_VERSION, APP_INVENTORY_TOTAL_BUDGET, AppInventory,
-    AppInventoryLimits, AppInventoryOptions, StringField, StringState, inventory_apps,
+    AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, StringField,
+    StringState, inventory_apps,
 };
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::scan::{ScanCode, ScanError, display_path};
@@ -174,6 +175,7 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
                 filter,
                 excludes,
                 limits: AppInventoryLimits::default(),
+                metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             },
             &cancellation,
             remaining,

@@ -139,6 +139,8 @@ metadata-only executable-path existence checks:
 ```sh
 sayaka apps .
 sayaka apps . --json
+sayaka apps-related --app-root /Applications --library-root "$HOME/Library"
+sayaka apps-related --app-root /Applications --library-root "$HOME/Library" --json
 ```
 
 This command does **not** launch applications, load bundles, verify signatures,
