@@ -1,0 +1,48 @@
+{
+  "schema_id": "c0-batch2-results-schema-v1",
+  "required_top_level_fields": [
+    "benchmark_id",
+    "phase",
+    "status",
+    "manifest_path",
+    "manifest_sha256",
+    "result_schema_sha256",
+    "superseded_proofs",
+    "reference_lock",
+    "staged_source",
+    "source_audit",
+    "run_root",
+    "profile",
+    "source_helper_mapping",
+    "fixture_truth_lock",
+    "sayaka_staging",
+    "sayaka_control_scan",
+    "scenario",
+    "canaries",
+    "blocked_prerequisite",
+    "phase_b_gate"
+  ],
+  "status_values": [
+    "phase_a_ready",
+    "blocked"
+  ],
+  "canary_status_values": [
+    "passed",
+    "failed",
+    "not_run"
+  ],
+  "canary_classification_values": [
+    "passed",
+    "policy_denied",
+    "permission_or_exec",
+    "program_failed",
+    "timeout",
+    "not_found",
+    "sandbox_runtime_abort",
+    "not_run_precondition"
+  ],
+  "notes": [
+    "Nested structure is validated by scripts/check_c0_batch2_phase_a.py before writing result.",
+    "Public output keeps synthetic relative paths and classifications; raw transcripts stay private under run root."
+  ]
+}

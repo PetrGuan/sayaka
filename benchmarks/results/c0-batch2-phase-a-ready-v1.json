@@ -1,0 +1,456 @@
+{
+  "benchmark_id": "c0-batch2-phase-a-v1",
+  "phase": "A",
+  "status": "blocked",
+  "manifest_path": "benchmarks/c0-batch2-manifest-v1.json",
+  "manifest_sha256": "e78d6bbed7ba740bf67e1a03ec2da52b4a49a1b765ba04473a92eae0aba00885",
+  "result_schema_sha256": "478efc82ba11f62ce807f2134f827dedf00ccb636b4d399e23521880a03793d4",
+  "superseded_proofs": {
+    "invalidated_profile_hashes": [
+      "7cf711aa43bd56cdca5460cf0df6d5036d37728d26fe98797ce988fb40a33bfd",
+      "55bbe4bdef6efc0789e8707dc6d223ba3a779236aa42a6e22cd646eaee26706a"
+    ],
+    "reason": "Independent Phase A review rejected prior broad-read and weak canary profile; superseded records retained privately only."
+  },
+  "reference_lock": {
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+    "source_archive_sha256": "4de6c5ab78d2c723a6ff43418b52bfc5a229a8a01c98d9fe487a1bc42d3a73ac",
+    "source_archive_member_count": 292,
+    "assets": [
+      {
+        "name": "analyze-darwin-arm64",
+        "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb",
+        "size_bytes": 3620258
+      },
+      {
+        "name": "status-darwin-arm64",
+        "sha256": "46b8aded69d013d00f858908b02d35ea2d39087ccc474bcb8c2e65988fe0028e",
+        "size_bytes": 4065586
+      },
+      {
+        "name": "binaries-darwin-arm64.tar.gz",
+        "sha256": "3193b2322039680bf617f2e6794f85fbf1cad4992cc2457dd23c66e25b59db10",
+        "size_bytes": 3010562
+      },
+      {
+        "name": "SHA256SUMS",
+        "sha256": "faa5212910f42765a4e9707de6b924bb097a47968a7a562d4af46ddefcea05e0",
+        "size_bytes": 536
+      }
+    ]
+  },
+  "staged_source": {
+    "tree_sha256": "30be8fa00d943a7121146d3a7f526a57362ac789c4441f22ff94ee28e683c01e",
+    "archive_member_count": 291,
+    "archive_file_count": 246,
+    "canonical_helper_additions": [
+      {
+        "path": "bin/analyze-go",
+        "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb"
+      },
+      {
+        "path": "bin/status-go",
+        "sha256": "46b8aded69d013d00f858908b02d35ea2d39087ccc474bcb8c2e65988fe0028e"
+      }
+    ]
+  },
+  "source_audit": [
+    {
+      "id": "install-local-source-resolution",
+      "file": "install.sh",
+      "requirement_count": 2
+    },
+    {
+      "id": "install-preseeded-helper-priority",
+      "file": "install.sh",
+      "requirement_count": 2
+    },
+    {
+      "id": "install-files-and-verification-path",
+      "file": "install.sh",
+      "requirement_count": 3
+    },
+    {
+      "id": "analyze-dispatch-and-target-selection",
+      "file": "mole",
+      "requirement_count": 2
+    },
+    {
+      "id": "analyze-sh-wrapper",
+      "file": "bin/analyze.sh",
+      "requirement_count": 1
+    },
+    {
+      "id": "analyze-overview-default-and-system-roots",
+      "file": "cmd/analyze/main.go",
+      "requirement_count": 4
+    },
+    {
+      "id": "analyze-cache-and-helper-side-effects",
+      "file": "cmd/analyze/cache.go",
+      "requirement_count": 2
+    },
+    {
+      "id": "homebrew-probe-branch-still-reachable",
+      "file": "install.sh",
+      "requirement_count": 2
+    }
+  ],
+  "run_root": "target/c0-batch2/runs/run-52491-3dcc87bf",
+  "profile": {
+    "path": "target/c0-batch2/runs/run-52491-3dcc87bf/c0-b2.sb",
+    "sha256": "ce2424e7b59fe5742cb2fb12bb15c44aad9e68e5bea4e093f39d752ff7a83edf",
+    "helper_exec_allowlist": [
+      "/bin/sh",
+      "/usr/bin/lockf",
+      "/bin/cat",
+      "/bin/ps",
+      "/bin/rmdir",
+      "/bin/bash",
+      "/usr/bin/env",
+      "/usr/bin/dirname",
+      "/bin/cp",
+      "/bin/chmod",
+      "/bin/mv",
+      "/bin/mkdir",
+      "/bin/rm",
+      "/usr/bin/mktemp",
+      "/usr/bin/sed",
+      "/usr/bin/uname",
+      "/usr/bin/stat",
+      "/usr/bin/grep",
+      "/usr/bin/head",
+      "/bin/sleep",
+      "/bin/test",
+      "/usr/bin/true"
+    ]
+  },
+  "source_helper_mapping": {
+    "owned_executable_paths_for_phase_b_profile": [
+      {
+        "path": "allowed/mole/source/install.sh",
+        "role": "official installer script copy from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/mole",
+        "role": "launcher copied from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/bin/analyze.sh",
+        "role": "analyze wrapper copied from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/bin/status.sh",
+        "role": "status wrapper copied from pinned archive"
+      },
+      {
+        "path": "allowed/mole/source/bin/analyze-go",
+        "role": "canonical helper addition from verified asset"
+      },
+      {
+        "path": "allowed/mole/source/bin/status-go",
+        "role": "canonical helper addition from verified asset"
+      },
+      {
+        "path": "allowed/sayaka/source-binary/sayaka",
+        "role": "staged Sayaka comparator artifact inside allowed root"
+      },
+      {
+        "path": "allowed/sayaka/installation/package/bin/sayaka",
+        "role": "installed Sayaka comparator binary (Phase B execute only)"
+      }
+    ],
+    "execution_policy": "single frozen SBPL profile shared by Mole/Sayaka runtime, allowing only static OS helpers and ALLOWED_ROOT executables"
+  },
+  "fixture_truth_lock": {
+    "fixture_id": "c0-b2-flat-regular-v1",
+    "file_count": 1024,
+    "bytes_per_file": 4096,
+    "logical_bytes": 4194304,
+    "allocation_observed_bytes": 4194304,
+    "entries_sha256": "cf737067b3864cf2f410c50a7f6b70ea3b9b42d8e375496f9c23411697674ad6",
+    "run_identity": {
+      "fixture_root_device": 16777230,
+      "fixture_root_inode": 132895880
+    }
+  },
+  "sayaka_staging": {
+    "source_binary": "allowed/sayaka/source-binary/sayaka",
+    "sha256": "7bc576ab8ceaf137fa6b2f2482cd8afb4f20e6dfe92a0dc14df43f2ba7394cba"
+  },
+  "sayaka_control_scan": {
+    "status": "not_run",
+    "exit_code": null,
+    "classification": "not_run_precondition",
+    "stderr": "",
+    "normalized": null
+  },
+  "scenario": {
+    "scenario_id": "c0-b2-analyze-flat-regular-json-v1",
+    "ab_mapping": {
+      "A": "mole",
+      "B": "sayaka"
+    },
+    "pair_repetitions": 31,
+    "pair_schedule": [
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "BA",
+      "AB",
+      "BA",
+      "BA",
+      "BA",
+      "BA",
+      "AB",
+      "BA",
+      "BA",
+      "AB",
+      "AB",
+      "AB",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB",
+      "AB",
+      "AB",
+      "AB"
+    ],
+    "samples": [],
+    "performance_not_measured": true
+  },
+  "canaries": [
+    {
+      "id": "denied-signal-outside-sandbox",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "denied-process-info-outside-sandbox",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-rw",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "denied-read-owned-outside-allow",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "literal-root-runtime-only",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "denied-write-owned-outside-allow",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "denied-exec-readable-control",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "denied-network-loopback",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-sh",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-lockf",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-cat",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-ps",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-rmdir",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-bash",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-env",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-dirname",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-cp",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-chmod",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-mv",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-mkdir",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-rm",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-mktemp",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-sed",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-uname",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-stat",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-grep",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-head",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-sleep",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-test",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-helper-true",
+      "status": "not_run",
+      "classification": "not_run_precondition",
+      "exit_code": -1,
+      "stderr": ""
+    }
+  ],
+  "blocked_prerequisite": {
+    "code": "required_privileged_system_helper",
+    "detail": "The unchanged official install path requires a setuid/setgid OS helper; guarded-host execution forbids privilege transitions.",
+    "helpers": [
+      "/bin/ps"
+    ]
+  },
+  "phase_b_gate": {
+    "requires_independent_review": true,
+    "requires_parent_authorization": true,
+    "requires_phase_a_revalidation": true,
+    "prohibits_mole_execution_before_gate": true
+  }
+}
