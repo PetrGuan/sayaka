@@ -121,6 +121,14 @@ pub struct AppInventoryOptions {
     pub filter: String,
     pub excludes: Vec<PathBuf>,
     pub limits: AppInventoryLimits,
+    pub metadata_read_mode: AppInventoryMetadataReadMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AppInventoryMetadataReadMode {
+    #[default]
+    Baseline,
+    AppRelated,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +308,7 @@ pub struct AppRecord {
     pub short_version: StringField,
     pub build_version: StringField,
     pub package_type: StringField,
+    pub declared_product_dir_name: StringField,
     pub executable: ExecutableMetadata,
 }
 
@@ -442,6 +451,7 @@ struct ProbeContext<'a> {
     cancellation: &'a Cancellation,
     deadline: Instant,
     limits: AppInventoryLimits,
+    metadata_read_mode: AppInventoryMetadataReadMode,
     now: fn() -> Instant,
 }
 
@@ -555,6 +565,7 @@ fn inventory_apps_with_now(
         cancellation,
         deadline,
         limits,
+        metadata_read_mode: options.metadata_read_mode,
         now,
     };
 
@@ -924,6 +935,7 @@ fn inspect_bundle(
         short_version: parsed.short_version,
         build_version: parsed.build_version,
         package_type: parsed.package_type,
+        declared_product_dir_name: parsed.cr_product_dir_name,
         executable,
     })
 }
@@ -958,6 +970,7 @@ fn unknown_record(path: PathBuf, identity: FileIdentity) -> AppRecord {
         short_version: missing.clone(),
         build_version: missing.clone(),
         package_type: missing.clone(),
+        declared_product_dir_name: missing.clone(),
         executable: ExecutableMetadata {
             state: StringState::Missing,
             declared_value: None,
@@ -974,6 +987,7 @@ struct ParsedPlist {
     short_version: StringField,
     build_version: StringField,
     package_type: StringField,
+    cr_product_dir_name: StringField,
     executable: StringField,
 }
 
@@ -990,6 +1004,7 @@ fn missing_fields(format: PlistFormat) -> ParsedPlist {
         short_version: missing.clone(),
         build_version: missing.clone(),
         package_type: missing.clone(),
+        cr_product_dir_name: missing.clone(),
         executable: missing,
     }
 }
@@ -1110,7 +1125,11 @@ fn parse_xml_plist(
                         pending_value_name = Some(name.clone());
                         value_depth = 1;
                     } else if key_next_is_value {
-                        mark_selected_xml_not_string(&mut selected, pending_key.as_deref())?;
+                        mark_selected_xml_not_string(
+                            &mut selected,
+                            pending_key.as_deref(),
+                            context.metadata_read_mode,
+                        )?;
                         pending_key = None;
                         key_next_is_value = false;
                         pending_value_name = Some(name.clone());
@@ -1161,7 +1180,11 @@ fn parse_xml_plist(
                     && !in_string
                     && !in_key
                 {
-                    mark_selected_xml_not_string(&mut selected, pending_key.as_deref())?;
+                    mark_selected_xml_not_string(
+                        &mut selected,
+                        pending_key.as_deref(),
+                        context.metadata_read_mode,
+                    )?;
                     pending_key = None;
                     key_next_is_value = false;
                 }
@@ -1228,6 +1251,7 @@ fn parse_xml_plist(
                                     &mut selected,
                                     &key,
                                     &string_buffer,
+                                    context.metadata_read_mode,
                                     context.limits,
                                     budget,
                                 )?;
@@ -1376,11 +1400,12 @@ fn charge_xml_text_budget(
 fn mark_selected_xml_not_string(
     selected: &mut HashMap<&'static str, StringField>,
     key: Option<&str>,
+    read_mode: AppInventoryMetadataReadMode,
 ) -> Result<(), AppError> {
     let Some(key) = key else {
         return Ok(());
     };
-    let Some(name) = selected_key_index(key) else {
+    let Some(name) = selected_key_index(key, read_mode) else {
         return Ok(());
     };
     if selected.contains_key(name) {
@@ -1403,10 +1428,11 @@ fn set_selected_xml_field(
     selected: &mut HashMap<&'static str, StringField>,
     key: &str,
     value: &str,
+    read_mode: AppInventoryMetadataReadMode,
     limits: AppInventoryLimits,
     budget: &mut ProbeBudget,
 ) -> Result<(), AppError> {
-    let target = selected_key_index(key);
+    let target = selected_key_index(key, read_mode);
     let Some(name) = target else {
         return Ok(());
     };
@@ -1437,7 +1463,7 @@ fn set_selected_xml_field(
     Ok(())
 }
 
-fn selected_key_index(key: &str) -> Option<&'static str> {
+fn selected_key_index(key: &str, read_mode: AppInventoryMetadataReadMode) -> Option<&'static str> {
     match key {
         "CFBundleDisplayName" => Some("CFBundleDisplayName"),
         "CFBundleName" => Some("CFBundleName"),
@@ -1445,6 +1471,9 @@ fn selected_key_index(key: &str) -> Option<&'static str> {
         "CFBundleShortVersionString" => Some("CFBundleShortVersionString"),
         "CFBundleVersion" => Some("CFBundleVersion"),
         "CFBundlePackageType" => Some("CFBundlePackageType"),
+        "CrProductDirName" if read_mode == AppInventoryMetadataReadMode::AppRelated => {
+            Some("CrProductDirName")
+        }
         "CFBundleExecutable" => Some("CFBundleExecutable"),
         _ => None,
     }
@@ -1479,6 +1508,10 @@ fn parsed_from_selected(
         .get("CFBundlePackageType")
         .cloned()
         .unwrap_or(parsed.package_type);
+    parsed.cr_product_dir_name = selected
+        .get("CrProductDirName")
+        .cloned()
+        .unwrap_or(parsed.cr_product_dir_name);
     parsed.executable = selected
         .get("CFBundleExecutable")
         .cloned()
@@ -1760,7 +1793,7 @@ fn decode_top_dict(
         let Some(key) = decode_string(bytes, offsets, key_ref, context, budget)? else {
             continue;
         };
-        let Some(slot) = selected_key_index(&key) else {
+        let Some(slot) = selected_key_index(&key, context.metadata_read_mode) else {
             continue;
         };
         if selected.contains_key(slot) {
@@ -2483,11 +2516,19 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
 
     fn parse_xml_for_test(xml: &[u8]) -> ParsedPlist {
+        parse_xml_for_mode(xml, AppInventoryMetadataReadMode::Baseline)
+    }
+
+    fn parse_xml_for_mode(
+        xml: &[u8],
+        metadata_read_mode: AppInventoryMetadataReadMode,
+    ) -> ParsedPlist {
         let cancellation = Cancellation::default();
         let context = ProbeContext {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits: AppInventoryLimits::default(),
+            metadata_read_mode,
             now: wall_clock_now,
         };
         let mut budget = ProbeBudget::default();
@@ -2500,6 +2541,7 @@ mod tests {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             now: wall_clock_now,
         };
         let mut budget = ProbeBudget::default();
@@ -2507,6 +2549,63 @@ mod tests {
             Ok(_) => panic!("expected XML parser error"),
             Err(error) => error,
         }
+    }
+
+    fn parse_binary_for_mode(
+        bytes: &[u8],
+        metadata_read_mode: AppInventoryMetadataReadMode,
+    ) -> ParsedPlist {
+        let cancellation = Cancellation::default();
+        let context = ProbeContext {
+            cancellation: &cancellation,
+            deadline: Instant::now() + Duration::from_secs(1),
+            limits: AppInventoryLimits::default(),
+            metadata_read_mode,
+            now: wall_clock_now,
+        };
+        let mut budget = ProbeBudget::default();
+        parse_binary_plist(bytes, context, &mut budget).expect("binary parse")
+    }
+
+    fn single_entry_binary_plist(key: &str, value: &str) -> Vec<u8> {
+        let mut objects = Vec::new();
+        objects.push(vec![0xD1, 0x01, 0x02]);
+
+        let mut key_object = Vec::new();
+        if key.len() < 0x0f {
+            key_object.push(0x50 | key.len() as u8);
+        } else {
+            key_object.extend([0x5f, 0x10, key.len() as u8]);
+        }
+        key_object.extend(key.as_bytes());
+        objects.push(key_object);
+
+        let mut value_object = Vec::new();
+        if value.len() < 0x0f {
+            value_object.push(0x50 | value.len() as u8);
+        } else {
+            value_object.extend([0x5f, 0x10, value.len() as u8]);
+        }
+        value_object.extend(value.as_bytes());
+        objects.push(value_object);
+
+        let mut bytes = b"bplist00".to_vec();
+        let mut offsets = Vec::new();
+        for object in objects {
+            offsets.push(bytes.len() as u8);
+            bytes.extend(object);
+        }
+        let offset_table_start = bytes.len();
+        bytes.extend(offsets);
+
+        let mut trailer = [0u8; 32];
+        trailer[6] = 1;
+        trailer[7] = 1;
+        trailer[8..16].copy_from_slice(&3u64.to_be_bytes());
+        trailer[16..24].copy_from_slice(&0u64.to_be_bytes());
+        trailer[24..32].copy_from_slice(&(offset_table_start as u64).to_be_bytes());
+        bytes.extend(trailer);
+        bytes
     }
 
     fn synthetic_entry(path: &str, identity: FileIdentity) -> ScanEntry {
@@ -2606,6 +2705,45 @@ mod tests {
     }
 
     #[test]
+    fn cr_product_dir_name_is_opt_in_for_related_mode_xml() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CrProductDirName</key><string>Google/Chrome</string>
+</dict></plist>"#;
+        let baseline = parse_xml_for_mode(xml, AppInventoryMetadataReadMode::Baseline);
+        assert_eq!(baseline.cr_product_dir_name.state, StringState::Missing);
+        let related = parse_xml_for_mode(xml, AppInventoryMetadataReadMode::AppRelated);
+        assert_eq!(
+            related.cr_product_dir_name.value.as_deref(),
+            Some("Google/Chrome")
+        );
+    }
+
+    #[test]
+    fn cr_product_dir_name_is_opt_in_for_related_mode_binary() {
+        let binary = single_entry_binary_plist("CrProductDirName", "Google/Chrome");
+        let baseline = parse_binary_for_mode(&binary, AppInventoryMetadataReadMode::Baseline);
+        assert_eq!(baseline.cr_product_dir_name.state, StringState::Missing);
+        let related = parse_binary_for_mode(&binary, AppInventoryMetadataReadMode::AppRelated);
+        assert_eq!(
+            related.cr_product_dir_name.value.as_deref(),
+            Some("Google/Chrome")
+        );
+    }
+
+    #[test]
+    fn cr_product_dir_name_respects_selected_string_bounds() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CrProductDirName</key><integer>1</integer>
+</dict></plist>"#;
+        let related = parse_xml_for_mode(xml, AppInventoryMetadataReadMode::AppRelated);
+        assert_eq!(related.cr_product_dir_name.state, StringState::NotString);
+        let baseline = parse_xml_for_mode(xml, AppInventoryMetadataReadMode::Baseline);
+        assert_eq!(baseline.cr_product_dir_name.state, StringState::Missing);
+    }
+
+    #[test]
     fn xml_parser_marks_selected_non_string_types() {
         let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
@@ -2680,6 +2818,7 @@ mod tests {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits,
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             now: wall_clock_now,
         };
         let mut budget = ProbeBudget::default();
@@ -2715,6 +2854,7 @@ mod tests {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             now: wall_clock_now,
         };
         let excludes = vec![
@@ -2737,6 +2877,7 @@ mod tests {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             now: wall_clock_now,
         };
         let empty = ExclusionMatcher::build(&entries, &[], context).expect("empty matcher");
@@ -2767,6 +2908,7 @@ mod tests {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             now: wall_clock_now,
         };
         let identities = collect_excluded_identities(&entries, &excludes, context, || {
@@ -2789,6 +2931,7 @@ mod tests {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             now: wall_clock_now,
         };
         let mut budget = ProbeBudget::default();
@@ -2840,6 +2983,7 @@ mod tests {
                 filter: String::new(),
                 excludes: vec![],
                 limits: AppInventoryLimits::default(),
+                metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             },
             &cancellation,
             Duration::from_millis(1),
@@ -2881,6 +3025,7 @@ mod tests {
             cancellation: &cancellation,
             deadline: Instant::now() + Duration::from_secs(1),
             limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
             now: wall_clock_now,
         };
         let mut budget = ProbeBudget::default();

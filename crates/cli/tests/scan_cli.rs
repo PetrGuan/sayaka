@@ -325,6 +325,395 @@ fn apps_json_reports_inventory_without_effects() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn apps_metrics_do_not_change_with_cr_product_dir_name() {
+    let fixture = Fixture::new();
+    let with_key_root = fixture.root.join("with-key");
+    let without_key_root = fixture.root.join("without-key");
+    for (root, with_key) in [(&with_key_root, true), (&without_key_root, false)] {
+        let macos = root.join("Google Chrome.app/Contents/MacOS");
+        fs::create_dir_all(&macos).unwrap();
+        let cr = if with_key {
+            "<key>CrProductDirName</key><string>Google/Chrome</string>"
+        } else {
+            ""
+        };
+        fs::write(
+            root.join("Google Chrome.app/Contents/Info.plist"),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Google Chrome</string><key>CFBundleIdentifier</key><string>com.google.Chrome</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>chrome</string>{cr}</dict></plist>"#
+            ),
+        )
+        .unwrap();
+        fs::write(macos.join("chrome"), b"#!/bin/sh\n").unwrap();
+    }
+
+    let mut with_key = fixture.command();
+    with_key.args(["apps", with_key_root.to_str().unwrap(), "--json"]);
+    let with_key_output = capture(with_key);
+    assert!(matches!(with_key_output.status.code(), Some(0 | 3)));
+    let with_key_json: Value = serde_json::from_slice(&with_key_output.stdout).unwrap();
+
+    let mut without_key = fixture.command();
+    without_key.args(["apps", without_key_root.to_str().unwrap(), "--json"]);
+    let without_key_output = capture(without_key);
+    assert!(matches!(without_key_output.status.code(), Some(0 | 3)));
+    let without_key_json: Value = serde_json::from_slice(&without_key_output.stdout).unwrap();
+
+    assert_eq!(
+        with_key_json["metrics"]["retained_metadata_string_bytes"],
+        without_key_json["metrics"]["retained_metadata_string_bytes"]
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_uses_declared_product_dir_name_only_in_related_mode() {
+    let fixture = Fixture::new();
+    let with_key = fixture.root.join("WithKey.app/Contents/MacOS");
+    fs::create_dir_all(&with_key).unwrap();
+    fs::write(
+        fixture.root.join("WithKey.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Google Chrome</string><key>CFBundleIdentifier</key><string>com.google.Chrome</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>chrome</string><key>CrProductDirName</key><string>Google/Chrome</string></dict></plist>"#,
+    )
+    .unwrap();
+    fs::write(with_key.join("chrome"), b"#!/bin/sh\n").unwrap();
+
+    let without_key = fixture.root.join("WithoutKey.app/Contents/MacOS");
+    fs::create_dir_all(&without_key).unwrap();
+    fs::write(
+        fixture.root.join("WithoutKey.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Google Chrome</string><key>CFBundleIdentifier</key><string>com.google.Chrome</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>chrome</string></dict></plist>"#,
+    )
+    .unwrap();
+    fs::write(without_key.join("chrome"), b"#!/bin/sh\n").unwrap();
+
+    let library = fixture.base.join("home/Library");
+    fs::create_dir_all(library.join("Application Support/Google/Chrome")).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "apps-related",
+        "--app-root",
+        fixture.root.to_str().unwrap(),
+        "--library-root",
+        library.to_str().unwrap(),
+        "--json",
+    ]);
+    let output = capture(command);
+    assert!(matches!(output.status.code(), Some(0 | 3)));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let chrome_candidate = value["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|candidate| {
+            candidate["source_rule_id"] == "org.chromium.default_user_data.macos.v1"
+                && candidate["relative_library_path"] == "Application Support/Google/Chrome"
+        })
+        .unwrap();
+    let matched = chrome_candidate["matched_app_copy_ids"].as_array().unwrap();
+    assert_eq!(matched.len(), 1);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_requires_explicit_roots() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.arg("apps-related").arg("--json");
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_json_is_read_only_and_never_authorizes_actions() {
+    let fixture = Fixture::new();
+    let app = fixture.root.join("Firefox.app/Contents/MacOS");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        fixture.root.join("Firefox.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Firefox</string><key>CFBundleIdentifier</key><string>org.mozilla.firefox</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>firefox</string></dict></plist>"#,
+    )
+    .unwrap();
+    fs::write(app.join("firefox"), b"#!/bin/sh\n").unwrap();
+    fs::create_dir_all(
+        fixture
+            .base
+            .join("home/Library/Application Support/Firefox/Profiles"),
+    )
+    .unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "apps-related",
+        "--app-root",
+        fixture.root.to_str().unwrap(),
+        "--library-root",
+        fixture.base.join("home/Library").to_str().unwrap(),
+        "--json",
+    ]);
+    let output = capture(command);
+    assert!(matches!(output.status.code(), Some(0 | 3)));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "app_related_data_preview");
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["effects_performed"], false);
+    for candidate in value["candidates"].as_array().unwrap() {
+        assert_eq!(candidate["deletable"], false);
+        assert!(candidate["authorized_action"].is_null());
+        assert_eq!(
+            candidate["preview_disposition"],
+            "protect_for_manual_review"
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_json_preserves_malformed_plist_inventory_issue() {
+    let fixture = Fixture::new();
+    let app = fixture.root.join("Broken.app/Contents/MacOS");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        fixture.root.join("Broken.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Broken</string>"#,
+    )
+    .unwrap();
+    fs::write(app.join("broken"), b"#!/bin/sh\n").unwrap();
+    let library = fixture.base.join("home/Library");
+    fs::create_dir_all(library.join("Application Support/com.example.broken")).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "apps-related",
+        "--app-root",
+        fixture.root.to_str().unwrap(),
+        "--library-root",
+        library.to_str().unwrap(),
+        "--json",
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(3));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["status"], "partial");
+    assert_eq!(value["inventory_status"], "partial");
+    assert!(value["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["code"] == "malformed_plist"
+            && issue["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("plist"))
+    }));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_rejects_non_library_leaf_root() {
+    let fixture = Fixture::new();
+    let app = fixture.root.join("Demo.app/Contents/MacOS");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        fixture.root.join("Demo.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Demo</string><key>CFBundleIdentifier</key><string>com.example.demo</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>demo</string></dict></plist>"#,
+    )
+    .unwrap();
+    fs::write(app.join("demo"), b"#!/bin/sh\n").unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "apps-related",
+        "--app-root",
+        fixture.root.to_str().unwrap(),
+        "--library-root",
+        fixture.base.join("home").to_str().unwrap(),
+        "--json",
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "app_related_data_preview");
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["issues"][0]["code"], "invalid_root");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_filter_narrows_displayed_candidates_and_counters() {
+    let fixture = Fixture::new();
+    let chrome = fixture.root.join("Google Chrome.app/Contents/MacOS");
+    fs::create_dir_all(&chrome).unwrap();
+    fs::write(
+        fixture.root.join("Google Chrome.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Google Chrome</string><key>CFBundleIdentifier</key><string>com.google.Chrome</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>chrome</string><key>CrProductDirName</key><string>Google/Chrome</string></dict></plist>"#,
+    )
+    .unwrap();
+    fs::write(chrome.join("chrome"), b"#!/bin/sh\n").unwrap();
+    let demo = fixture.root.join("Demo.app/Contents/MacOS");
+    fs::create_dir_all(&demo).unwrap();
+    fs::write(
+        fixture.root.join("Demo.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Demo</string><key>CFBundleIdentifier</key><string>com.example.demo</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>demo</string></dict></plist>"#,
+    )
+    .unwrap();
+    fs::write(demo.join("demo"), b"#!/bin/sh\n").unwrap();
+    let library = fixture.base.join("home/Library");
+    fs::create_dir_all(library.join("Application Support/Google/Chrome")).unwrap();
+    fs::create_dir_all(library.join("Application Support/com.example.demo")).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "apps-related",
+        "--app-root",
+        fixture.root.to_str().unwrap(),
+        "--library-root",
+        library.to_str().unwrap(),
+        "--filter",
+        "Chrome",
+        "--json",
+    ]);
+    let output = capture(command);
+    assert!(matches!(output.status.code(), Some(0 | 3)));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let candidates = value["candidates"].as_array().unwrap();
+    assert!(!candidates.is_empty());
+    assert!(candidates.iter().all(|candidate| {
+        !candidate["relative_library_path"]
+            .as_str()
+            .unwrap()
+            .contains("com.example.demo")
+    }));
+    assert_eq!(value["counts"]["candidate_paths"], candidates.len());
+    assert_eq!(value["counts"]["protected_candidates"], candidates.len());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_human_output_stays_protective() {
+    let fixture = Fixture::new();
+    let app = fixture.root.join("Demo.app/Contents/MacOS");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        fixture.root.join("Demo.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Demo</string><key>CFBundleIdentifier</key><string>com.example.demo</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>demo</string></dict></plist>"#,
+    )
+    .unwrap();
+    fs::write(app.join("demo"), b"#!/bin/sh\n").unwrap();
+    let library = fixture.base.join("home/Library");
+    fs::create_dir_all(library.join("Application Support/com.example.demo")).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "apps-related",
+        "--app-root",
+        fixture.root.to_str().unwrap(),
+        "--library-root",
+        library.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert!(matches!(output.status.code(), Some(0 | 3)));
+    let text = String::from_utf8(output.stdout)
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(text.contains("effects_performed: false"));
+    for banned in ["safe to remove", "orphan", "reclaimable", "delete"] {
+        assert!(!text.contains(banned), "{banned}");
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_human_renders_scan_issues_and_preview_issues_with_escaped_text() {
+    let fixture = Fixture::new();
+    let broken = fixture.root.join("Broken.app/Contents/MacOS");
+    fs::create_dir_all(&broken).unwrap();
+    fs::write(
+        fixture.root.join("Broken.app/Contents/Info.plist"),
+        br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleDisplayName</key><string>Broken</string>"#,
+    )
+    .unwrap();
+    fs::write(broken.join("broken"), b"#!/bin/sh\n").unwrap();
+    let missing = fixture.root.join("missing\n\u{1b}[2J");
+    let library = fixture.base.join("home/Library");
+    fs::create_dir_all(&library).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "apps-related",
+        "--app-root",
+        fixture.root.to_str().unwrap(),
+        "--app-root",
+        missing.to_str().unwrap(),
+        "--library-root",
+        library.to_str().unwrap(),
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(3));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("scan issues:"));
+    assert!(text.contains("issues:"));
+    assert!(text.contains("not_found"));
+    assert!(text.contains("malformed_plist"));
+    assert!(text.contains("\\n"));
+    assert!(!text.contains('\x1b'));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn apps_related_missing_app_root_is_exit1_with_matching_human_and_json_diagnostic() {
+    let fixture = Fixture::new();
+    let missing = fixture.root.join("missing\n\u{1b}[2J");
+    let library = fixture.base.join("home/Library");
+    fs::create_dir_all(&library).unwrap();
+
+    let mut human = fixture.command();
+    human.args([
+        "apps-related",
+        "--app-root",
+        missing.to_str().unwrap(),
+        "--library-root",
+        library.to_str().unwrap(),
+    ]);
+    let human = capture(human);
+    assert_eq!(human.status.code(), Some(1));
+    let human_text = format!(
+        "{}{}",
+        String::from_utf8(human.stdout).unwrap(),
+        String::from_utf8(human.stderr).unwrap()
+    );
+    assert!(
+        human_text.contains("Path not found") || human_text.contains("not_found"),
+        "{human_text}"
+    );
+    assert!(human_text.contains("\\n"));
+    assert!(!human_text.contains('\x1b'));
+
+    let mut json = fixture.command();
+    json.args([
+        "apps-related",
+        "--app-root",
+        missing.to_str().unwrap(),
+        "--library-root",
+        library.to_str().unwrap(),
+        "--json",
+    ]);
+    let json = capture(json);
+    assert_eq!(json.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(value["kind"], "app_related_data_preview");
+    assert_eq!(value["status"], "failed");
+    let has_not_found = value["scan_issues"].as_array().is_some_and(|issues| {
+        issues.iter().any(|issue| {
+            issue["code"] == "not_found"
+                && issue["path"]["display"]
+                    .as_str()
+                    .is_some_and(|path| path.contains("\\n"))
+        })
+    }) || value["issues"].as_array().is_some_and(|issues| {
+        issues.iter().any(|issue| {
+            issue["code"] == "not_found"
+                && issue["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("\\n"))
+        })
+    });
+    assert!(has_not_found, "{value}");
+}
+
+#[test]
 fn rules_list_human_and_json_catalog_expose_read_only_actions() {
     let fixture = Fixture::new();
     let mut command = fixture.command();

@@ -38,6 +38,25 @@ fn volume_allowed(info: Result<VolumeInfo, std::io::Error>) -> Result<(), ScanEr
     }
 }
 
+pub(crate) fn validate_local_internal_volume_fd(fd: &OwnedFd) -> Result<(), ScanError> {
+    let volume = fs::fstatfs(fd).map_err(native_error)?;
+    if volume.f_flags & u32::try_from(libc::MNT_LOCAL).expect("positive MNT_LOCAL") == 0 {
+        return Err(ScanError::new(
+            ScanCode::UnsupportedVolume,
+            "network volumes are not scanned",
+        ));
+    }
+    let mount_bytes: Vec<u8> = volume
+        .f_mntonname
+        .iter()
+        .map(|byte| byte.cast_unsigned())
+        .collect();
+    let mount = CStr::from_bytes_until_nul(&mount_bytes)
+        .map_err(|_| ScanError::new(ScanCode::VolumeUnknown, "invalid native mount identity"))?;
+    let mount = Path::new(OsStr::from_bytes(mount.to_bytes()));
+    volume_allowed(volume_info(mount))
+}
+
 fn directory_flags() -> OFlags {
     // Public Darwin O_NOFOLLOW_ANY from <sys/fcntl.h>. It is mutually exclusive
     // with leaf-only NOFOLLOW. Unsupported kernels fail without a weaker retry.
@@ -137,23 +156,7 @@ impl Backend for MacBackend {
 
     fn open_root(&self, path: &Path) -> Result<Self::Directory, ScanError> {
         let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error)?;
-        let volume = fs::fstatfs(&fd).map_err(native_error)?;
-        if volume.f_flags & u32::try_from(libc::MNT_LOCAL).expect("positive MNT_LOCAL") == 0 {
-            return Err(ScanError::new(
-                ScanCode::UnsupportedVolume,
-                "network volumes are not scanned",
-            ));
-        }
-        let mount_bytes: Vec<u8> = volume
-            .f_mntonname
-            .iter()
-            .map(|byte| byte.cast_unsigned())
-            .collect();
-        let mount = CStr::from_bytes_until_nul(&mount_bytes).map_err(|_| {
-            ScanError::new(ScanCode::VolumeUnknown, "invalid native mount identity")
-        })?;
-        let mount = Path::new(OsStr::from_bytes(mount.to_bytes()));
-        volume_allowed(volume_info(mount))?;
+        validate_local_internal_volume_fd(&fd)?;
         MacDirectory::from_fd(fd)
     }
 }
