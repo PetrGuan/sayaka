@@ -18,12 +18,16 @@ An initial [terminal disk browser](docs/BROWSING.md) adds directory summaries,
 navigation, filtering, multiselect and exact M3 preview/confirmation:
 
 ```sh
+sayaka menu
 sayaka browse .
 sayaka browse . --plain
 ```
 
 The root must be explicit. Browsing and selecting do not modify files; directories
 remain read-only. Non-terminal output automatically uses the plain snapshot report.
+`sayaka menu` keeps that same boundary while adding a compact action chooser
+for browse, Python/Java rule previews, and the existing `clean --execute`
+approval flow.
 
 The initial [read-only system status](docs/STATUS.md) command adds native metrics,
 explicit freshness/error states and a bounded watch process:

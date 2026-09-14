@@ -66,6 +66,12 @@ impl Signals {
             None
         }
     }
+    pub fn interrupted(&self) -> bool {
+        self.interrupt.load(Ordering::Relaxed)
+    }
+    pub fn terminated(&self) -> bool {
+        self.terminate.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(unix)]
