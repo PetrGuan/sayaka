@@ -3,6 +3,9 @@
 `sayaka browse ROOT` (alias `analyze`) displays a bounded, read-only snapshot of
 one explicitly selected physical directory. No argument defaults to a home
 directory or current directory. Existing `scan` and its JSON v1 remain unchanged.
+`sayaka menu` is a separate terminal entry point that can launch `browse`,
+`rules preview`, or the existing `clean --execute` approval flow only after you
+pick an action and type an explicit root.
 
 ```sh
 sayaka browse .

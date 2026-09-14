@@ -186,6 +186,7 @@ fn completion_is_stdout_only_and_covers_current_commands() {
             "history",
             "status",
             "browse",
+            "menu",
             "rules",
             "installer",
             "clean",
@@ -200,6 +201,69 @@ fn completion_is_stdout_only_and_covers_current_commands() {
     }
     assert!(!fixture.base.join("home/.zshrc").exists());
     assert!(!fixture.base.join("home/.bashrc").exists());
+}
+
+#[test]
+fn menu_requires_interactive_terminal_and_preserves_fixture_state() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("still-there.txt"), b"owned fixture").unwrap();
+    let mut command = fixture.command();
+    command.arg("menu");
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("menu requires interactive stdin/stdout/stderr"));
+    assert_eq!(
+        fs::read(fixture.root.join("still-there.txt")).unwrap(),
+        b"owned fixture"
+    );
+    assert!(
+        fs::read_dir(fixture.base.join("state"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+fn menu_term_dumb_is_rejected_before_terminal_mode() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command();
+    command.arg("menu").env("TERM", "dumb");
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("TERM != dumb")
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn menu_pty_dispatch_signal_and_restore_lifecycle() {
+    let mut command = Command::new("python3");
+    command
+        .arg("scripts/check_menu_pty.py")
+        .arg("--binary")
+        .arg(env!("CARGO_BIN_EXE_sayaka"))
+        .current_dir(
+            env!("CARGO_MANIFEST_DIR")
+                .rsplit_once("/crates/cli")
+                .unwrap()
+                .0,
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = command.output().expect("run menu pty script");
+    assert!(
+        output.status.success(),
+        "menu PTY script failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
