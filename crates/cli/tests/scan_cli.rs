@@ -722,6 +722,7 @@ fn rules_list_human_and_json_catalog_expose_read_only_actions() {
     assert!(human.status.success());
     let text = String::from_utf8(human.stdout).unwrap();
     assert!(text.contains("org.python.cpython.pep3147.source_backed_pyc"));
+    assert!(text.contains("org.openjdk.javac.source_backed_class"));
     assert!(text.contains("preview_only"));
     assert!(text.contains("manual_review"));
 
@@ -731,13 +732,19 @@ fn rules_list_human_and_json_catalog_expose_read_only_actions() {
     assert_eq!(json.status.code(), Some(0));
     let value: Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(value["kind"], "rule_catalog");
-    assert_eq!(
-        value["rules"][0]["id"],
-        "org.python.cpython.pep3147.source_backed_pyc"
-    );
-    assert_eq!(value["rules"][0]["actions"][0], "preview_only");
-    assert_eq!(value["rules"][0]["actions"][1], "manual_review");
-    assert_eq!(value["rules"][0]["actions"][2], "explicit_native_trash");
+    let rules = value["rules"].as_array().unwrap();
+    assert!(rules.iter().any(|rule| {
+        rule["id"] == "org.python.cpython.pep3147.source_backed_pyc"
+            && rule["actions"][0] == "preview_only"
+            && rule["actions"][1] == "manual_review"
+            && rule["actions"][2] == "explicit_native_trash"
+    }));
+    assert!(rules.iter().any(|rule| {
+        rule["id"] == "org.openjdk.javac.source_backed_class"
+            && rule["actions"][0] == "preview_only"
+            && rule["actions"][1] == "manual_review"
+            && rule["actions"][2] == "explicit_native_trash"
+    }));
 }
 
 #[test]
@@ -901,6 +908,46 @@ fn rules_preview_json_reports_candidates_source_relation_refusals_and_no_effects
             .unwrap()
             .next()
             .is_none()
+    );
+}
+
+#[test]
+fn rules_preview_javac_json_reports_marker_and_source_relation() {
+    let fixture = Fixture::new();
+    let root = fixture.root.join("javac");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("Foo.java"), b"class Foo {}\n").unwrap();
+    fs::write(
+        root.join("Foo.class"),
+        [0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x3D],
+    )
+    .unwrap();
+    fs::write(root.join("Wrong.java"), b"class Wrong {}\n").unwrap();
+    fs::write(root.join("Wrong.class"), [0x00, 0x00, 0x00, 0x00]).unwrap();
+    let mut command = fixture.command();
+    command.args([
+        "rules",
+        "preview",
+        fixture.root.to_str().unwrap(),
+        "--rule",
+        "org.openjdk.javac.source_backed_class",
+        "--json",
+    ]);
+    let output = capture(command);
+    assert_eq!(output.status.code(), Some(3));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["rule_id"], "org.openjdk.javac.source_backed_class");
+    let candidates = value["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1);
+    let candidate = &candidates[0];
+    assert_eq!(candidate["source_relation"], "same_stem_sibling");
+    assert_eq!(candidate["observed_target_marker"], "cafebabe");
+    assert!(
+        value["refusals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|refusal| refusal["code"] == "target_marker_mismatch")
     );
 }
 
@@ -1207,6 +1254,71 @@ fn clean_preview_json_uses_policy_without_creating_absent_config() {
     assert_eq!(value["counts"]["eligible"], 1);
     assert!(!config.exists());
     assert!(!state.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn clean_default_rule_stays_cpython_and_explicit_rule_switches_to_javac() {
+    let fixture = Fixture::new();
+    let root = fixture.root.join("clean-rules");
+    fs::create_dir_all(root.join("pkg/__pycache__")).unwrap();
+    fs::create_dir_all(root.join("javac")).unwrap();
+    fs::write(root.join("pkg/module.py"), b"print('ok')\n").unwrap();
+    fs::write(
+        root.join("pkg/__pycache__/module.cpython-39.pyc"),
+        vec![1_u8; 16],
+    )
+    .unwrap();
+    fs::write(root.join("javac/Foo.java"), b"class Foo {}\n").unwrap();
+    fs::write(
+        root.join("javac/Foo.class"),
+        [0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x3D],
+    )
+    .unwrap();
+
+    let mut default_clean = fixture.command();
+    default_clean.args(["clean", root.to_str().unwrap(), "--json"]);
+    let default_out = capture(default_clean);
+    assert_eq!(default_out.status.code(), Some(0));
+    let default_json: Value = serde_json::from_slice(&default_out.stdout).unwrap();
+    assert_eq!(
+        default_json["rule_id"],
+        "org.python.cpython.pep3147.source_backed_pyc"
+    );
+    assert_eq!(default_json["counts"]["filtered"], 1);
+    assert!(
+        default_json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| {
+                item["target"]
+                    .as_str()
+                    .is_some_and(|path| path.contains("__pycache__"))
+            })
+    );
+
+    let mut javac_clean = fixture.command();
+    javac_clean.args([
+        "clean",
+        root.to_str().unwrap(),
+        "--rule",
+        "org.openjdk.javac.source_backed_class",
+        "--json",
+    ]);
+    let javac_out = capture(javac_clean);
+    assert_eq!(javac_out.status.code(), Some(0));
+    let javac_json: Value = serde_json::from_slice(&javac_out.stdout).unwrap();
+    assert_eq!(
+        javac_json["rule_id"],
+        "org.openjdk.javac.source_backed_class"
+    );
+    assert_eq!(javac_json["counts"]["filtered"], 1);
+    assert!(javac_json["items"].as_array().unwrap().iter().all(|item| {
+        item["target"]
+            .as_str()
+            .is_some_and(|path| path.contains("Foo.class"))
+    }));
 }
 
 #[test]

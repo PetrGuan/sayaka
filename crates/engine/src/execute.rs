@@ -518,6 +518,7 @@ impl CleanSession {
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_rule_selection(
         _: Scope,
+        _: &str,
         _: &[crate::rules::RuleCandidate],
         _: &[PathBuf],
         _: crate::clean_policy::ConfigPath,

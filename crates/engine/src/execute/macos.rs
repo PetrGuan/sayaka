@@ -5,8 +5,8 @@ use crate::clean_policy::{self, ConfigPath, PolicyFileState, PolicyGuardStatus, 
 use crate::journal::{CleanPolicyContextRecord, CleanPolicyIdentityRecord, CleanPolicyPathRecord};
 use crate::rules;
 use sayaka_platform_macos::{
-    NativeFileInfo, NativeLastGuard, NativeRuleBindingWitness, NativeTrashOutcome,
-    NativeWitnessInfo, TrashCandidate,
+    NativeFileInfo, NativeLastGuard, NativeRuleBindingWitness, NativeTargetMarker,
+    NativeTrashOutcome, NativeWitnessInfo, TrashCandidate,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -220,7 +220,9 @@ impl TrashSession {
         excluded: &[PathBuf],
         cancellation: &Cancellation,
     ) -> io::Result<Self> {
-        if rule_id != rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID {
+        let metadata = rules::binding_metadata(rule_id)
+            .ok_or_else(|| journal::invalid("unsupported rule for native trash"))?;
+        if metadata.rule_id != rule_id {
             return Err(journal::invalid("unsupported rule for native trash"));
         }
         if paths.is_empty()
@@ -262,13 +264,19 @@ impl TrashSession {
                     "cancelled during preview",
                 ));
             }
-            let selection = rules::explicit_selection_for_target(path).ok_or_else(|| {
-                journal::invalid("selected path is not a CPython __pycache__ .pyc")
-            })?;
-            let candidate = TrashCandidate::capture_with_source(
+            let selection =
+                rules::explicit_selection_for_rule_target(rule_id, path).ok_or_else(|| {
+                    journal::invalid("selected path is not a supported explicit rule target")
+                })?;
+            let marker = match selection.marker {
+                rules::RuleTargetMarker::None => None,
+                rules::RuleTargetMarker::Prefix4(bytes) => Some(NativeTargetMarker::Prefix4(bytes)),
+            };
+            let candidate = TrashCandidate::capture_with_source_and_marker(
                 scope.root(),
                 &selection.target_path,
                 &selection.source_path,
+                marker,
                 scope.protected_paths(),
             )?;
             platform.candidates.insert(path.to_owned(), candidate);
@@ -316,7 +324,7 @@ impl TrashSession {
                 .ok_or_else(|| journal::invalid("missing rule-bound witness"))?;
             bindings.insert(
                 item.resource(),
-                Self::to_rule_binding(rule_id, &scope, excluded, witness)?,
+                Self::to_rule_binding(metadata, &scope, excluded, witness)?,
             );
         }
         let preview = planner
@@ -337,19 +345,19 @@ impl TrashSession {
     }
 
     fn to_rule_binding(
-        rule_id: &str,
+        metadata: rules::RuleBindingMetadata,
         scope: &Scope,
         excluded: &[PathBuf],
         witness: &NativeRuleBindingWitness,
     ) -> io::Result<RuleBinding> {
         Ok(RuleBinding {
             schema_version: 1,
-            rule_id: rule_id.to_owned(),
-            rule_version: rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
-            ruleset_schema_version: rules::RULESET_SCHEMA_VERSION,
-            ruleset_revision: rules::BUILTIN_RULESET_REVISION,
-            semantics: rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS.to_owned(),
-            semantics_digest: rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST.to_owned(),
+            rule_id: metadata.rule_id.to_owned(),
+            rule_version: metadata.rule_version,
+            ruleset_schema_version: metadata.ruleset_schema_version,
+            ruleset_revision: metadata.ruleset_revision,
+            semantics: metadata.semantics.to_owned(),
+            semantics_digest: metadata.semantics_digest.to_owned(),
             selected_root: scope.root().to_path_buf(),
             exclusions: excluded.to_vec(),
             target: Self::to_witness(&witness.target)?,
@@ -366,7 +374,7 @@ impl TrashSession {
                 .map(Self::to_witness)
                 .collect::<io::Result<Vec<_>>>()?,
             warnings: vec![
-                "Metadata-only rule checks do not validate .pyc contents or Python interpreter availability.".into(),
+                "Marker/source evidence is bounded identity metadata only; provenance and rebuild success are not guaranteed.".into(),
                 "A file or ancestor replaced after the last check can still move a different object.".into(),
                 "Trash does not guarantee restoration and does not measure freed space.".into(),
             ],
@@ -484,6 +492,7 @@ pub struct CleanSession {
 impl CleanSession {
     pub fn prepare_rule_selection(
         scope: Scope,
+        rule_id: &str,
         candidates: &[rules::RuleCandidate],
         selected_paths: &[PathBuf],
         config: ConfigPath,
@@ -498,7 +507,10 @@ impl CleanSession {
         let mut discovered = HashMap::new();
         for candidate in candidates {
             if let FileIdentity::Unix { device, inode } = candidate.target_identity {
-                discovered.insert(candidate.target_path.clone(), (device, inode));
+                discovered.insert(
+                    candidate.target_path.clone(),
+                    (candidate.rule_id, device, inode),
+                );
             }
         }
         for selected in selected_paths {
@@ -511,19 +523,28 @@ impl CleanSession {
         let root = scope.root().to_path_buf();
         let inner = TrashSession::prepare_rule_selection(
             scope,
-            rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
+            rule_id,
             selected_paths,
             &policy_snapshot.effective_exclusions,
             cancellation,
         )?;
         let preview = inner.preview().clone();
         for item in preview.items() {
-            let Some((expected_device, expected_inode)) = discovered.get(item.observation().path())
+            let Some((expected_rule, expected_device, expected_inode)) =
+                discovered.get(item.observation().path())
             else {
                 return Err(journal::invalid(
                     "selected candidate is missing from discovery set",
                 ));
             };
+            if item
+                .rule_binding()
+                .is_none_or(|binding| binding.rule_id() != *expected_rule)
+            {
+                return Err(journal::invalid(
+                    "selected candidate rule binding changed; rerun clean preview",
+                ));
+            }
             let Some(FileIdentity::Unix { device, inode }) = item.observation().snapshot().identity
             else {
                 return Err(journal::invalid(

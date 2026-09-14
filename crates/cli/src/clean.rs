@@ -17,7 +17,7 @@ const MAX_SELECTIONS: usize = 32;
 pub fn command() -> Command {
     Command::new("clean")
         .about(
-            "Discover CPython source-backed .pyc candidates and clean them with explicit approval",
+            "Discover rule-backed candidates and clean them with explicit approval (CPython by default)",
         )
         .arg(
             Arg::new("root")
@@ -38,6 +38,12 @@ pub fn command() -> Command {
                 .action(ArgAction::Append)
                 .value_parser(value_parser!(PathBuf))
                 .help("Explicit candidate target paths from this preview (repeatable, max 32)"),
+        )
+        .arg(
+            Arg::new("rule")
+                .long("rule")
+                .value_name("RULE_ID")
+                .help("Rule ID from `sayaka rules list`; default keeps CPython clean behavior"),
         )
         .arg(
             Arg::new("execute")
@@ -174,15 +180,20 @@ fn run_clean(args: &ArgMatches) -> io::Result<u8> {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "root is required"))?,
     )?;
     let cancellation = Cancellation::default();
+    let rule_id = args
+        .get_one::<String>("rule")
+        .map(String::as_str)
+        .unwrap_or(rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID);
+    if !rules::is_builtin_rule(rule_id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unknown clean rule ID",
+        ));
+    }
     let limits = ScanLimits::default();
     let report = scan::scan(std::slice::from_ref(&root), &limits, &cancellation, |_| {})
         .map_err(|error| io::Error::other(error.to_string()))?;
-    let preview = rules::preview(
-        report,
-        rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
-        &cancellation,
-    )
-    .map_err(map_preview_error)?;
+    let preview = rules::preview(report, rule_id, &cancellation).map_err(map_preview_error)?;
     let policy = clean_policy::snapshot_for_root(&config, &root)?;
     let filter = args
         .get_one::<String>("filter")
@@ -238,6 +249,9 @@ fn run_clean(args: &ArgMatches) -> io::Result<u8> {
             "kind": "clean_preview",
             "status": if preview.status == ScanStatus::Cancelled.as_str() { "cancelled" } else { "preview" },
             "root": display_path(&root),
+            "rule_id": preview.rule_id,
+            "rule_version": preview.rule_version,
+            "ruleset_revision": preview.ruleset_revision,
             "policy_file_state": json_policy_state(&policy.file_state),
             "missing_attention_entries": policy
                 .missing_attention_entries
@@ -278,6 +292,7 @@ fn run_clean(args: &ArgMatches) -> io::Result<u8> {
     }
     print_preview_human(
         &root,
+        &preview,
         &policy,
         &candidates,
         &selected_set,
@@ -314,6 +329,7 @@ fn run_clean(args: &ArgMatches) -> io::Result<u8> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let mut session = CleanSession::prepare_rule_selection(
         scope,
+        rule_id,
         &preview.candidates,
         &eligible_selected,
         config.clone(),
@@ -568,6 +584,7 @@ fn run_exclusions(args: &ArgMatches) -> io::Result<u8> {
 
 fn print_preview_human(
     root: &Path,
+    preview: &sayaka_engine::rules::RulePreview,
     policy: &clean_policy::PolicySnapshot,
     candidates: &[&sayaka_engine::rules::RuleCandidate],
     selected_set: &BTreeSet<&Path>,
@@ -575,6 +592,11 @@ fn print_preview_human(
 ) -> io::Result<()> {
     let mut out = io::stdout().lock();
     writeln!(out, "Clean preview root: {}", display_path(root))?;
+    writeln!(
+        out,
+        "Rule: {} v{} (ruleset r{})",
+        preview.rule_id, preview.rule_version, preview.ruleset_revision
+    )?;
     writeln!(out, "Candidates: {}", candidates.len())?;
     for candidate in candidates {
         writeln!(

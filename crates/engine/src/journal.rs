@@ -447,6 +447,43 @@ pub(crate) fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
+#[cfg(unix)]
+fn known_rule_binding_tuple(binding: &RuleBindingRecord) -> bool {
+    let current_cpython = (
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+        crate::rules::RULESET_SCHEMA_VERSION,
+        crate::rules::BUILTIN_RULESET_REVISION,
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS,
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST,
+    );
+    let historical_cpython_r2 = (
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID,
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION,
+        crate::rules::RULESET_SCHEMA_VERSION,
+        2_u32,
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS,
+        crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST,
+    );
+    let current_javac = (
+        crate::rules::JAVAC_SOURCE_BACKED_CLASS_RULE_ID,
+        crate::rules::JAVAC_SOURCE_BACKED_CLASS_RULE_VERSION,
+        crate::rules::RULESET_SCHEMA_VERSION,
+        crate::rules::BUILTIN_RULESET_REVISION,
+        crate::rules::JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS,
+        crate::rules::JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS_DIGEST,
+    );
+    let observed = (
+        binding.rule_id.as_str(),
+        binding.rule_version,
+        binding.ruleset_schema_version,
+        binding.ruleset_revision,
+        binding.semantics.as_str(),
+        binding.semantics_digest.as_str(),
+    );
+    observed == current_cpython || observed == historical_cpython_r2 || observed == current_javac
+}
+
 fn validate_rule_binding(item: &ItemRecord, binding: &RuleBindingRecord) -> io::Result<()> {
     #[cfg(not(unix))]
     {
@@ -457,17 +494,11 @@ fn validate_rule_binding(item: &ItemRecord, binding: &RuleBindingRecord) -> io::
     }
     #[cfg(unix)]
     if binding.schema_version != 1
-        || binding.rule_id != crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_ID
-        || binding.rule_version != crate::rules::CPYTHON_SOURCE_BACKED_PYC_RULE_VERSION
-        || binding.ruleset_schema_version != crate::rules::RULESET_SCHEMA_VERSION
-        || binding.ruleset_revision != crate::rules::BUILTIN_RULESET_REVISION
-        || binding.semantics != crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS
-        || binding.semantics_digest
-            != crate::rules::CPYTHON_SOURCE_BACKED_PYC_TRASH_SEMANTICS_DIGEST
         || binding.warnings.is_empty()
         || binding.target_ancestors.len() > MAX_ITEMS
         || binding.source_ancestors.len() > MAX_ITEMS
         || binding.exclusions.len() > MAX_ITEMS
+        || !known_rule_binding_tuple(binding)
     {
         return Err(invalid("invalid rule binding metadata"));
     }
@@ -563,10 +594,13 @@ fn validate_rule_binding(item: &ItemRecord, binding: &RuleBindingRecord) -> io::
         {
             return Err(invalid("target/source path is outside selected root"));
         }
-        let expected = crate::rules::explicit_selection_for_target(&target_path)
-            .ok_or_else(|| invalid("target path does not match CPython explicit rule"))?;
+        let expected =
+            crate::rules::explicit_selection_for_rule_target(&binding.rule_id, &target_path)
+                .ok_or_else(|| invalid("target path does not match explicit rule"))?;
         if expected.source_path != source_path {
-            return Err(invalid("source path does not match CPython sibling source"));
+            return Err(invalid(
+                "source path does not match explicit sibling source",
+            ));
         }
         validate_ancestor_chain(
             &selected_root,
@@ -1058,6 +1092,56 @@ mod tests {
             warnings: vec!["metadata-only".into()],
         });
         value.validate().unwrap();
+        let mut historical = value.clone();
+        historical.items[0]
+            .rule_binding
+            .as_mut()
+            .unwrap()
+            .ruleset_revision = 2;
+        historical.validate().unwrap();
+        let mut javac = value.clone();
+        javac.items[0].path = NativePath::unix_fixture("/fixture/pkg/Foo.class");
+        javac.items[0].rule_binding.as_mut().unwrap().rule_id =
+            crate::rules::JAVAC_SOURCE_BACKED_CLASS_RULE_ID.into();
+        let binding = javac.items[0].rule_binding.as_mut().unwrap();
+        binding.rule_version = crate::rules::JAVAC_SOURCE_BACKED_CLASS_RULE_VERSION;
+        binding.ruleset_revision = crate::rules::BUILTIN_RULESET_REVISION;
+        binding.semantics = crate::rules::JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS.into();
+        binding.semantics_digest =
+            crate::rules::JAVAC_SOURCE_BACKED_CLASS_TRASH_SEMANTICS_DIGEST.into();
+        binding.target.path = NativePath::unix_fixture("/fixture/pkg/Foo.class");
+        binding.source.path = NativePath::unix_fixture("/fixture/pkg/Foo.java");
+        binding.target_ancestors = vec![RuleWitnessRecord {
+            path: NativePath::unix_fixture("/fixture/pkg"),
+            device: 1,
+            inode: 4,
+            kind: "directory".into(),
+            logical_bytes: 0,
+            modified: NativeTime::from_system_time(UNIX_EPOCH),
+            changed: NativeTime::from_system_time(UNIX_EPOCH),
+            created: NativeTime::from_system_time(UNIX_EPOCH),
+            uid: 1,
+            gid: 1,
+            mode: 0o040700,
+            nlink: 1,
+            flags: 0,
+        }];
+        binding.source_ancestors = vec![RuleWitnessRecord {
+            path: NativePath::unix_fixture("/fixture/pkg"),
+            device: 1,
+            inode: 4,
+            kind: "directory".into(),
+            logical_bytes: 0,
+            modified: NativeTime::from_system_time(UNIX_EPOCH),
+            changed: NativeTime::from_system_time(UNIX_EPOCH),
+            created: NativeTime::from_system_time(UNIX_EPOCH),
+            uid: 1,
+            gid: 1,
+            mode: 0o040700,
+            nlink: 1,
+            flags: 0,
+        }];
+        javac.validate().unwrap();
 
         let mut tampered = value.clone();
         tampered.items[0].rule_binding.as_mut().unwrap().rule_id = "evil".into();
