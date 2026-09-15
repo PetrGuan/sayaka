@@ -63,6 +63,7 @@ mod tests {
                 "status",
                 "history",
                 "rules",
+                "installer",
                 "completions",
                 "install",
                 "update",
@@ -71,6 +72,21 @@ mod tests {
             ] {
                 assert!(output.contains(name), "{shell}: {name}");
             }
+        }
+    }
+
+    #[test]
+    fn installer_completion_exposes_selection_and_confirmation_flags() {
+        let output = String::from_utf8(generate(Shell::Fish).unwrap()).unwrap();
+        let installer_lines = output
+            .lines()
+            .filter(|line| line.contains("installer"))
+            .collect::<Vec<_>>();
+        for option in ["select", "execute", "state-dir"] {
+            assert!(
+                installer_lines.iter().any(|line| line.contains(option)),
+                "{option}"
+            );
         }
     }
 }

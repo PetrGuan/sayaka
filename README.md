@@ -26,8 +26,9 @@ sayaka browse . --plain
 The root must be explicit. Browsing and selecting do not modify files; directories
 remain read-only. Non-terminal output automatically uses the plain snapshot report.
 `sayaka menu` keeps that same boundary while adding a compact action chooser
-for browse, Python/Java rule previews, and the existing `clean --execute`
-approval flow.
+for browse, Python/Java rule previews, installer files, and the existing
+`clean --execute` / `installer --execute` approval flows. Preview stays the
+default; neither flow preselects cleanup targets.
 
 The initial [read-only system status](docs/STATUS.md) command adds native metrics,
 explicit freshness/error states and a bounded watch process:
@@ -127,12 +128,14 @@ freed space, and candidate actions remain `preview_only` / `manual_review`.
 source/target rule witnesses in the v3 plan and v2 journal, and still uses the
 same exact interactive `trash N` confirmation for `--execute`.
 
-Installer preview (read-only, explicit root only) can distinguish ordinary
+Installer discovery (read-only by default, explicit root only) can distinguish ordinary
 `.dmg`/`.pkg` names from bounded structural hints:
 
 ```sh
 sayaka installer .
 sayaka installer . --filter pkg --exclude ./archive --json
+sayaka installer . --select ./Example.dmg --json
+sayaka installer . --execute
 ```
 
 This command does **not** mount images, execute installers, read payload files,
@@ -140,6 +143,11 @@ validate signatures, read quarantine/origin URLs, or check installed receipts.
 Results are structural hints only (`udif_koly_footer`, `xar_flat_pkg_manifest_hint`,
 `xar_archive_not_pkg`) and may remain unknown/unsupported/corrupt. See
 [installer preview contract](docs/INSTALLER_PREVIEW.md).
+Explicit selection is limited to recognized current-user single-link ordinary
+files from a complete preview. `--execute` requires terminal selection and the
+exact `trash N` phrase after a sealed native plan; there is no implicit all/yes.
+It uses the existing revalidated Trash contract, not permanent deletion or
+application uninstall. Format hints are not proof that a file is safe to discard.
 
 Application inventory (read-only, explicit roots only) can discover `.app`
 bundle candidates with bounded `Contents/Info.plist` metadata and optional

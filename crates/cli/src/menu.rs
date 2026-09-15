@@ -409,7 +409,9 @@ impl App {
                     .get(index)
                     .ok_or_else(|| io::Error::other("action index out of range"))?;
                 match action.kind {
-                    ActionKind::PythonRule | ActionKind::JavaRule => {
+                    ActionKind::PythonRule
+                    | ActionKind::JavaRule
+                    | ActionKind::InstallerPreview => {
                         self.screen = Screen::RuleMode {
                             index,
                             root,
@@ -490,7 +492,16 @@ impl App {
                     index,
                     input: root.display().to_string(),
                 };
-                self.status = "Rule mode cancelled.".into();
+                self.status = if self
+                    .actions
+                    .get(index)
+                    .is_some_and(|action| matches!(action.kind, ActionKind::InstallerPreview))
+                {
+                    "Installer mode cancelled."
+                } else {
+                    "Rule mode cancelled."
+                }
+                .into();
                 Ok(Outcome::None)
             }
             KeyCode::Enter | KeyCode::Right => {
@@ -513,7 +524,7 @@ impl App {
                 if matches!(mode, RuleMode::Approval) && !action.approval_enabled {
                     self.status = action
                         .approval_disabled_reason
-                        .unwrap_or("Rule approval is not available on this host.")
+                        .unwrap_or("Approval is not available on this host.")
                         .to_string();
                     self.screen = Screen::RuleMode {
                         index,
@@ -686,17 +697,36 @@ impl App {
                     .get(*index)
                     .is_some_and(|action| action.approval_enabled);
                 lines.push(Line {
-                    text: "Choose rule action mode".into(),
+                    text: if self
+                        .actions
+                        .get(*index)
+                        .is_some_and(|action| matches!(action.kind, ActionKind::InstallerPreview))
+                    {
+                        "Choose installer action mode"
+                    } else {
+                        "Choose rule action mode"
+                    }
+                    .into(),
                     style: Style::Header,
                 });
-                for (index, option) in [
-                    "Preview candidates (read-only rules preview)",
-                    "Enter existing approval flow (clean --execute)",
-                    "Back",
-                ]
-                .iter()
-                .enumerate()
+                let options = if self
+                    .actions
+                    .get(*index)
+                    .is_some_and(|action| matches!(action.kind, ActionKind::InstallerPreview))
                 {
+                    [
+                        "Preview installer candidates (read-only)",
+                        "Enter installer approval flow (installer --execute)",
+                        "Back",
+                    ]
+                } else {
+                    [
+                        "Preview candidates (read-only rules preview)",
+                        "Enter existing approval flow (clean --execute)",
+                        "Back",
+                    ]
+                };
+                for (index, option) in options.iter().enumerate() {
                     let disabled_approval = index == 1 && !approval_enabled;
                     lines.push(Line {
                         text: if disabled_approval {
@@ -721,7 +751,7 @@ impl App {
                     lines.push(Line {
                         text: action
                             .approval_disabled_reason
-                            .unwrap_or("Rule approval is unavailable on this host.")
+                            .unwrap_or("Approval is unavailable on this host.")
                             .to_string(),
                         style: Style::Warning,
                     });
@@ -784,7 +814,7 @@ fn trim_frame(mut lines: Vec<Line>, height: usize) -> Vec<Line> {
 
 fn help_lines() -> Vec<String> {
     vec![
-        "Actions: browse, Python/Java rule previews, approval-flow entry, installer preview, app inventory.".into(),
+        "Actions: browse, Python/Java rules, installer preview/approval, app inventory.".into(),
         "Every action requires a typed root path. Empty/default roots are rejected.".into(),
         "Rule mode separates read-only preview from clean --execute approval flow.".into(),
         "No --yes and no preselected --select targets are passed by menu dispatch.".into(),
@@ -909,15 +939,18 @@ fn action_catalog() -> io::Result<Vec<Action>> {
         ),
         Action {
             kind: ActionKind::InstallerPreview,
-            label: "Installer preview",
-            summary: "Read-only installer-format discovery.",
+            label: "Installer files",
+            summary: "Installer-format preview and explicit file approval.",
             enabled: cfg!(target_os = "macos"),
             disabled_reason: (!cfg!(target_os = "macos"))
                 .then_some("Installer preview acceptance is currently macOS-only."),
-            approval_enabled: false,
-            approval_disabled_reason: None,
+            approval_enabled: cfg!(target_os = "macos"),
+            approval_disabled_reason: (!cfg!(target_os = "macos"))
+                .then_some("Installer approval is currently macOS-only."),
             details: vec![
-                "Preview-only; no mounts, installs, or deletions.".into(),
+                "Preview is read-only; no mounts, installs, or execution of package contents.".into(),
+                "Only recognized current-user ordinary files from a complete preview may be selected.".into(),
+                "Approval requires exact confirmation; no default selection or permanent-delete fallback.".into(),
                 "Type an explicit root; no defaults.".into(),
             ],
         },
@@ -998,9 +1031,22 @@ fn build_dispatch_plan(
         }
         ActionKind::InstallerPreview => {
             args.push("installer".into());
+            let approval = matches!(mode, Some(RuleMode::Approval));
+            if approval {
+                args.push("--execute".into());
+                if let Some(state_dir) = state_dir {
+                    args.push("--state-dir".into());
+                    args.push(state_dir.as_os_str().to_os_string());
+                }
+            }
             args.push("--".into());
             args.push(root.as_os_str().to_os_string());
-            "installer preview".into()
+            if approval {
+                "installer approval flow"
+            } else {
+                "installer preview"
+            }
+            .into()
         }
         ActionKind::AppsInventory => {
             args.push("apps".into());
@@ -1405,6 +1451,61 @@ mod tests {
         assert!(args.contains(&OsStr::new("--")));
         assert!(!args.contains(&OsStr::new("--yes")));
         assert!(!args.contains(&OsStr::new("--select")));
+    }
+
+    #[test]
+    fn installer_menu_defaults_to_preview_and_delegates_explicit_approval() {
+        let actions = action_catalog().unwrap();
+        let index = actions
+            .iter()
+            .position(|action| matches!(action.kind, ActionKind::InstallerPreview))
+            .unwrap();
+        let mut app = App::new(actions, None);
+        app.screen = Screen::PathPrompt {
+            index,
+            input: "downloads".into(),
+        };
+        assert!(matches!(
+            app.on_key(KeyCode::Enter, KeyModifiers::NONE).unwrap(),
+            Outcome::None
+        ));
+        assert!(matches!(app.screen, Screen::RuleMode { choice: 0, .. }));
+        let preview = build_dispatch_plan(
+            ActionKind::InstallerPreview,
+            PathBuf::from("-downloads"),
+            Some(RuleMode::Preview),
+            None,
+            PathBuf::from("/bin/sayaka"),
+        )
+        .unwrap();
+        assert_eq!(
+            preview.args,
+            vec![
+                OsString::from("installer"),
+                "--".into(),
+                "-downloads".into()
+            ]
+        );
+        let execute = build_dispatch_plan(
+            ActionKind::InstallerPreview,
+            PathBuf::from("-downloads"),
+            Some(RuleMode::Approval),
+            Some(Path::new("state")),
+            PathBuf::from("/bin/sayaka"),
+        )
+        .unwrap();
+        assert_eq!(
+            execute.args,
+            vec![
+                OsString::from("installer"),
+                "--execute".into(),
+                "--state-dir".into(),
+                "state".into(),
+                "--".into(),
+                "-downloads".into()
+            ]
+        );
+        assert!(!execute.args.contains(&OsString::from("--select")));
     }
 
     #[test]

@@ -267,7 +267,7 @@ fn menu_pty_dispatch_signal_and_restore_lifecycle() {
 }
 
 #[test]
-fn installer_requires_explicit_root_and_rejects_unknown_flags() {
+fn installer_requires_explicit_root_and_rejects_automatic_confirmation() {
     let fixture = Fixture::new();
     let mut missing = fixture.command();
     missing.arg("installer");
@@ -277,9 +277,221 @@ fn installer_requires_explicit_root_and_rejects_unknown_flags() {
     assert!(stderr.contains("ROOT"));
 
     let mut invalid = fixture.command();
-    invalid.args(["installer", ".", "--execute"]);
+    invalid.args(["installer", ".", "--yes"]);
     let output = capture(invalid);
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[cfg(target_os = "macos")]
+fn installer_dmg_fixture(path: &Path) {
+    let mut bytes = vec![0u8; 2048];
+    let footer = &mut bytes[1536..];
+    footer[..4].copy_from_slice(b"koly");
+    footer[4..8].copy_from_slice(&4u32.to_be_bytes());
+    footer[8..12].copy_from_slice(&512u32.to_be_bytes());
+    footer[0xd8..0xe0].copy_from_slice(&128u64.to_be_bytes());
+    footer[0xe0..0xe8].copy_from_slice(&64u64.to_be_bytes());
+    fs::write(path, bytes).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn installer_explicit_selection_json_contains_sealed_plan_without_side_effects() {
+    let fixture = Fixture::new();
+    let image = fixture.root.join("image.dmg");
+    installer_dmg_fixture(&image);
+    let state = fixture.base.join("installer-journal");
+    let before = fs::read(&image).unwrap();
+    let mut command = fixture.command();
+    command
+        .arg("installer")
+        .arg(&fixture.root)
+        .arg("--select")
+        .arg(&image)
+        .arg("--json")
+        .arg("--state-dir")
+        .arg(&state);
+    let output = capture(command);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["kind"], "installer_trash_preview");
+    assert_eq!(value["status"], "ready_for_confirmation");
+    assert_eq!(value["effects_performed"], false);
+    assert_eq!(value["discovery"]["kind"], "installer_preview");
+    assert_eq!(value["plan"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(value["plan"]["execution_contract"], "revalidated_trash_v1");
+    assert!(
+        value["plan"]["warning"]
+            .as_str()
+            .unwrap()
+            .contains("replace")
+    );
+    assert!(output.stderr.is_empty());
+    assert!(!state.exists());
+    assert_eq!(fs::read(image).unwrap(), before);
+}
+
+#[test]
+fn installer_rejects_piped_execute_json_execute_and_invalid_selection_before_state() {
+    let fixture = Fixture::new();
+    let state = fixture.base.join("installer-journal");
+    for args in [
+        vec!["--execute"],
+        vec!["--execute", "--json"],
+        vec!["--select", "../outside", "--json"],
+        vec![
+            "--select",
+            "root/image.dmg",
+            "--select",
+            "root/image.dmg",
+            "--json",
+        ],
+    ] {
+        let mut command = fixture.command();
+        command
+            .arg("installer")
+            .arg(&fixture.root)
+            .args(args)
+            .arg("--state-dir")
+            .arg(&state);
+        assert_eq!(capture(command).status.code(), Some(2));
+        assert!(!state.exists());
+    }
+    let mut command = fixture.command();
+    command.arg("installer").arg(&fixture.root).arg("--json");
+    for index in 0..33 {
+        command
+            .arg("--select")
+            .arg(fixture.root.join(format!("{index}.dmg")));
+    }
+    assert_eq!(capture(command).status.code(), Some(2));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn installer_selection_rejects_unrecognized_filtered_excluded_and_partial_discovery() {
+    let fixture = Fixture::new();
+    let image = fixture.root.join("image.dmg");
+    let fake = fixture.root.join("fake.pkg");
+    installer_dmg_fixture(&image);
+    fs::write(&fake, b"not a package").unwrap();
+    for (target, extra, expected) in [
+        (&fake, vec![], 2),
+        (&image, vec!["--filter", "absent"], 2),
+        (&image, vec!["--exclude", image.to_str().unwrap()], 2),
+        (&image, vec!["--max-entries", "1"], 3),
+    ] {
+        let mut command = fixture.command();
+        command
+            .arg("installer")
+            .arg(&fixture.root)
+            .arg("--select")
+            .arg(target)
+            .args(extra)
+            .arg("--json");
+        let result = capture(command);
+        assert_eq!(
+            result.status.code(),
+            Some(expected),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        if expected == 3 {
+            assert_eq!(value["kind"], "installer_trash_preview");
+            assert_eq!(value["status"], "refused");
+            assert_eq!(value["effects_performed"], false);
+        } else {
+            assert_eq!(value["status"], "failed");
+        }
+    }
+    assert!(image.exists() && fake.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn installer_terminal_selection_then_cancel_keeps_files_and_journal_absent() {
+    let fixture = Fixture::new();
+    let image = fixture.root.join("image.dmg");
+    installer_dmg_fixture(&image);
+    let state = fixture.base.join("installer-journal");
+    let script = r#"
+import errno, os, pty, select, signal, subprocess, sys, time
+binary, root, state, mode = sys.argv[1:]
+master, slave = pty.openpty()
+child = subprocess.Popen([binary, "installer", root, "--execute", "--state-dir", state],
+                         stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+os.close(slave)
+output = bytearray()
+def until(marker):
+    deadline = time.monotonic() + 10
+    while marker not in output:
+        if time.monotonic() >= deadline:
+            raise AssertionError("prompt timeout: " + repr(bytes(output)))
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if ready:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError as error:
+                if error.errno == errno.EIO:
+                    raise AssertionError("child exited before prompt: " + repr(bytes(output))) from error
+                raise
+            if not chunk:
+                raise AssertionError("EOF before prompt")
+            output.extend(chunk)
+try:
+    until(b"Selection: ")
+    assert b"Type \"trash " not in output
+    if mode == "selection-signal":
+        child.send_signal(signal.SIGINT)
+    else:
+        os.write(master, b"1\n\n" if mode == "pasted-cancel" else b"1\n")
+        until(b'Type "trash 1"')
+        assert b"Execution plan (sealed before approval)" in output
+        if mode == "confirmation-signal":
+            child.send_signal(signal.SIGINT)
+        elif mode != "pasted-cancel":
+            os.write(master, b"\n")
+            until(b"Cancelled; no files moved.")
+    assert child.wait(timeout=2) == 130
+finally:
+    if child.poll() is None:
+        child.kill()
+        child.wait(timeout=5)
+    os.close(master)
+"#;
+    for mode in [
+        "confirmation-empty",
+        "selection-signal",
+        "confirmation-signal",
+        "pasted-cancel",
+    ] {
+        let mut command = Command::new("/usr/bin/python3");
+        fixture.isolate(&mut command);
+        command
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .arg("-c")
+            .arg(script)
+            .arg(env!("CARGO_BIN_EXE_sayaka"))
+            .arg(&fixture.root)
+            .arg(&state)
+            .arg(mode);
+        let result = capture(command);
+        assert!(
+            result.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(image.exists());
+        assert!(!state.exists());
+    }
 }
 
 #[test]

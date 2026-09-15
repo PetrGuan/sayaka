@@ -331,9 +331,10 @@ def case_child_nonzero_and_ignored_override(binary: Path):
     term = TerminalProcess(binary, fixture)
     try:
         term.wait_for(b"Choose action")
-        term.key_and_wait(b"4", b"Installer preview")
+        term.key_and_wait(b"4", b"Installer files")
         term.key_and_wait(b"\r", b"ROOT:")
         term.send(str(fixture.missing).encode())
+        term.key_and_wait(b"\r", b"Choose installer action mode")
         term.key_and_wait(b"\r", b"=== sayaka menu child outcome ===", timeout=20)
         term.wait_for(b"Child exited: code 1")
         return_to_menu(term)
@@ -352,9 +353,10 @@ def case_child_nonzero_and_ignored_override(binary: Path):
     )
     try:
         term.wait_for(b"Choose action")
-        term.key_and_wait(b"4", b"Installer preview")
+        term.key_and_wait(b"4", b"Installer files")
         term.key_and_wait(b"\r", b"ROOT:")
         term.send(str(fixture.root).encode())
+        term.key_and_wait(b"\r", b"Choose installer action mode")
         term.key_and_wait(b"\r", b"=== sayaka menu child outcome ===", timeout=20)
         term.wait_for(b"Child exited: code 0")
         assert b"Child spawn failed:" not in ANSI.sub(b"", bytes(term.transcript))
@@ -362,6 +364,38 @@ def case_child_nonzero_and_ignored_override(binary: Path):
         term.send(b"q")
         term.finish(0)
         fixture.verify_unchanged()
+    finally:
+        term.close()
+        fixture.close()
+
+
+def case_installer_approval_cancel(binary: Path):
+    fixture = Fixture()
+    image = fixture.root / "image.dmg"
+    contents = bytearray(2048)
+    contents[1536:1540] = b"koly"
+    struct.pack_into(">I", contents, 1540, 4)
+    struct.pack_into(">I", contents, 1544, 512)
+    struct.pack_into(">Q", contents, 1536 + 0xD8, 128)
+    struct.pack_into(">Q", contents, 1536 + 0xE0, 64)
+    fixture.write(image, bytes(contents))
+    term = TerminalProcess(binary, fixture)
+    try:
+        term.wait_for(b"Choose action")
+        term.key_and_wait(b"4", b"Installer files")
+        term.key_and_wait(b"\r", b"ROOT:")
+        term.send(str(fixture.root).encode())
+        term.key_and_wait(b"\r", b"Choose installer action mode")
+        term.send(b"j")
+        term.key_and_wait(b"\r", b"Selection:", timeout=20)
+        term.key_and_wait(b"1\r", b'Type "trash 1"', timeout=20)
+        term.key_and_wait(b"\r", b"Cancelled; no files moved.", timeout=20)
+        term.wait_for(b"=== sayaka menu child outcome ===")
+        return_to_menu(term)
+        term.send(b"q")
+        term.finish(0)
+        fixture.verify_unchanged()
+        assert image.read_bytes() == bytes(contents)
     finally:
         term.close()
         fixture.close()
@@ -459,6 +493,7 @@ def main():
     case_startup_and_path_cancel(binary)
     case_repeated_rule_previews(binary)
     case_clean_approval_cancel(binary)
+    case_installer_approval_cancel(binary)
     case_child_nonzero_and_ignored_override(binary)
     case_narrow_terminal_blocks_dispatch(binary)
     case_sigint_idle(binary)

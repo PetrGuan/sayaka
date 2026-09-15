@@ -8,6 +8,8 @@ use serde_json::json;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
+pub(crate) const MAX_SELECTIONS: usize = sayaka_engine::journal::MAX_ITEMS;
+
 pub fn command() -> Command {
     Command::new("trash")
         .about("Preview explicit files for native Trash; no change without --execute and terminal confirmation")
@@ -104,32 +106,11 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         .filter(|item| item.code != ReasonCode::Excluded)
         .count();
     if args.get_flag("json") {
-        let timestamp = |time: std::time::SystemTime| -> io::Result<u64> {
-            let millis = time
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(io::Error::other)?
-                .as_millis();
-            u64::try_from(millis).map_err(io::Error::other)
-        };
-        let value = json!({
-            "schema_version": 1, "kind": "trash_preview",
-            "plan_schema_version": plan.schema_version(),
-            "execution_contract": plan.execution_contract().as_str(),
-            "warning": plan.execution_contract().warning(),
-            "scope": NativePath::from_path(plan.scope()),
-            "created_unix_ms": timestamp(plan.created_at())?,
-            "expires_unix_ms": timestamp(plan.expires_at())?,
-            "items": plan.items().iter().map(|item| json!({
-                "path": NativePath::from_path(item.observation().path()),
-                "action": "revalidated_move_to_trash",
-                "logical_bytes": item.observation().snapshot().logical_bytes,
-                "identity": item.observation().snapshot().identity,
-            })).collect::<Vec<_>>(),
-            "rejected": session.refusals(),
-            "selection_issues": session.issues(),
-            "effects_performed": false,
-        });
-        print_json_value(&value)?;
+        print_json_value(&plan_preview_json(
+            &plan,
+            &session.refusals(),
+            session.issues(),
+        )?)?;
     } else {
         show_plan_preview(&plan)?;
         for item in session.refusals() {
@@ -184,6 +165,83 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     print_execution_report(&report)?;
     let code = report.exit_code();
     Ok(if code == 0 && rejected > 0 { 3 } else { code })
+}
+
+pub(crate) fn plan_preview_json(
+    plan: &Plan,
+    refusals: &[sayaka_engine::execute::SelectionRefusal],
+    issues: &[sayaka_engine::execute::SelectionIssue],
+) -> io::Result<serde_json::Value> {
+    let timestamp = |time: std::time::SystemTime| -> io::Result<u64> {
+        let millis = time
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_millis();
+        u64::try_from(millis).map_err(io::Error::other)
+    };
+    Ok(json!({
+        "schema_version": 1, "kind": "trash_preview",
+        "plan_schema_version": plan.schema_version(),
+        "execution_contract": plan.execution_contract().as_str(),
+        "warning": plan.execution_contract().warning(),
+        "scope": NativePath::from_path(plan.scope()),
+        "created_unix_ms": timestamp(plan.created_at())?,
+        "expires_unix_ms": timestamp(plan.expires_at())?,
+        "items": plan.items().iter().map(|item| json!({
+            "path": NativePath::from_path(item.observation().path()),
+            "action": "revalidated_move_to_trash",
+            "logical_bytes": item.observation().snapshot().logical_bytes,
+            "identity": item.observation().snapshot().identity,
+        })).collect::<Vec<_>>(),
+        "rejected": refusals,
+        "selection_issues": issues,
+        "effects_performed": false,
+    }))
+}
+
+pub(crate) fn parse_selection_input(
+    answer: &str,
+    candidate_count: usize,
+) -> io::Result<std::collections::BTreeSet<usize>> {
+    let mut indices = std::collections::BTreeSet::new();
+    for part in answer
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let (start, end) = match part.split_once('-') {
+            Some((from, to)) => (
+                from.parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid numeric range")
+                })?,
+                to.parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid numeric range")
+                })?,
+            ),
+            None => {
+                let index = part.parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid selection number")
+                })?;
+                (index, index)
+            }
+        };
+        if start == 0 || start > end || end > candidate_count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "selection index out of bounds",
+            ));
+        }
+        for index in start..=end {
+            indices.insert(index);
+            if indices.len() > MAX_SELECTIONS {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "selection exceeds 32 items",
+                ));
+            }
+        }
+    }
+    Ok(indices)
 }
 
 pub(crate) fn print_execution_report(
@@ -427,5 +485,22 @@ mod tests {
     #[test]
     fn traversal_is_rejected_before_absolute_normalization() {
         assert!(absolute(Path::new("a/../b")).is_err());
+    }
+
+    #[test]
+    fn numeric_selection_is_bounded_before_expanding_large_ranges() {
+        assert_eq!(
+            parse_selection_input("1,3-4,3", 4)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![1, 3, 4]
+        );
+        assert!(parse_selection_input("", 4).unwrap().is_empty());
+        assert_eq!(parse_selection_input("1-32", 32).unwrap().len(), 32);
+        for input in ["0", "5", "4-2", "1-x"] {
+            assert!(parse_selection_input(input, 4).is_err());
+        }
+        assert!(parse_selection_input(&format!("1-{}", usize::MAX), usize::MAX).is_err());
     }
 }
