@@ -9,6 +9,24 @@ execute with elevated permissions. A blocked preflight marks remaining probes
 as not run and prevents Phase B; current batch-2 preregistration also explicitly
 disallows runtime execution.
 
+Admission/launch diagnostics have focused Python regressions:
+
+```sh
+python3 -m unittest scripts.tests.test_check_c0_batch2_phase_b \
+  scripts.tests.test_check_c0_batch3_direct_analyzer \
+  scripts.tests.test_check_sayaka_admission_profile
+cargo test -p sayaka-cli --locked profile_
+```
+
+The macOS-only diagnostic collector uses CLOCK_UPTIME_RAW for cross-process
+clock compatibility, including Python 3.9. Its optional kqueue exit observer is
+covered by owned-child cases for exit-after-EOF, inherited pipes, timeouts and
+output limits. Invalid clock ordering, changed native identities, missing
+fields and invalid nested phase data must fail instead of becoming timings.
+The guarded benchmark runner additionally requires a frozen manifest, explicit
+`--execute`, unchanged inputs, and passed allow/deny canaries. It does not run
+Mole, installers, maintenance or real Trash.
+
 ## Authorization and limits
 
 For this repository, contributors and coding agents are authorized to run local

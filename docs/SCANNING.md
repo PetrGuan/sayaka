@@ -107,6 +107,18 @@ scan_profile`) with aggregate `main_to_dispatch_ms`, `setup_ms`, `scan_ms`,
 combined `json_encode_write_flush_ms`, optional `stdout_json_bytes`, and
 `engine_elapsed_ms`. The profile line is opt-in, keeps stdout JSON unchanged,
 and is not a claim of zero observer overhead.
+Diagnostic schema 2 retains these fields and adds macOS `dispatch_clock_ns`
+(host-wide mach-absolute nanoseconds sampled after scan flag lookup) and
+`native_admission`: caller policy entry/restoration, native walk time, and up to
+64 path-free root records in admission order. Root records separate no-follow
+open, volume validation, directory metadata/cursor setup, URL construction, and
+each of the four native volume property reads. Failed/unrun phases remain null;
+root errors retain their existing codes. Volume subphases nest inside volume
+validation, which nests inside the native walk; do not add parent and child
+durations. Workers/enumeration/collection remain combined in the native walk
+outside root opening. No per-entry clocks or cached admission are introduced.
+Other platforms leave the macOS diagnostic fields absent/null. These optional
+diagnostics do not alter the version 1 stdout report.
 
 ## Measurement semantics
 

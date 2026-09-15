@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use super::diagnostics::{RootAdmissionDiagnostics, ScanDiagnostics};
 use super::walk::{self, Backend, Cursor, DirItem, Metadata, ThreadPolicy};
 use super::*;
 use rustix::fd::OwnedFd;
 use rustix::fs::{self, AtFlags, Dir, Mode, OFlags, Stat};
-use sayaka_platform_macos::{ReadOnlyPolicy, VolumeInfo, volume_info};
+use sayaka_platform_macos::{
+    ReadOnlyPolicy, VolumeDiagnostics, VolumeInfo, volume_info, volume_info_with_diagnostics,
+};
 use std::ffi::{CStr, OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::sync::Mutex;
 use std::time::Instant;
+
+fn as_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
 
 struct NativePolicy(ReadOnlyPolicy);
 impl ThreadPolicy for NativePolicy {
@@ -39,6 +47,13 @@ fn volume_allowed(info: Result<VolumeInfo, std::io::Error>) -> Result<(), ScanEr
 }
 
 pub(crate) fn validate_local_internal_volume_fd(fd: &OwnedFd) -> Result<(), ScanError> {
+    validate_volume(fd, None)
+}
+
+fn validate_volume(
+    fd: &OwnedFd,
+    diagnostics: Option<&mut VolumeDiagnostics>,
+) -> Result<(), ScanError> {
     let volume = fs::fstatfs(fd).map_err(native_error)?;
     if volume.f_flags & u32::try_from(libc::MNT_LOCAL).expect("positive MNT_LOCAL") == 0 {
         return Err(ScanError::new(
@@ -54,7 +69,10 @@ pub(crate) fn validate_local_internal_volume_fd(fd: &OwnedFd) -> Result<(), Scan
     let mount = CStr::from_bytes_until_nul(&mount_bytes)
         .map_err(|_| ScanError::new(ScanCode::VolumeUnknown, "invalid native mount identity"))?;
     let mount = Path::new(OsStr::from_bytes(mount.to_bytes()));
-    volume_allowed(volume_info(mount))
+    volume_allowed(match diagnostics {
+        Some(diagnostics) => volume_info_with_diagnostics(mount, diagnostics),
+        None => volume_info(mount),
+    })
 }
 
 fn directory_flags() -> OFlags {
@@ -155,10 +173,62 @@ impl Backend for MacBackend {
     }
 
     fn open_root(&self, path: &Path) -> Result<Self::Directory, ScanError> {
-        let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error)?;
-        validate_local_internal_volume_fd(&fd)?;
-        MacDirectory::from_fd(fd)
+        open_root(path, None)
     }
+}
+
+struct ProfiledMacBackend(Mutex<Vec<RootAdmissionDiagnostics>>);
+
+impl Backend for ProfiledMacBackend {
+    type Directory = MacDirectory;
+    type Policy = NativePolicy;
+
+    fn enter_thread(&self) -> Result<Self::Policy, ScanError> {
+        MacBackend.enter_thread()
+    }
+
+    fn open_root(&self, path: &Path) -> Result<Self::Directory, ScanError> {
+        let mut record = RootAdmissionDiagnostics::default();
+        let result = open_root(path, Some(&mut record));
+        record.error_code = result.as_ref().err().map(|error| error.code.as_str());
+        self.0
+            .lock()
+            .expect("root diagnostics poisoned")
+            .push(record);
+        result
+    }
+}
+
+fn open_root(
+    path: &Path,
+    mut diagnostics: Option<&mut RootAdmissionDiagnostics>,
+) -> Result<MacDirectory, ScanError> {
+    let start = diagnostics.as_ref().map(|_| Instant::now());
+    let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error);
+    if let (Some(record), Some(start)) = (diagnostics.as_deref_mut(), start) {
+        record.open_ms = Some(as_ms(start.elapsed()));
+    }
+    let fd = fd?;
+    if let Some(record) = diagnostics.as_deref_mut() {
+        let start = Instant::now();
+        let mut volume = VolumeDiagnostics::default();
+        let result = validate_volume(&fd, Some(&mut volume));
+        record.volume_ms = Some(as_ms(start.elapsed()));
+        record.volume_url_ms = volume.url.map(as_ms);
+        record.volume_local_ms = volume.local.map(as_ms);
+        record.volume_internal_ms = volume.internal.map(as_ms);
+        record.volume_removable_ms = volume.removable.map(as_ms);
+        record.volume_ejectable_ms = volume.ejectable.map(as_ms);
+        result?;
+    } else {
+        validate_local_internal_volume_fd(&fd)?;
+    }
+    let start = diagnostics.as_ref().map(|_| Instant::now());
+    let result = MacDirectory::from_fd(fd);
+    if let (Some(record), Some(start)) = (diagnostics, start) {
+        record.directory_setup_ms = Some(as_ms(start.elapsed()));
+    }
+    result
 }
 
 type Stamp = (i64, i64, i64, i64);
@@ -274,22 +344,36 @@ pub(super) fn scan_native(
     task_id: ScanTaskId,
     traversal_policy: TraversalPolicy,
     progress: impl FnMut(&ScanProgress),
+    mut diagnostics: Option<&mut ScanDiagnostics>,
 ) -> Result<ScanReport, ScanError> {
     let started = Instant::now();
-    let policy = ReadOnlyPolicy::enter().map_err(policy_error)?;
-    let result = walk::run_with_policy(
-        &MacBackend,
-        roots,
-        walk::RunOptions {
-            limits,
-            cancellation,
-            task_id,
-            traversal_policy,
-            started,
-        },
-        progress,
-    );
+    let policy = ReadOnlyPolicy::enter().map_err(policy_error);
+    if let Some(record) = diagnostics.as_deref_mut() {
+        record.caller_policy_enter_ms = Some(as_ms(started.elapsed()));
+    }
+    let policy = policy?;
+    let options = walk::RunOptions {
+        limits,
+        cancellation,
+        task_id,
+        traversal_policy,
+        started,
+    };
+    let result = if let Some(record) = diagnostics.as_deref_mut() {
+        let backend = ProfiledMacBackend(Mutex::default());
+        let start = Instant::now();
+        let result = walk::run_with_policy(&backend, roots, options, progress);
+        record.native_walk_ms = Some(as_ms(start.elapsed()));
+        record.roots = backend.0.into_inner().expect("root diagnostics poisoned");
+        result
+    } else {
+        walk::run_with_policy(&MacBackend, roots, options, progress)
+    };
+    let restore_start = diagnostics.as_ref().map(|_| Instant::now());
     let restored = policy.restore().map_err(policy_error);
+    if let (Some(record), Some(start)) = (diagnostics, restore_start) {
+        record.caller_policy_restore_ms = Some(as_ms(start.elapsed()));
+    }
     match (result, restored) {
         (Ok(report), Ok(())) => Ok(report),
         (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),

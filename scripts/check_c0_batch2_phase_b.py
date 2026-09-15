@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import selectors
+import select
 import signal
 import stat
 import statistics
@@ -26,6 +27,8 @@ PHASE_A_RESULT_PATH = REPO / "benchmarks/results/c0-batch2-phase-a-ready-v1.json
 OUTPUT_PATH = REPO / "benchmarks/results/c0-batch2-phase-b-results-v1.json"
 FIRST_USEFUL_RESULT_METHOD_V1 = "legacy_prefix_json_decode_v1"
 FIRST_USEFUL_RESULT_METHOD_V2 = "post_validation_last_non_whitespace_stdout_chunk_v2"
+EXIT_OBSERVATION_POLL = "post_eof_poll_5ms_v1"
+EXIT_OBSERVATION_KQUEUE = "post_eof_kqueue_exit_v1"
 
 
 class ValidationError(Exception):
@@ -269,7 +272,12 @@ def _run_broker(
     stdout_cap_bytes: int,
     stderr_cap_bytes: int,
     first_useful_result_method_id: str = FIRST_USEFUL_RESULT_METHOD_V1,
+    diagnostic_timing: bool = False,
+    exit_observation: str = EXIT_OBSERVATION_POLL,
 ) -> dict[str, Any]:
+    ensure(exit_observation in {EXIT_OBSERVATION_POLL, EXIT_OBSERVATION_KQUEUE}, "unsupported exit observation")
+    if exit_observation == EXIT_OBSERVATION_KQUEUE:
+        ensure(sys.platform == "darwin", "kqueue exit observation requires macOS")
     sandbox_args: list[str] = [
         "/usr/bin/sandbox-exec",
         "-f",
@@ -283,7 +291,13 @@ def _run_broker(
     sandbox_args.extend(command)
 
     ensure(stdout_cap_bytes > 0 and stderr_cap_bytes > 0, "capture caps must be positive")
-    start_ns = time.monotonic_ns()
+    if diagnostic_timing:
+        ensure(sys.platform == "darwin" and hasattr(time, "CLOCK_UPTIME_RAW"), "diagnostic clock requires Darwin CLOCK_UPTIME_RAW")
+        # Python before 3.10 rebases mach_absolute_time per process.
+        clock_ns = lambda: time.clock_gettime_ns(time.CLOCK_UPTIME_RAW)
+    else:
+        clock_ns = time.monotonic_ns
+    start_ns = clock_ns()
     process = subprocess.Popen(
         sandbox_args,
         cwd=cwd,
@@ -294,11 +308,16 @@ def _run_broker(
         text=False,
         start_new_session=True,
     )
+    spawn_return_ns = clock_ns() if diagnostic_timing else None
     ensure(process.stdout is not None and process.stderr is not None, "failed to capture child pipes")
 
     first_useful_result_method_id = resolve_first_useful_result_method_id(first_useful_result_method_id)
     first_json_ns: int | None = None
     honest_last_stdout_content_ns: int | None = None
+    first_stdout_ns: int | None = None
+    first_stderr_ns: int | None = None
+    pipes_closed_ns: int | None = None
+    post_eof_wait_misses = 0
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     totals = {"stdout": 0, "stderr": 0}
     caps = {"stdout": stdout_cap_bytes, "stderr": stderr_cap_bytes}
@@ -311,16 +330,39 @@ def _run_broker(
     kill_sent = False
     waited = False
     rusage = None
+    exit_queue = None
+    exit_notified = False
+    exit_notification_count = 0
     try:
+        if exit_observation == EXIT_OBSERVATION_KQUEUE:
+            exit_queue = select.kqueue()
+            try:
+                exit_queue.control([select.kevent(
+                    process.pid, filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                    fflags=select.KQ_NOTE_EXIT,
+                )], 0, 0)
+            except ProcessLookupError:
+                # A child that exited before registration is still ours to reap.
+                # Do not infer exit from an empty output pipe.
+                pass
         while not waited:
-            for key, _ in selector.select(timeout=0.005):
+            pipe_events = selector.select(timeout=0.005) if selector.get_map() or exit_queue is None else []
+            for key, _ in pipe_events:
                 stream = key.fileobj
                 chunk = stream.read1(65536)
-                received_ns = time.monotonic_ns()
+                received_ns = clock_ns()
                 if not chunk:
                     selector.unregister(stream)
+                    if diagnostic_timing and not selector.get_map():
+                        pipes_closed_ns = received_ns
                     continue
                 name = key.data
+                if diagnostic_timing:
+                    if name == "stdout" and first_stdout_ns is None:
+                        first_stdout_ns = received_ns
+                    if name == "stderr" and first_stderr_ns is None:
+                        first_stderr_ns = received_ns
                 totals[name] += len(chunk)
                 remaining = caps[name] - len(buffers[name])
                 buffers[name].extend(chunk[:max(0, remaining)])
@@ -340,7 +382,7 @@ def _run_broker(
                         if _parse_json_complete(text):
                             first_json_ns = received_ns
 
-            now = time.monotonic_ns()
+            now = clock_ns()
             if (now - start_ns) / 1_000_000_000 >= timeout_seconds and terminate_ns is None:
                 timed_out = True
                 terminate_ns = now
@@ -351,17 +393,29 @@ def _run_broker(
             # Retain the leader's PID until its inherited output pipes close.
             # A helper retaining those pipes is stopped by the same timeout.
             if not selector.get_map():
-                pid, status, rusage = os.wait4(process.pid, os.WNOHANG)
+                pid, status, rusage = os.wait4(process.pid, 0 if exit_notified else os.WNOHANG)
                 if pid == process.pid:
-                    end_ns = time.monotonic_ns()
+                    end_ns = clock_ns()
                     process.returncode = os.waitstatus_to_exitcode(status)
                     waited = True
+                elif diagnostic_timing:
+                    post_eof_wait_misses += 1
+                if not waited and exit_queue is not None:
+                    events = exit_queue.control(None, 1, 0.005)
+                    for event in events:
+                        ensure(event.ident == process.pid and event.filter == select.KQ_FILTER_PROC
+                               and not event.flags & select.KQ_EV_ERROR
+                               and event.fflags & select.KQ_NOTE_EXIT, "invalid process-exit event")
+                        exit_notified = True
+                        exit_notification_count += 1
     finally:
         if not waited:
             _signal_owned_group(process.pid, signal.SIGKILL)
             _, status, _ = os.wait4(process.pid, 0)
             process.returncode = os.waitstatus_to_exitcode(status)
         selector.close()
+        if exit_queue is not None:
+            exit_queue.close()
         process.stdout.close()
         process.stderr.close()
     ensure(rusage is not None, "child resource usage missing")
@@ -396,6 +450,16 @@ def _run_broker(
         "stdout_truncated": totals["stdout"] > caps["stdout"],
         "stderr_truncated": totals["stderr"] > caps["stderr"],
         "peak_rss_bytes": peak_rss,
+        "clock_domain": "darwin_clock_uptime_raw_ns" if diagnostic_timing else "python_monotonic_ns",
+        "exit_observation_method": exit_observation,
+        "observer_timing": {
+            "spawn_return_ns": spawn_return_ns,
+            "first_stdout_ns": first_stdout_ns,
+            "first_stderr_ns": first_stderr_ns,
+            "pipes_closed_ns": pipes_closed_ns,
+            "post_eof_wait_misses": post_eof_wait_misses,
+            "exit_notification_count": exit_notification_count,
+        } if diagnostic_timing else None,
     }
 
 
@@ -413,6 +477,8 @@ def run_sample(
     run_root: Path,
     raw_sink: Callable[[dict[str, Any]], None] | None = None,
     first_useful_result_method_id: str = FIRST_USEFUL_RESULT_METHOD_V1,
+    diagnostic_timing: bool = False,
+    exit_observation: str = EXIT_OBSERVATION_POLL,
 ) -> dict[str, Any]:
     method_id = resolve_first_useful_result_method_id(first_useful_result_method_id)
     result = _run_broker(
@@ -425,6 +491,8 @@ def run_sample(
         stdout_cap_bytes,
         stderr_cap_bytes,
         first_useful_result_method_id=method_id,
+        diagnostic_timing=diagnostic_timing,
+        exit_observation=exit_observation,
     )
     if raw_sink is not None:
         raw_sink(result)
@@ -436,6 +504,7 @@ def run_sample(
         "first_useful_result_ms": None,
         "first_useful_result_status": "not_measured",
         "first_useful_result_method_id": method_id,
+        "exit_observation_method": exit_observation,
         "complete_result_ms": complete_ms,
         "peak_rss_bytes": result["peak_rss_bytes"],
         "stdout_bytes": result["stdout_bytes"],

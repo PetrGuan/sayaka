@@ -3389,7 +3389,7 @@ mod native {
             .collect();
         assert_eq!(lines.len(), 1);
         let profile: Value = serde_json::from_str(lines[0]).unwrap();
-        assert_eq!(profile["schema_version"], 1);
+        assert_eq!(profile["schema_version"], 2);
         assert_eq!(profile["type"], "scan_profile");
         assert_eq!(profile["status"], value["status"]);
         assert!(profile["main_to_dispatch_ms"].is_number());
@@ -3398,6 +3398,32 @@ mod native {
         assert!(profile["json_encode_write_flush_ms"].is_number());
         assert!(profile["stdout_json_bytes"].is_u64());
         assert_eq!(profile["stdout_json_bytes"], output.stdout.len());
+        #[cfg(target_os = "macos")]
+        {
+            assert!(profile["dispatch_clock_ns"].as_u64().unwrap() > 0);
+            let admission = &profile["native_admission"];
+            assert!(admission["caller_policy_enter_ms"].is_number());
+            assert!(admission["caller_policy_restore_ms"].is_number());
+            assert!(
+                admission["native_walk_ms"].as_f64().unwrap()
+                    <= profile["scan_ms"].as_f64().unwrap()
+            );
+            assert_eq!(admission["roots"].as_array().unwrap().len(), 1);
+            let root = &admission["roots"][0];
+            for field in [
+                "open_ms",
+                "volume_ms",
+                "directory_setup_ms",
+                "volume_url_ms",
+                "volume_local_ms",
+                "volume_internal_ms",
+                "volume_removable_ms",
+                "volume_ejectable_ms",
+            ] {
+                assert!(root[field].as_f64().unwrap() >= 0.0, "{field}");
+            }
+            assert!(root["error_code"].is_null());
+        }
         let plain = fixture.scan(&["--json"]);
         let plain_value = json(&plain, 0);
         assert_eq!(plain_value["totals"], value["totals"]);
@@ -3420,6 +3446,54 @@ mod native {
         assert!(profile["scan_ms"].is_null());
         assert!(profile["engine_elapsed_ms"].is_null());
         assert_eq!(profile["output_error"], "invalid_limits");
+        assert!(
+            profile["native_admission"]["roots"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(profile["native_admission"]["native_walk_ms"].is_null());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn profile_admits_each_root_and_preserves_rejection() {
+        let fixture = Fixture::new();
+        let second = fixture.root.join("second");
+        fs::create_dir(&second).unwrap();
+        let mut command = fixture.command();
+        command
+            .args(["scan", "--json", "--profile-scan-stderr"])
+            .arg(&fixture.root)
+            .arg(&second);
+        let result = capture(command);
+        json(&result, 0);
+        let profile: Value = serde_json::from_slice(&result.stderr).unwrap();
+        assert_eq!(
+            profile["native_admission"]["roots"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let link = fixture.root.join("link");
+        std::os::unix::fs::symlink(&second, &link).unwrap();
+        let mut command = fixture.command();
+        command
+            .args(["scan", "--json", "--profile-scan-stderr"])
+            .arg(link);
+        let result = capture(command);
+        let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert!(!result.status.success());
+        assert_eq!(report["status"], "failed");
+        let profile: Value = serde_json::from_slice(&result.stderr).unwrap();
+        let root = &profile["native_admission"]["roots"][0];
+        assert_eq!(root["error_code"], "link_skipped");
+        assert!(root["open_ms"].is_number());
+        assert!(root["volume_ms"].is_null());
+        assert!(root["directory_setup_ms"].is_null());
+        assert!(profile["native_admission"]["caller_policy_restore_ms"].is_number());
     }
 
     #[test]

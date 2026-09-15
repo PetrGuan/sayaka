@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -48,6 +49,66 @@ class CheckC0Batch2PhaseBTests(unittest.TestCase):
         self.assertEqual((info.st_dev, info.st_ino), self.original_identity)
         self.assertEqual((self.test_workspace / "owner-marker").read_text(), "c0-b2-test-owned")
         shutil.rmtree(self.test_workspace)
+
+    def test_diagnostic_timestamps_separate_pipe_eof_and_exit(self):
+        before = time.clock_gettime_ns(time.CLOCK_UPTIME_RAW)
+        result = self.module._run_broker(
+            self._allow_all_profile(), {},
+            ["/bin/bash", "--noprofile", "--norc", "-c",
+             """printf '{"ok":1}\\n'; exec 1>&- 2>&-; /bin/sleep 0.03"""],
+            self.env, self.test_workspace, 5, 65536, 65536,
+            first_useful_result_method_id="v2", diagnostic_timing=True,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["clock_domain"], "darwin_clock_uptime_raw_ns")
+        self.assertGreaterEqual(result["start_ns"], before)
+        self.assertLessEqual(result["end_ns"], time.clock_gettime_ns(time.CLOCK_UPTIME_RAW))
+        timing = result["observer_timing"]
+        points = [
+            result["start_ns"], timing["spawn_return_ns"], timing["first_stdout_ns"],
+            result["honest_last_stdout_content_ns"], timing["pipes_closed_ns"], result["end_ns"],
+        ]
+        self.assertEqual(points, sorted(points))
+        self.assertIsNone(timing["first_stderr_ns"])
+        self.assertGreater(timing["post_eof_wait_misses"], 0)
+
+    def test_kqueue_exit_observation_keeps_eof_timeout_and_cap_semantics(self):
+        cases = [
+            ("exit-event", """printf '{}\\n'; exec 1>&- 2>&-; /bin/sleep 0.03""", 5, "completed"),
+            ("inherited-pipe", """/bin/sleep 0.03 & printf '{}\\n'; exit 0""", 5, "completed"),
+            ("closed-pipe-timeout", """printf '{}\\n'; exec 1>&- 2>&-; /bin/sleep 2""", 0.1, "timeout"),
+            ("cap", """/usr/bin/python3 -c 'print("x"*10000)'""", 5, "output_cap_exceeded"),
+        ]
+        for label, command, timeout, expected in cases:
+            with self.subTest(label=label):
+                result = self.module._run_broker(
+                    self._allow_all_profile(), {}, ["/bin/bash", "--noprofile", "--norc", "-c", command],
+                    self.env, self.test_workspace, timeout, 1024, 1024,
+                    first_useful_result_method_id="v2", diagnostic_timing=True,
+                    exit_observation=self.module.EXIT_OBSERVATION_KQUEUE,
+                )
+                self.assertEqual(result["status"], expected)
+                self.assertEqual(result["exit_observation_method"], self.module.EXIT_OBSERVATION_KQUEUE)
+                if expected == "completed":
+                    self.assertEqual(result["returncode"], 0)
+                    self.assertEqual(result["stdout"], "{}\n")
+                if label == "exit-event":
+                    self.assertEqual(result["observer_timing"]["exit_notification_count"], 1)
+                if label == "closed-pipe-timeout":
+                    self.assertNotEqual(result["returncode"], 0)
+                if label == "cap":
+                    self.assertTrue(result["stdout_truncated"])
+                    self.assertEqual(len(result["stdout"]), 1024)
+
+    def test_unknown_exit_observer_is_rejected_before_spawning(self):
+        with mock.patch.object(self.module.subprocess, "Popen") as spawn:
+            with self.assertRaises(self.module.ValidationError):
+                self.module._run_broker(
+                    self._allow_all_profile(), {}, ["/usr/bin/true"], self.env,
+                    self.test_workspace, 5, 1024, 1024, exit_observation="unknown",
+                )
+            spawn.assert_not_called()
 
     def _write_manifest(self, profile_hash: str) -> Path:
         manifest = {

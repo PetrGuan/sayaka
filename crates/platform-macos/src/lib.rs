@@ -12,7 +12,7 @@ use std::rc::Rc;
 #[cfg(target_os = "macos")]
 mod volume;
 #[cfg(target_os = "macos")]
-pub use volume::volume_info;
+pub use volume::{VolumeDiagnostics, volume_info, volume_info_with_diagnostics};
 
 mod trash;
 pub use trash::{
@@ -24,6 +24,21 @@ mod acl;
 pub use acl::has_extended_acl;
 
 pub mod status;
+
+/// Host-wide mach-absolute nanoseconds, in Darwin's CLOCK_UPTIME_RAW domain.
+#[cfg(target_os = "macos")]
+pub fn diagnostic_monotonic_ns() -> io::Result<u64> {
+    let mut scale = MachTimebaseInfo { numer: 0, denom: 0 };
+    // SAFETY: The initialized writable structure is valid for this synchronous call.
+    let result = unsafe { mach_timebase_info(&mut scale) };
+    if result != 0 || scale.denom == 0 {
+        return Err(io::Error::other("monotonic timebase unavailable"));
+    }
+    // SAFETY: This read-only clock takes no arguments or pointers.
+    let ticks = unsafe { mach_absolute_time() };
+    u64::try_from(u128::from(ticks) * u128::from(scale.numer) / u128::from(scale.denom))
+        .map_err(|_| io::Error::other("monotonic time conversion overflow"))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeInfo {
@@ -90,8 +105,17 @@ impl Drop for ReadOnlyPolicy {
 }
 
 #[cfg(target_os = "macos")]
+#[repr(C)]
+struct MachTimebaseInfo {
+    numer: u32,
+    denom: u32,
+}
+
+#[cfg(target_os = "macos")]
 #[link(name = "System")]
 unsafe extern "C" {
+    fn mach_timebase_info(info: *mut MachTimebaseInfo) -> std::ffi::c_int;
+    fn mach_absolute_time() -> u64;
     fn getiopolicy_np(policy: std::ffi::c_int, scope: std::ffi::c_int) -> std::ffi::c_int;
     fn setiopolicy_np(
         policy: std::ffi::c_int,
@@ -142,6 +166,14 @@ fn set_policy(_: i32) -> io::Result<()> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_clock_is_monotonic() {
+        let first = diagnostic_monotonic_ns().unwrap();
+        let second = diagnostic_monotonic_ns().unwrap();
+        assert!(first > 0);
+        assert!(second >= first);
+    }
 
     #[test]
     fn native_thread_policy_is_set_and_explicitly_restored() {

@@ -1,0 +1,452 @@
+{
+  "benchmark_id": "c0-sayaka-admission-profile-v3",
+  "class": "diagnostic_only_not_competitive_baseline",
+  "binaries": {
+    "baseline": "24a93e2a9202890fa391f48767d9c028453b7913134a0428d80d486185021767",
+    "diagnostic": "24a93e2a9202890fa391f48767d9c028453b7913134a0428d80d486185021767"
+  },
+  "comparison": "same_binary_exit_observers",
+  "variant_exit_observation": {
+    "baseline": "post_eof_poll_5ms_v1",
+    "off": "post_eof_kqueue_exit_v1",
+    "on": "post_eof_kqueue_exit_v1"
+  },
+  "primary_metric": "paired pipe_eof_to_reap_ms; complete time is secondary, not product speed",
+  "inputs": {
+    "scripts/check_sayaka_admission_profile.py": "cd1b2e962ae1a57644f40497b60ed1d7cc3cab9a57cd683aebffb3e6c960143c",
+    "scripts/check_sayaka_scan_profile.py": "8f750e7f92eec7b61889d7898851f0ecfe3f1ae3a404cd0f6a2e2fc69f56617c",
+    "scripts/check_c0_batch3_direct_analyzer.py": "8f8c521fbea7dc05f69384e25e6bc944124d421fd0518b670aad11b48a854f5e",
+    "scripts/check_c0_batch2_phase_a.py": "01e25ee491469269aa24750cb2147a0f60c9c619a28bb7708df6b7d1ad7766e2",
+    "scripts/check_c0_batch2_phase_b.py": "c63bdf2a7c9038da01e9e9a94092632ed103942ebab1bae1341308f106d3c09f",
+    "scripts/check_c0_statistics.py": "6fb24dd23d8a90aae83ced76b8bae7931e4dcedf965b39cf6ef13a790273bef4",
+    "benchmarks/c0-batch3-direct-analyzer-v2.json": "3d9d97a034b9795f3055f2ed5124fe442042cfd5983ce89412c5885d3cfcc8f1",
+    "benchmarks/c0-sayaka-admission-profile-v2.json": "7f7e6de713f7b7cbcfdaaa3121494dbcc3289e77a4f2c6efdf8b6140f29d6fb7",
+    "benchmarks/results/c0-sayaka-admission-profile-v2.json": "1e379c46742ac771aff4be18aa1a948c01674a2c49d692f10c0a0c76d39cdb3d",
+    "benchmarks/c0-sayaka-admission-profile-v1.json": "4eb113b7c6220c8b62ef245f5e716c67d9e33b94efdf7cf57a2cc01ea728cfcf",
+    "benchmarks/results/c0-sayaka-admission-profile-v1.json": "80c5ad6d69014add3990d1508ed79c191eecf434826d3b2c1c040f0e0139cc1f",
+    "benchmarks/c0-batch3-direct-analyzer-v1.json": "372daf8ff19474ed2f2deefc5f48901e0ad289e665a5a55b9df496ee7de8c5a4",
+    "benchmarks/results/c0-batch3-direct-analyzer-results-v1.json": "33001a8512b0d971423c7b1a54b52fef49905bc664eb115300e1875d3a3a09c3",
+    "benchmarks/results/c0-batch3-direct-analyzer-results-v2.json": "d1be71756ab985eed5cf4bd8ac4242faa0e6d10cfc99357d44f601f7d83a259d",
+    "benchmarks/c0-sayaka-scan-profile-diagnostic-v1.json": "b9adba42842fd65888785467c4728b20d11e779c452e77394b49b8561fa18817",
+    "benchmarks/results/c0-sayaka-scan-profile-diagnostic-v1.json": "9200c3657f22e76f7a71f92f3dc37a5330bb6a515a9f3fffb15b02249ad3b3bb",
+    "benchmarks/c0-batch2-manifest-v1.json": "e78d6bbed7ba740bf67e1a03ec2da52b4a49a1b765ba04473a92eae0aba00885",
+    "benchmarks/results/c0-batch2-phase-a-ready-v1.json": "fbf15ee24c0e3d5ed36e5094aa8f3601f65f68207f5fb963e207c47a54d60d37",
+    "benchmarks/results/c0-batch2-phase-b-results-v1.json": "f16b69c650a3fbf9a00efb7687cd45b6205fb5804f5dc7005a7e9f6c039bb6c7"
+  },
+  "environment": {
+    "os": "Darwin",
+    "release": "25.6.0",
+    "architecture": "arm64",
+    "python": "3.9.6",
+    "monotonic_clock": "darwin_clock_uptime_raw_ns"
+  },
+  "scenarios": [
+    {
+      "id": "flat-1024",
+      "schedule": [
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "off",
+          "baseline",
+          "on"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "off",
+          "baseline",
+          "on"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ]
+      ]
+    },
+    {
+      "id": "empty",
+      "schedule": [
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "off",
+          "baseline",
+          "on"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "off",
+          "baseline",
+          "on"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "baseline",
+          "off",
+          "on"
+        ],
+        [
+          "baseline",
+          "on",
+          "off"
+        ],
+        [
+          "off",
+          "on",
+          "baseline"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ],
+        [
+          "on",
+          "baseline",
+          "off"
+        ],
+        [
+          "on",
+          "off",
+          "baseline"
+        ]
+      ]
+    }
+  ],
+  "collector_overhead_schedule": [
+    [
+      false,
+      true
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      true,
+      false
+    ],
+    [
+      true,
+      false
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      true,
+      false
+    ],
+    [
+      true,
+      false
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      true,
+      false
+    ],
+    [
+      true,
+      false
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      false,
+      true
+    ],
+    [
+      false,
+      true
+    ]
+  ],
+  "version_stdout": "sayaka 0.1.0\n",
+  "collector_method": "post_validation_last_non_whitespace_stdout_chunk_v2",
+  "limits": {
+    "timeout_seconds": 30,
+    "stdout_cap_bytes": 8388608,
+    "stderr_cap_bytes": 1048576
+  },
+  "statistics": {
+    "confidence": 0.95,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 260915
+  },
+  "semantics": [
+    "Baseline/off/on randomized matched triples; no OS-cold-cache claim",
+    "v3 baseline/off use the identical binary with profiling off; only poll/kqueue exit observation differs",
+    "Parent timers enabled for all scan triples; version-only off/on pairs estimate their overhead",
+    "Dispatch uses mach-absolute nanoseconds; diagnostic parent uses CLOCK_UPTIME_RAW, not Python's potentially rebased monotonic",
+    "Dispatch is sampled after flag lookup, not executable entry or OS-loader time",
+    "Popen duration overlaps child execution; it is not additive with parent-start-to-dispatch",
+    "Last stdout receipt, pipe EOF and wait4 reaping are observations, not exact child exit timestamps",
+    "Volume property phases nest inside volume_ms, root phases nest inside native_walk_ms",
+    "v2 three-root attribution is retained separately; v3 only remeasures flat/empty fixtures",
+    "Only complete exact JSON/count/path/identity results with unchanged inputs become timings",
+    "No Mole, installers, real Trash, privilege expansion, or historical evidence overwrite"
+  ]
+}
