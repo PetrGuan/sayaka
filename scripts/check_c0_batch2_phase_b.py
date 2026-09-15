@@ -24,6 +24,8 @@ REPO = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = REPO / "benchmarks/c0-batch2-manifest-v1.json"
 PHASE_A_RESULT_PATH = REPO / "benchmarks/results/c0-batch2-phase-a-ready-v1.json"
 OUTPUT_PATH = REPO / "benchmarks/results/c0-batch2-phase-b-results-v1.json"
+FIRST_USEFUL_RESULT_METHOD_V1 = "legacy_prefix_json_decode_v1"
+FIRST_USEFUL_RESULT_METHOD_V2 = "post_validation_last_non_whitespace_stdout_chunk_v2"
 
 
 class ValidationError(Exception):
@@ -242,6 +244,14 @@ def _parse_json_complete(text: str) -> bool:
     return stripped[offset:].strip() == ""
 
 
+def resolve_first_useful_result_method_id(selector: Any) -> str:
+    if selector in (None, "", "v1", "legacy", FIRST_USEFUL_RESULT_METHOD_V1):
+        return FIRST_USEFUL_RESULT_METHOD_V1
+    if selector in ("v2", "new", FIRST_USEFUL_RESULT_METHOD_V2):
+        return FIRST_USEFUL_RESULT_METHOD_V2
+    raise ValidationError(f"unsupported first useful result method selector: {selector}")
+
+
 def _signal_owned_group(pid: int, signum: int) -> None:
     try:
         os.killpg(pid, signum)
@@ -258,6 +268,7 @@ def _run_broker(
     timeout_seconds: int,
     stdout_cap_bytes: int,
     stderr_cap_bytes: int,
+    first_useful_result_method_id: str = FIRST_USEFUL_RESULT_METHOD_V1,
 ) -> dict[str, Any]:
     sandbox_args: list[str] = [
         "/usr/bin/sandbox-exec",
@@ -285,7 +296,9 @@ def _run_broker(
     )
     ensure(process.stdout is not None and process.stderr is not None, "failed to capture child pipes")
 
+    first_useful_result_method_id = resolve_first_useful_result_method_id(first_useful_result_method_id)
     first_json_ns: int | None = None
+    honest_last_stdout_content_ns: int | None = None
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     totals = {"stdout": 0, "stderr": 0}
     caps = {"stdout": stdout_cap_bytes, "stderr": stderr_cap_bytes}
@@ -316,13 +329,16 @@ def _run_broker(
                     if terminate_ns is None:
                         terminate_ns = received_ns
                         _signal_owned_group(process.pid, signal.SIGTERM)
-                elif name == "stdout" and first_json_ns is None and not overflow_killed:
-                    try:
-                        text = buffers[name].decode("utf-8")
-                    except UnicodeDecodeError:
-                        continue
-                    if _parse_json_complete(text):
-                        first_json_ns = received_ns
+                elif name == "stdout" and not overflow_killed:
+                    if chunk.rstrip(b" \t\r\n"):
+                        honest_last_stdout_content_ns = received_ns
+                    if first_useful_result_method_id == FIRST_USEFUL_RESULT_METHOD_V1 and first_json_ns is None:
+                        try:
+                            text = buffers[name].decode("utf-8")
+                        except UnicodeDecodeError:
+                            continue
+                        if _parse_json_complete(text):
+                            first_json_ns = received_ns
 
             now = time.monotonic_ns()
             if (now - start_ns) / 1_000_000_000 >= timeout_seconds and terminate_ns is None:
@@ -357,6 +373,12 @@ def _run_broker(
         status_text = "timeout"
     else:
         status_text = "completed"
+    try:
+        stdout_text = buffers["stdout"].decode("utf-8")
+        stdout_utf8_valid = True
+    except UnicodeDecodeError:
+        stdout_text = buffers["stdout"].decode("utf-8", errors="replace")
+        stdout_utf8_valid = False
     return {
         "status": status_text,
         "pid": process.pid,
@@ -364,7 +386,10 @@ def _run_broker(
         "start_ns": start_ns,
         "end_ns": end_ns,
         "first_json_ns": first_json_ns,
-        "stdout": buffers["stdout"].decode(errors="replace"),
+        "honest_last_stdout_content_ns": honest_last_stdout_content_ns,
+        "first_useful_result_method_id": first_useful_result_method_id,
+        "stdout": stdout_text,
+        "stdout_utf8_valid": stdout_utf8_valid,
         "stderr": buffers["stderr"].decode(errors="replace"),
         "stdout_bytes": totals["stdout"],
         "stderr_bytes": totals["stderr"],
@@ -387,23 +412,30 @@ def run_sample(
     normalizer: Callable[[dict[str, Any]], dict[str, Any]],
     run_root: Path,
     raw_sink: Callable[[dict[str, Any]], None] | None = None,
+    first_useful_result_method_id: str = FIRST_USEFUL_RESULT_METHOD_V1,
 ) -> dict[str, Any]:
-    result = _run_broker(profile, params, command, env_map, cwd, timeout_seconds, stdout_cap_bytes, stderr_cap_bytes)
+    method_id = resolve_first_useful_result_method_id(first_useful_result_method_id)
+    result = _run_broker(
+        profile,
+        params,
+        command,
+        env_map,
+        cwd,
+        timeout_seconds,
+        stdout_cap_bytes,
+        stderr_cap_bytes,
+        first_useful_result_method_id=method_id,
+    )
     if raw_sink is not None:
         raw_sink(result)
 
     complete_ms = (result["end_ns"] - result["start_ns"]) / 1_000_000
-    first_ms = None
-    first_status = "not_measured"
-    if result["first_json_ns"] is not None:
-        first_ms = (result["first_json_ns"] - result["start_ns"]) / 1_000_000
-        first_status = "measured"
-
     output = {
         "status": "failed",
         "failure_class": "unknown",
         "first_useful_result_ms": None,
         "first_useful_result_status": "not_measured",
+        "first_useful_result_method_id": method_id,
         "complete_result_ms": complete_ms,
         "peak_rss_bytes": result["peak_rss_bytes"],
         "stdout_bytes": result["stdout_bytes"],
@@ -425,6 +457,9 @@ def run_sample(
     if result["returncode"] != 0:
         output["failure_class"] = "nonzero_exit"
         return output
+    if result.get("stdout_utf8_valid") is False:
+        output["failure_class"] = "invalid_json"
+        return output
     try:
         payload = json.loads(result["stdout"])
     except json.JSONDecodeError:
@@ -442,8 +477,14 @@ def run_sample(
     output["status"] = "passed"
     output["failure_class"] = "none"
     output["normalized"] = normalized
-    output["first_useful_result_ms"] = first_ms
-    output["first_useful_result_status"] = first_status
+    if method_id == FIRST_USEFUL_RESULT_METHOD_V1 and result["first_json_ns"] is not None:
+        output["first_useful_result_ms"] = (result["first_json_ns"] - result["start_ns"]) / 1_000_000
+        output["first_useful_result_status"] = "measured"
+    elif method_id == FIRST_USEFUL_RESULT_METHOD_V2 and result["honest_last_stdout_content_ns"] is not None:
+        output["first_useful_result_ms"] = (
+            result["honest_last_stdout_content_ns"] - result["start_ns"]
+        ) / 1_000_000
+        output["first_useful_result_status"] = "measured"
     return output
 
 
@@ -864,6 +905,9 @@ def _execute_phase_b(
         "SAYAKA_INSTALL_ROOT": str(layout["sayaka_install_root"]),
     }
     fixed = manifest["phase_b"]["measurement_fixed"]
+    first_useful_result_method_id = resolve_first_useful_result_method_id(
+        fixed.get("first_useful_result_method_id")
+    )
     measured_roots = {
         key: layout[key] for key in
         ("mole_prefix", "mole_config", "mole_home", "sayaka_prefix", "sayaka_home")
@@ -1001,6 +1045,7 @@ def _execute_phase_b(
             stderr_cap_bytes=int(fixed["stderr_capture_cap_bytes"]),
             normalizer=normalizer,
             run_root=run_root,
+            first_useful_result_method_id=first_useful_result_method_id,
             raw_sink=lambda capture: _append_journal(journal_path, {
                 "event": "process_capture", "tool": tool, "phase": phase,
                 "index": run_idx, "capture": capture,
@@ -1128,6 +1173,10 @@ def _execute_phase_b(
         },
         "ab_mapping": mapping,
         "measurement_fixed": fixed,
+        "collector_binding": {
+            "collector_sha256": sha256(Path(__file__)),
+            "first_useful_result_method_id": first_useful_result_method_id,
+        },
         "cancellation": {
             "status": "not_measured",
             "reason": manifest["phase_b"].get("cancellation_reason", "no shared preregistered method"),

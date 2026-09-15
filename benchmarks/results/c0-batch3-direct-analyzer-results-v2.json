@@ -1,0 +1,3256 @@
+{
+  "benchmark_id": "c0-batch3-direct-analyzer-v2",
+  "scenario_id": "c0-b3-direct-analyzer-flat-regular-json-v2",
+  "status": "completed",
+  "execution_performed": true,
+  "mole_execution_attempted": true,
+  "manifest_sha256": "3d9d97a034b9795f3055f2ed5124fe442042cfd5983ce89412c5885d3cfcc8f1",
+  "runner_sha256": "8f8c521fbea7dc05f69384e25e6bc944124d421fd0518b670aad11b48a854f5e",
+  "run_root": "target/c0-batch3/runs/run-12221-5c49dd73",
+  "journal": "target/c0-batch3/runs/run-12221-5c49dd73/private-logs/batch3-journal.jsonl",
+  "reference_lock": {
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+    "source_archive_sha256": "4de6c5ab78d2c723a6ff43418b52bfc5a229a8a01c98d9fe487a1bc42d3a73ac",
+    "source_archive_member_count": 292,
+    "assets": [
+      {
+        "name": "analyze-darwin-arm64",
+        "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb",
+        "size_bytes": 3620258
+      }
+    ]
+  },
+  "source_audit": [
+    {
+      "id": "analyze-target-resolution-and-json-entry",
+      "file": "cmd/analyze/main.go",
+      "requirement_count": 2
+    },
+    {
+      "id": "analyze-json-schema-fields",
+      "file": "cmd/analyze/json.go",
+      "requirement_count": 3
+    },
+    {
+      "id": "analyze-cache-home-root",
+      "file": "cmd/analyze/cache.go",
+      "requirement_count": 2
+    },
+    {
+      "id": "analyze-optional-helper-lookup",
+      "file": "cmd/analyze/scanner.go",
+      "requirement_count": 2
+    }
+  ],
+  "notes": [
+    "Runtime class is direct_verified_artifact for Mole analyzer only; this is not installed CLI or full footprint.",
+    "PATH is pinned to an owned empty directory during guarded runs; optional mdfind/du helper lookup is intentionally suppressed.",
+    "Conclusions are limited to common flat-file statistics projection for this preregistered fixture."
+  ],
+  "profile": {
+    "path": "target/c0-batch3/runs/run-12221-5c49dd73/c0-b3-direct.sb",
+    "sha256": "ad9e347fda9f0069e349ec0e0801fc5bfed9307a8559ba9646a8468bc6b113d6",
+    "exec_allowlist": [
+      "/usr/bin/env",
+      "<run-root>/allowed/bin/analyze-darwin-arm64",
+      "<run-root>/allowed/bin/sayaka",
+      "<run-root>/allowed/bin/trusted-canary"
+    ]
+  },
+  "staged_binaries": {
+    "analyzer": {
+      "path": "allowed/bin/analyze-darwin-arm64",
+      "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb",
+      "size_bytes": 3620258,
+      "runtime_class": "direct_verified_artifact"
+    },
+    "sayaka": {
+      "path": "allowed/bin/sayaka",
+      "sha256": "7bc576ab8ceaf137fa6b2f2482cd8afb4f20e6dfe92a0dc14df43f2ba7394cba",
+      "size_bytes": 4293920,
+      "runtime_class": "owned_sayaka_scan"
+    }
+  },
+  "fixture_truth_lock": {
+    "fixture_id": "c0-b3-flat-regular-v1",
+    "file_count": 1024,
+    "logical_bytes": 4194304,
+    "entries_sha256": "cf737067b3864cf2f410c50a7f6b70ea3b9b42d8e375496f9c23411697674ad6"
+  },
+  "canaries": [
+    {
+      "id": "literal-root-runtime-only",
+      "status": "passed",
+      "classification": "passed",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "id": "metadata-system-volumes-data",
+      "status": "passed",
+      "classification": "passed",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-rw-owned",
+      "status": "passed",
+      "classification": "passed",
+      "exit_code": 0,
+      "stderr": "",
+      "write_exit_code": 0
+    },
+    {
+      "id": "denied-other-tool-home-write",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/allowed/home/sayaka/must-not-exist failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-other-tool-tmp-write",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/allowed/tmp/sayaka/must-not-exist failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-prior-sample-write",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/allowed/home/mole/previous-sample/must-not-exist failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-read-owned-outside-allow",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "read <run-root>/denied-control/read-sentinel.txt failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-write-owned-outside-allow",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/denied-control/write-parent/blocked-12221-9593.txt failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-exec-readable-control",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 126,
+      "stderr": "env: <run-root>/denied-control/exec-readable/true-copy: Operation not permitted\n",
+      "readable_exit_code": 0,
+      "baseline_exec_exit_code": 0
+    },
+    {
+      "id": "denied-network-loopback",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "connect 127.0.0.1 failed: Operation not permitted\n",
+      "listener_accept_count": 2
+    }
+  ],
+  "phase_b_gate": {
+    "must_not_execute_mole_before_authorization": true,
+    "requires_independent_review": true,
+    "requires_explicit_parent_message": true
+  },
+  "collector_binding": {
+    "collector_sha256": "5bd6107061dad5b8f4b02c89d8f1a42ab2674898e4e854d78c0d7556c49e8842",
+    "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2"
+  },
+  "sayaka_control_scan": {
+    "status": "passed",
+    "failure_class": "none",
+    "first_useful_result_ms": 79.792167,
+    "first_useful_result_status": "measured",
+    "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+    "complete_result_ms": 86.000834,
+    "peak_rss_bytes": 10698752,
+    "stdout_bytes": 601431,
+    "stderr_bytes": 0,
+    "stdout_truncated": false,
+    "stderr_truncated": false,
+    "exit_code": 0,
+    "stderr": "",
+    "normalized": {
+      "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+      "file_count": 1024,
+      "logical_bytes": 4194304
+    },
+    "no_effects": {
+      "immutable_before": {
+        "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+        "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+        "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+        "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+      },
+      "immutable_after": {
+        "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+        "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+        "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+        "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+      },
+      "unchanged": true
+    },
+    "owned_state_effects": {
+      "home_before": "c1d45180644d97a27525da5560e0e0394c428b43192c0d44dad9f206073624e3",
+      "home_after": "c1d45180644d97a27525da5560e0e0394c428b43192c0d44dad9f206073624e3",
+      "tmp_before": "b614df909b4c7521bff042fc6ff04412422f7017503a22df2f017bd9a8d3b75c",
+      "tmp_after": "b614df909b4c7521bff042fc6ff04412422f7017503a22df2f017bd9a8d3b75c"
+    }
+  },
+  "samples": [
+    {
+      "phase": "correctness_gate",
+      "tool": "mole",
+      "index": 1,
+      "pair_id": null,
+      "order": null,
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 96.764583,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 103.180375,
+      "peak_rss_bytes": 9945088,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "f9556f05cde200fb157685542c3032b220cb3cddde28a5bcffa63df174f39952",
+        "home_after": "8a7a2fd62a48daaed59acfb859ec703b098e3018f081580875f5e6d9b140dc2c",
+        "tmp_before": "b70a8884eb7e6dbab1a7e9e68df079d252feeb5e121d45d3d11f72461696b638",
+        "tmp_after": "b70a8884eb7e6dbab1a7e9e68df079d252feeb5e121d45d3d11f72461696b638"
+      }
+    },
+    {
+      "phase": "correctness_gate",
+      "tool": "sayaka",
+      "index": 2,
+      "pair_id": null,
+      "order": null,
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 42.078333,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 48.311,
+      "peak_rss_bytes": 10715136,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "99523adfea5f911e468245567686e115a85e8bed1aefb7cf11b910e8970eaf5f",
+        "home_after": "99523adfea5f911e468245567686e115a85e8bed1aefb7cf11b910e8970eaf5f",
+        "tmp_before": "7d46ecc91bb1ed309f57318e86d08f33813759616505890591a8337cb4aac67e",
+        "tmp_after": "7d46ecc91bb1ed309f57318e86d08f33813759616505890591a8337cb4aac67e"
+      }
+    },
+    {
+      "phase": "warmup",
+      "tool": "mole",
+      "index": 1,
+      "pair_id": null,
+      "order": null,
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.74625,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 32.385084,
+      "peak_rss_bytes": 9699328,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "7c41d36eac3f685d0f2353c123676b025c779b6af742c8ef0280dc97fca33590",
+        "home_after": "e77cf600e764a32a9d586a2ac469b4511844e38374d4c4c5640becd2cc392465",
+        "tmp_before": "b36221e12fdb3c61a4c4d22c8f5e02fa095d489ff0dbe0ef19c372bed1fc1001",
+        "tmp_after": "b36221e12fdb3c61a4c4d22c8f5e02fa095d489ff0dbe0ef19c372bed1fc1001"
+      }
+    },
+    {
+      "phase": "warmup",
+      "tool": "sayaka",
+      "index": 1,
+      "pair_id": null,
+      "order": null,
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 40.061875,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 40.7205,
+      "peak_rss_bytes": 10895360,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "c51fb9caea10c9fcee4a444cdb0b45b242c83e6161fd9ebebc5f1ca486c29bf0",
+        "home_after": "c51fb9caea10c9fcee4a444cdb0b45b242c83e6161fd9ebebc5f1ca486c29bf0",
+        "tmp_before": "4b57cf847fdf90689c6714b9c5de396696da6997fe0aa18010218edbe97f04bf",
+        "tmp_after": "4b57cf847fdf90689c6714b9c5de396696da6997fe0aa18010218edbe97f04bf"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 2,
+      "pair_id": 1,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 39.394667,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 45.681167,
+      "peak_rss_bytes": 10764288,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "4dc495613bda17737c730171443dc0181845bd30996846c7e614b38463ae797d",
+        "home_after": "4dc495613bda17737c730171443dc0181845bd30996846c7e614b38463ae797d",
+        "tmp_before": "911bb0bf044a17cb485eeb43b721155ae63da8d1dcc283c34d0b4996fc11fb08",
+        "tmp_after": "911bb0bf044a17cb485eeb43b721155ae63da8d1dcc283c34d0b4996fc11fb08"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 2,
+      "pair_id": 1,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 35.549084,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 36.164375,
+      "peak_rss_bytes": 9863168,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "0ff94e355c57b48f7d9839b97bf58ef1dd295c9120b2a9df2f4224e80f6459b5",
+        "home_after": "0d1725082c62cbdd0af5fbde022dabf2a1a6de6d000f5e34ea167112eb8f6e41",
+        "tmp_before": "f22753ed28a2d28742acfcd735bc5301c849fd429b18e242959a6732ae159114",
+        "tmp_after": "f22753ed28a2d28742acfcd735bc5301c849fd429b18e242959a6732ae159114"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 3,
+      "pair_id": 2,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 32.432959,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 38.734625,
+      "peak_rss_bytes": 9715712,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "fc73b5ca0979b3227b58207d61b6102e8d3c85383b3c280b2813689921f92c1c",
+        "home_after": "8c5435e637686feabfb1b6c62b37df4ea96a68723d124eef83e612c911ddf800",
+        "tmp_before": "d505f47b12eed724fcd1d90d000ee80863a5b382caaf0b5b1703566e18ad6081",
+        "tmp_after": "d505f47b12eed724fcd1d90d000ee80863a5b382caaf0b5b1703566e18ad6081"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 3,
+      "pair_id": 2,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 45.676416,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 51.984125,
+      "peak_rss_bytes": 10813440,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "ba6181913f54d875848d6c098f6966ffb487091d3cd6392c379a60a5ad5147eb",
+        "home_after": "ba6181913f54d875848d6c098f6966ffb487091d3cd6392c379a60a5ad5147eb",
+        "tmp_before": "f606c3d75f060c18a0a93505dbab19c3fc222e17a5c40ac74b65d550f4ae50a7",
+        "tmp_after": "f606c3d75f060c18a0a93505dbab19c3fc222e17a5c40ac74b65d550f4ae50a7"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 4,
+      "pair_id": 3,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 42.708459,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 49.031959,
+      "peak_rss_bytes": 10698752,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "eaa1558324262e0f2813f80812764843041d81a038fb45d98d9592104041bb35",
+        "home_after": "eaa1558324262e0f2813f80812764843041d81a038fb45d98d9592104041bb35",
+        "tmp_before": "2c10ac5e85134007db40fbe1676aa0068d22adddb6bb7bf398b7564ae769b2ed",
+        "tmp_after": "2c10ac5e85134007db40fbe1676aa0068d22adddb6bb7bf398b7564ae769b2ed"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 4,
+      "pair_id": 3,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 37.99575,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 38.593125,
+      "peak_rss_bytes": 9879552,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "aa048f4eaa91c16aff0eb1ab5ade410ed728323c40a1d05e3241a2738cb15e4e",
+        "home_after": "ce222b4d2714195a4f6c0b0036ac5d860c0c56457ee5c709054231f81ed98fe1",
+        "tmp_before": "2e7aef6ef23ea0470ac85a668e5c6b184b55b6ad47c7bfd038f37aa68bf6f44d",
+        "tmp_after": "2e7aef6ef23ea0470ac85a668e5c6b184b55b6ad47c7bfd038f37aa68bf6f44d"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 5,
+      "pair_id": 4,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 33.927959,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 34.595375,
+      "peak_rss_bytes": 10125312,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "d7af4f2118538c9d872349e851903f775441aa31032e007e1832304799060a96",
+        "home_after": "c281667e3d8ee52af5606343a4948ec0cb56c8194971754af8997b0a11d9c1e1",
+        "tmp_before": "9bad04ccba40187e213f861334018b03a2af345a2737cba0bbbfa7c4ca389415",
+        "tmp_after": "9bad04ccba40187e213f861334018b03a2af345a2737cba0bbbfa7c4ca389415"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 5,
+      "pair_id": 4,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 54.153917,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 54.734708,
+      "peak_rss_bytes": 10797056,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "da089208d39d279d1afdc093e46d3928a31727441477273553d12a2f0d340010",
+        "home_after": "da089208d39d279d1afdc093e46d3928a31727441477273553d12a2f0d340010",
+        "tmp_before": "0139d6c954d4530c209f5381c526975e4d82c819d59a7bdd5046c504cdb61091",
+        "tmp_after": "0139d6c954d4530c209f5381c526975e4d82c819d59a7bdd5046c504cdb61091"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 6,
+      "pair_id": 5,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 59.42625,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 65.838125,
+      "peak_rss_bytes": 10747904,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "1ef65729ae5137a5380f5f3c687b9b645daa431d8e2ed7af8c3662f6554c3ae4",
+        "home_after": "1ef65729ae5137a5380f5f3c687b9b645daa431d8e2ed7af8c3662f6554c3ae4",
+        "tmp_before": "37711c146625572b8131626d04be3e607abcf2f80431a9ff36e178bc31a6064f",
+        "tmp_after": "37711c146625572b8131626d04be3e607abcf2f80431a9ff36e178bc31a6064f"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 6,
+      "pair_id": 5,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 36.918584,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 43.170875,
+      "peak_rss_bytes": 9781248,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "1fa4b6564173e48408ff7730c0b5cf540f14606f14963385a4227e9067dbc7fc",
+        "home_after": "f669c12a6636ae5715445e7df96b8e11db5d85e3dccd85e8d8e86a37d63cb61f",
+        "tmp_before": "cd7d38b1d35436b8d97ebc32306e166566602c7ae145639b31d7213291ae0eb7",
+        "tmp_after": "cd7d38b1d35436b8d97ebc32306e166566602c7ae145639b31d7213291ae0eb7"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 7,
+      "pair_id": 6,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 28.45425,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 34.7695,
+      "peak_rss_bytes": 9797632,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "b9426147bc47e37827db86377a39e9d39ed5c43e603cba0c256e54a664be2d27",
+        "home_after": "3545be7da7a2d30a09256717c1fa287caa05b462c826e1d77f85cdae3b927346",
+        "tmp_before": "3deeff9979161f1c9748eec70113f7fae505a0ea3eab84ff23e886caa24462e6",
+        "tmp_after": "3deeff9979161f1c9748eec70113f7fae505a0ea3eab84ff23e886caa24462e6"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 7,
+      "pair_id": 6,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 41.92925,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 48.207542,
+      "peak_rss_bytes": 10534912,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "88e0b877005b3c1c91e903ade33a6440e61e8ad4d881a83a7008a8999d01a7c1",
+        "home_after": "88e0b877005b3c1c91e903ade33a6440e61e8ad4d881a83a7008a8999d01a7c1",
+        "tmp_before": "86c401684bdfca4ffde146f168c49afa49133d1d803f93a123c515671db15aab",
+        "tmp_after": "86c401684bdfca4ffde146f168c49afa49133d1d803f93a123c515671db15aab"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 8,
+      "pair_id": 7,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 39.322833,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 45.761708,
+      "peak_rss_bytes": 10731520,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "148cd37e5035ae4232a0a32506dd2079d33c1808a37120111d9ed30de0cc3df2",
+        "home_after": "148cd37e5035ae4232a0a32506dd2079d33c1808a37120111d9ed30de0cc3df2",
+        "tmp_before": "db3bcb7b4f10f9a471bb1418a662545ae4eb16fff9ff9f2de7744de802a17328",
+        "tmp_after": "db3bcb7b4f10f9a471bb1418a662545ae4eb16fff9ff9f2de7744de802a17328"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 8,
+      "pair_id": 7,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 37.807542,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 38.413458,
+      "peak_rss_bytes": 9830400,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "64031c5b823edd491c99ff24da9ae473c8cbb1a29fb63c2a7d76b33ff4b8f2c1",
+        "home_after": "8706ff295d52c8fd89e43888eb4f2fa4650edb08e09dcd273675ceac8b5378b3",
+        "tmp_before": "fb1ea29ca410caf70ee61a323615e5851dac0fc3ae24db6477c83ce5299ebda7",
+        "tmp_after": "fb1ea29ca410caf70ee61a323615e5851dac0fc3ae24db6477c83ce5299ebda7"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 9,
+      "pair_id": 8,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 41.265334,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 47.723375,
+      "peak_rss_bytes": 10665984,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "f426708e1ab596ef33eaa693e1a0525a882ae851fd841ee49dbf35919e5c5f06",
+        "home_after": "f426708e1ab596ef33eaa693e1a0525a882ae851fd841ee49dbf35919e5c5f06",
+        "tmp_before": "5828d567df6933a5c6af76b936d88c8ebbb4f42ca3ce187b2a502dcc559a3760",
+        "tmp_after": "5828d567df6933a5c6af76b936d88c8ebbb4f42ca3ce187b2a502dcc559a3760"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 9,
+      "pair_id": 8,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 35.427375,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 41.43025,
+      "peak_rss_bytes": 9715712,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "96c667fdd8c6eb299091b622d2aaf7fb1cc3574cc46d4e8b0a80ea4159b9518e",
+        "home_after": "4b72d3e7df7567bc59c383a58de327bbab8ef3fd2db0baecbef77fb28b7bdb9d",
+        "tmp_before": "c005b60c064f578773871008fc42307ac301c85ebc1ea7fff0599e365734944b",
+        "tmp_after": "c005b60c064f578773871008fc42307ac301c85ebc1ea7fff0599e365734944b"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 10,
+      "pair_id": 9,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 29.001042,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 29.883084,
+      "peak_rss_bytes": 9814016,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "9c7a5d3a1deede755f3a89ebb0d33e364fecd624504dc11f508e4df9352788cb",
+        "home_after": "41136eb5241cf94cc5d4510f84bba9bfc6214da152fb97b6ed90b08225cf5b98",
+        "tmp_before": "57f453c28a478ec75420c81ea6a030274fd1938131d044e264201f0049530582",
+        "tmp_after": "57f453c28a478ec75420c81ea6a030274fd1938131d044e264201f0049530582"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 10,
+      "pair_id": 9,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 51.085458,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 57.458708,
+      "peak_rss_bytes": 10682368,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "5ad676cf5f37663ba43f3424d616c86a8032569e9264f1f44b0466d4d1d1b982",
+        "home_after": "5ad676cf5f37663ba43f3424d616c86a8032569e9264f1f44b0466d4d1d1b982",
+        "tmp_before": "155538fdad99f0ffb1de8f88b9a2ad7d0fd41e0acb86d4b165d014c14ff2c395",
+        "tmp_after": "155538fdad99f0ffb1de8f88b9a2ad7d0fd41e0acb86d4b165d014c14ff2c395"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 11,
+      "pair_id": 10,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 48.936542,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 55.28,
+      "peak_rss_bytes": 10862592,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "93de5b3dbfcc0afbffe7fe94d72beef93d0f3b81f857d547669a440348e7deef",
+        "home_after": "93de5b3dbfcc0afbffe7fe94d72beef93d0f3b81f857d547669a440348e7deef",
+        "tmp_before": "03f05573d19fa0049f0ce94db11ac3259dd8c445817181055805c3c2dba3e8e2",
+        "tmp_after": "03f05573d19fa0049f0ce94db11ac3259dd8c445817181055805c3c2dba3e8e2"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 11,
+      "pair_id": 10,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 32.004709,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 32.585625,
+      "peak_rss_bytes": 9764864,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "260fbf5debdcee67b890a2cad6ee160a75a3ff38763a93c27e71c158d4674267",
+        "home_after": "a26516fdd3974e442ea28a5988c8857677c76362aa3b21d2679d0d6028c4e557",
+        "tmp_before": "1542eb3e6f6d24e4bd6909dda958a7cb1168d4524c4086562dbd484ec7dbee97",
+        "tmp_after": "1542eb3e6f6d24e4bd6909dda958a7cb1168d4524c4086562dbd484ec7dbee97"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 12,
+      "pair_id": 11,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 44.793417,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 51.186542,
+      "peak_rss_bytes": 10944512,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "caf223788c644fa346264f18a3eb610297852197b0577687754cd33ef7953787",
+        "home_after": "caf223788c644fa346264f18a3eb610297852197b0577687754cd33ef7953787",
+        "tmp_before": "371e39db71d21ab2a6e3767016ba9ad413ca8c3076ddc2219d681156155d53b5",
+        "tmp_after": "371e39db71d21ab2a6e3767016ba9ad413ca8c3076ddc2219d681156155d53b5"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 12,
+      "pair_id": 11,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 29.747208,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 35.611541,
+      "peak_rss_bytes": 9732096,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "44f7b608ef1869ba0e7cdf455f7e275833ff9d93672837b4381f4e31120d66e7",
+        "home_after": "6de91e113115200546b0c4cb8e7f0c4c9f28a6d08feb270603806df9bd10a0ca",
+        "tmp_before": "4989b1195ae69f5ba8560915313e66729ab7e6f540fa7c1d5c14e65f7f9fe41f",
+        "tmp_after": "4989b1195ae69f5ba8560915313e66729ab7e6f540fa7c1d5c14e65f7f9fe41f"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 13,
+      "pair_id": 12,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 44.896625,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 51.254,
+      "peak_rss_bytes": 10813440,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "fd5bdf612b8f5494e45576a3c0d2d1c07c573c92db8cd003fdbc19668b68b429",
+        "home_after": "fd5bdf612b8f5494e45576a3c0d2d1c07c573c92db8cd003fdbc19668b68b429",
+        "tmp_before": "4b1ffcfdb37ff349262b50f802619d64e2a8c338784e5fc5160b7018c58ae122",
+        "tmp_after": "4b1ffcfdb37ff349262b50f802619d64e2a8c338784e5fc5160b7018c58ae122"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 13,
+      "pair_id": 12,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 44.167542,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 44.860958,
+      "peak_rss_bytes": 10010624,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "799d7c1d9ea19fd9ce1e268dd90ea4e3839bde2d46c1056eb191d85f6552b18f",
+        "home_after": "3ba6a4c5ed59b5a0ce9fc4cad3adaf60ca56a7ff928b19ffed8637bc8b224227",
+        "tmp_before": "b083ce82b4651cb6372a41ebf617950c48b06bbeb393ac827823fa461256b05e",
+        "tmp_after": "b083ce82b4651cb6372a41ebf617950c48b06bbeb393ac827823fa461256b05e"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 14,
+      "pair_id": 13,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 48.460542,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 54.801667,
+      "peak_rss_bytes": 10846208,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "f8844a8e9276e7a86b51061b572b1b48594693e498c98652d240178642e6d8b4",
+        "home_after": "f8844a8e9276e7a86b51061b572b1b48594693e498c98652d240178642e6d8b4",
+        "tmp_before": "95a0ced798bc9d5f1bd03345b5bd1b9628006194f1bc5cfcb6c361d44968036b",
+        "tmp_after": "95a0ced798bc9d5f1bd03345b5bd1b9628006194f1bc5cfcb6c361d44968036b"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 14,
+      "pair_id": 13,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 34.411583,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 34.957958,
+      "peak_rss_bytes": 9961472,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "309e0965534a580db34dd4dbb432da10b9e428adc25e5f74daf79852b044120b",
+        "home_after": "8f96c4e2c6edf8280caee6bf6485fcfcd0977fbc305eea9f7d7d73ae98363754",
+        "tmp_before": "1eb91f3b0d321ba97ff87000b92f568d2d1084b67a5bfcc07361b865205a1057",
+        "tmp_after": "1eb91f3b0d321ba97ff87000b92f568d2d1084b67a5bfcc07361b865205a1057"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 15,
+      "pair_id": 14,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 30.364959,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 31.093209,
+      "peak_rss_bytes": 9764864,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "82a71b6fcce2a10804a0181f8592ac6099427f9cdaaa433660669b15c710a9ad",
+        "home_after": "c89bb83ef62150bb5c3df2575988ef4239f23f8556c14afb7edf27dd0b6de3fe",
+        "tmp_before": "8c0b3c341fff711a56907eea8abffb4a1c49d9f609d4c138c42b802b080222c1",
+        "tmp_after": "8c0b3c341fff711a56907eea8abffb4a1c49d9f609d4c138c42b802b080222c1"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 15,
+      "pair_id": 14,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 46.189,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 47.028125,
+      "peak_rss_bytes": 10764288,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "70cdf28d6b425dedecdabe33346fedf9a73097c0314a0f69428d55bdbc8b83cc",
+        "home_after": "70cdf28d6b425dedecdabe33346fedf9a73097c0314a0f69428d55bdbc8b83cc",
+        "tmp_before": "944542045d1f300d922736eda99b9140be6326099314faf003b1ec468baba1c0",
+        "tmp_after": "944542045d1f300d922736eda99b9140be6326099314faf003b1ec468baba1c0"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 16,
+      "pair_id": 15,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 48.198708,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 54.50525,
+      "peak_rss_bytes": 10682368,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "5bfed0e98fe32bb2546e2abc120b2f90c70a5b8cc25a95658db3e34a772a5e6f",
+        "home_after": "5bfed0e98fe32bb2546e2abc120b2f90c70a5b8cc25a95658db3e34a772a5e6f",
+        "tmp_before": "1dbd510bd56ccf5e1444fddbc25a1dd4723c2ede0c1f873847c9f2df6fc1f572",
+        "tmp_after": "1dbd510bd56ccf5e1444fddbc25a1dd4723c2ede0c1f873847c9f2df6fc1f572"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 16,
+      "pair_id": 15,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 28.64225,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 29.242917,
+      "peak_rss_bytes": 9961472,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "14acb2321b1536c674006b21498f92720299850ba6f8a0e74251d2642853f51b",
+        "home_after": "aeca5942a5b8fe18af166f19c7c12878e1ee7c224163a8ac45a8b4f1f625e01a",
+        "tmp_before": "4c1a7dcd8d07b04d65d6ddcb954e3eac68fafafdc0ac54e578407607fcceabac",
+        "tmp_after": "4c1a7dcd8d07b04d65d6ddcb954e3eac68fafafdc0ac54e578407607fcceabac"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 17,
+      "pair_id": 16,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 43.783042,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 44.465125,
+      "peak_rss_bytes": 10846208,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "542143ab561b281fcea7ed6a26d1740f1bd54d1df1e93284743c7cbfd5627738",
+        "home_after": "542143ab561b281fcea7ed6a26d1740f1bd54d1df1e93284743c7cbfd5627738",
+        "tmp_before": "558663f1a71fd653a565072c0af33e9c77bbca164de869185cab90a4305779cf",
+        "tmp_after": "558663f1a71fd653a565072c0af33e9c77bbca164de869185cab90a4305779cf"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 17,
+      "pair_id": 16,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 33.05075,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 33.712375,
+      "peak_rss_bytes": 9895936,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "d1dc244478dab6726d0cd2663482b9b04ac0e6e60a8cdda264335ebd46c66db2",
+        "home_after": "1ff6c1148234bb0cc32f7594cffd88c9d79bd04fd9c31ec2ecbf8920f00861f1",
+        "tmp_before": "22afa711c558cd91f2e27ce11033ed0914b307be4e2147925df6f6cd45a80036",
+        "tmp_after": "22afa711c558cd91f2e27ce11033ed0914b307be4e2147925df6f6cd45a80036"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 18,
+      "pair_id": 17,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.538916,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 27.137125,
+      "peak_rss_bytes": 9797632,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "39f0f6d4fc58e74ffc5c7304b06480b1d402cd7b298a505793ec01007461be48",
+        "home_after": "7bd6cdc03dda0436ee56a5d59d83d7ca177b764b327080add6f732fc542283d7",
+        "tmp_before": "2377d5299cb1fe371f1be24f5983516123f17a40e21026f8e72442c783e53cd6",
+        "tmp_after": "2377d5299cb1fe371f1be24f5983516123f17a40e21026f8e72442c783e53cd6"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 18,
+      "pair_id": 17,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 71.26875,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 77.55625,
+      "peak_rss_bytes": 10534912,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "db36593c3a48a3d1050f4f1131f334c778839d65d345c99dae1e067247934ad4",
+        "home_after": "db36593c3a48a3d1050f4f1131f334c778839d65d345c99dae1e067247934ad4",
+        "tmp_before": "2679dab50b70b99cecdeb26522fc157509648074247d559e742c708c17817e76",
+        "tmp_after": "2679dab50b70b99cecdeb26522fc157509648074247d559e742c708c17817e76"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 19,
+      "pair_id": 18,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 27.893667,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 28.456542,
+      "peak_rss_bytes": 9781248,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "73dabbe214f0d3aeeff986f89d4a9997a03be8ed5ef6c39ee608365d01c47fb0",
+        "home_after": "e252a3b0627ab3841c0f360cfaa5ce683f2188a5c455cfa2713897f0d156857b",
+        "tmp_before": "3a67049b977ba8596ff4d8fe7a80162d2c89f3a32070b676bd94006d2bf9fd43",
+        "tmp_after": "3a67049b977ba8596ff4d8fe7a80162d2c89f3a32070b676bd94006d2bf9fd43"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 19,
+      "pair_id": 18,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 41.998708,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 48.348291,
+      "peak_rss_bytes": 10715136,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "2a196dc8d10c3cf7909178947580dc1149238e36beab858691ffd7ecafc27e2f",
+        "home_after": "2a196dc8d10c3cf7909178947580dc1149238e36beab858691ffd7ecafc27e2f",
+        "tmp_before": "4737f331750d247961e926fb5cfb0593094c3ebfe0958df0b0cabb4a26e27dfe",
+        "tmp_after": "4737f331750d247961e926fb5cfb0593094c3ebfe0958df0b0cabb4a26e27dfe"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 20,
+      "pair_id": 19,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.979541,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 27.535416,
+      "peak_rss_bytes": 10223616,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "232c4863aecff93bfe498e21ffb880ba3e19c0997e8dc2f08162e5c49ef7b307",
+        "home_after": "3ee5ecbf124596309bdd14290fcf83e89a0fdcb4f530278a844b359623337d6a",
+        "tmp_before": "4feaae485cc6cb6bc8d15e419048e1ca904816bcdb15e0e8e3639606db2ce83a",
+        "tmp_after": "4feaae485cc6cb6bc8d15e419048e1ca904816bcdb15e0e8e3639606db2ce83a"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 20,
+      "pair_id": 19,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 45.354417,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 45.936792,
+      "peak_rss_bytes": 10862592,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "e9b60e660332a5ab8c11faf8fc16bd7dd2a4b1f99d9262c26c1f7bdf528e837d",
+        "home_after": "e9b60e660332a5ab8c11faf8fc16bd7dd2a4b1f99d9262c26c1f7bdf528e837d",
+        "tmp_before": "e21afe9b394eff43b6fcb416c5c27eaa1aa01ee696229b28e79ec89afd314af0",
+        "tmp_after": "e21afe9b394eff43b6fcb416c5c27eaa1aa01ee696229b28e79ec89afd314af0"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 21,
+      "pair_id": 20,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 27.21825,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 32.9085,
+      "peak_rss_bytes": 9945088,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "a5b47ce6f9a8d80645d951e36bc67e09e8d1c28df5c4ac310a1fb93959b7b522",
+        "home_after": "d1b091cea01451a09b6ac33662b1187742f46fca3744de5f0ac20c615ff13e32",
+        "tmp_before": "91782bab68af7abe4488f25e619353dadb1a5cab1b33a9f886fd333acc2743c5",
+        "tmp_after": "91782bab68af7abe4488f25e619353dadb1a5cab1b33a9f886fd333acc2743c5"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 21,
+      "pair_id": 20,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 41.2785,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 47.417,
+      "peak_rss_bytes": 10682368,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "262309a5497ac9931b9068997a34af350d0782b4002f49fa5c0ecd973b8ea896",
+        "home_after": "262309a5497ac9931b9068997a34af350d0782b4002f49fa5c0ecd973b8ea896",
+        "tmp_before": "b242e96635000ecf7009f8d476ccd5e581948a98a0cf01a3ae9a04236eed7ff0",
+        "tmp_after": "b242e96635000ecf7009f8d476ccd5e581948a98a0cf01a3ae9a04236eed7ff0"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 22,
+      "pair_id": 21,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 37.886084,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 44.170834,
+      "peak_rss_bytes": 10665984,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "784eb16faaaa4c5e5139f0495c63d17ebc2f3668ee709dd4fd8f08f0e7cb2778",
+        "home_after": "784eb16faaaa4c5e5139f0495c63d17ebc2f3668ee709dd4fd8f08f0e7cb2778",
+        "tmp_before": "8a3ce994b0bde5bfddc4d238b385da6bc2c54cc58adfccf97126557ac6b8c281",
+        "tmp_after": "8a3ce994b0bde5bfddc4d238b385da6bc2c54cc58adfccf97126557ac6b8c281"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 22,
+      "pair_id": 21,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.505708,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 32.369041,
+      "peak_rss_bytes": 9781248,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "e2751c691b4cd56846bbc9647dc2f6f0c858301e67debd1e789282ff57bcc92e",
+        "home_after": "fde4b5f42f5194accb3ee1593e19b5b52a4a20625c4aed803be52d1481a53e1a",
+        "tmp_before": "b0532b9fd415caa0a1db3f6049e38f121a61180b7c088f008789b08bf5ad1698",
+        "tmp_after": "b0532b9fd415caa0a1db3f6049e38f121a61180b7c088f008789b08bf5ad1698"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 23,
+      "pair_id": 22,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.361333,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 26.932791,
+      "peak_rss_bytes": 9945088,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "3c49f96590d42ce010dc3e3818e9298dcc77a047d3dbf707709faa52b905ea44",
+        "home_after": "d6dafa5a2205a125a9e231041d1ed4a6cf5fc5f939964292262e9d55c4a46f4c",
+        "tmp_before": "ba2075b9a0eb8762c4d772fb072925b4eb280c97cc45d2bdc51b1de900cbdfbd",
+        "tmp_after": "ba2075b9a0eb8762c4d772fb072925b4eb280c97cc45d2bdc51b1de900cbdfbd"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 23,
+      "pair_id": 22,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 46.005875,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 52.345291,
+      "peak_rss_bytes": 10862592,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "acb9881c22a8dc9058180ec28cadeb8e1ac2955808d331cae3997ed5f72ae3ec",
+        "home_after": "acb9881c22a8dc9058180ec28cadeb8e1ac2955808d331cae3997ed5f72ae3ec",
+        "tmp_before": "24f3e3558bd19ebb28bdd364834d3c735eff67bc09403ee73cfef848dc88a14d",
+        "tmp_after": "24f3e3558bd19ebb28bdd364834d3c735eff67bc09403ee73cfef848dc88a14d"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 24,
+      "pair_id": 23,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 43.417834,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 49.927959,
+      "peak_rss_bytes": 10829824,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "0d6e88ae96de5e5986393e6c544833ff1f2ceb207d894eed1e628b5d39f62efd",
+        "home_after": "0d6e88ae96de5e5986393e6c544833ff1f2ceb207d894eed1e628b5d39f62efd",
+        "tmp_before": "c88e145365ea6c4a247082ac3aa0981f1c533346e7ec726cf4178bf3def6d0b8",
+        "tmp_after": "c88e145365ea6c4a247082ac3aa0981f1c533346e7ec726cf4178bf3def6d0b8"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 24,
+      "pair_id": 23,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 28.878375,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 29.5695,
+      "peak_rss_bytes": 9781248,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "ebeb559c29d8455aeebe4d1b8c8dee79109543489e7c737b581d2d4bc2ca0e58",
+        "home_after": "1cbee070d9c6229b286e0978f9b3ef2860fbf3088c015e2c0c283c64dd3430a5",
+        "tmp_before": "350a5c46cd09c8356aa72f214a7c39e45422b7a7289684cbe6fe33195b181da0",
+        "tmp_after": "350a5c46cd09c8356aa72f214a7c39e45422b7a7289684cbe6fe33195b181da0"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 25,
+      "pair_id": 24,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.718875,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 27.245916,
+      "peak_rss_bytes": 9748480,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "15cb10a9ce067cfa550c2c3b232554674594972ec5b29c9fa02b098da3963064",
+        "home_after": "384f65e5145304a5d7ac38f150ff97065e820c0be0f1902b3a9baa3165502727",
+        "tmp_before": "f153714da19f2f8fd0a95b095e4c314a30f321feeac40543147c3d9f2c1f6ec3",
+        "tmp_after": "f153714da19f2f8fd0a95b095e4c314a30f321feeac40543147c3d9f2c1f6ec3"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 25,
+      "pair_id": 24,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 49.004333,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 55.097917,
+      "peak_rss_bytes": 10829824,
+      "stdout_bytes": 601430,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "aa8109d17aa9b5a1e8390eb6e3e3cf473ab82ea7727e6f701e96279a621908a6",
+        "home_after": "aa8109d17aa9b5a1e8390eb6e3e3cf473ab82ea7727e6f701e96279a621908a6",
+        "tmp_before": "07d173b0e0d7fa3ddefdc2cc6a9d2f5031390c9d4960b4d246691f8748fac079",
+        "tmp_after": "07d173b0e0d7fa3ddefdc2cc6a9d2f5031390c9d4960b4d246691f8748fac079"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 26,
+      "pair_id": 25,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 40.451792,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 41.044209,
+      "peak_rss_bytes": 10551296,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "4d629068aed7380d8a46d8511ec8adb07f1b404c6d61fbbf1666d8d41ae84154",
+        "home_after": "4d629068aed7380d8a46d8511ec8adb07f1b404c6d61fbbf1666d8d41ae84154",
+        "tmp_before": "a5211f99512a057fcb96f87efec9f2eb195df2af5b09f4152ad7cd8c1a64af7e",
+        "tmp_after": "a5211f99512a057fcb96f87efec9f2eb195df2af5b09f4152ad7cd8c1a64af7e"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 26,
+      "pair_id": 25,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.034083,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 26.627458,
+      "peak_rss_bytes": 9797632,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "beb84b59f8ce26f1269d67042acb4e715a57754e5443b8a100c7a98d2e7b6ac7",
+        "home_after": "7c6ea2f147d0d2ff251ac72f22c1aaa21dc242f58f6036387c7819c0a2dce945",
+        "tmp_before": "2d2c54ab61f80ad0d9a0c9a175e647b7f4433666ef8c8a18b3a8d21267e6b2aa",
+        "tmp_after": "2d2c54ab61f80ad0d9a0c9a175e647b7f4433666ef8c8a18b3a8d21267e6b2aa"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 27,
+      "pair_id": 26,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 25.707791,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 26.304625,
+      "peak_rss_bytes": 9879552,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "94e923ba32216b7031b46e9abab74f0711425a1082d991ed3e93de365f2e354b",
+        "home_after": "2df090eb6844ae207ef4382db2c3a75187849f52c5de6577053afea191a4dbd3",
+        "tmp_before": "f5b9f48bd9ddfc371a5e70f207d49f64508e42807520618467be2ed8cfa52f81",
+        "tmp_after": "f5b9f48bd9ddfc371a5e70f207d49f64508e42807520618467be2ed8cfa52f81"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 27,
+      "pair_id": 26,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 44.139,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 50.062333,
+      "peak_rss_bytes": 10698752,
+      "stdout_bytes": 601428,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "b0fe6552db17084fd76528a87c65bae3af4b0829add5592c951e564537638c12",
+        "home_after": "b0fe6552db17084fd76528a87c65bae3af4b0829add5592c951e564537638c12",
+        "tmp_before": "7cf1d950d68d0c9bd50d29a7179922a26da62d11463933af16eb6ac263c8109d",
+        "tmp_after": "7cf1d950d68d0c9bd50d29a7179922a26da62d11463933af16eb6ac263c8109d"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 28,
+      "pair_id": 27,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 41.101917,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 47.448875,
+      "peak_rss_bytes": 10698752,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "dbeba60af7a69a38bf64af81fb5ead3a9b58a675414dfa6fcc94876eedd6c72f",
+        "home_after": "dbeba60af7a69a38bf64af81fb5ead3a9b58a675414dfa6fcc94876eedd6c72f",
+        "tmp_before": "d5e01f4813627108366dba0a98eb34b9a15177d1899c74458174235fc7e1cc30",
+        "tmp_after": "d5e01f4813627108366dba0a98eb34b9a15177d1899c74458174235fc7e1cc30"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 28,
+      "pair_id": 27,
+      "order": "BA",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 27.468375,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 28.039666,
+      "peak_rss_bytes": 9945088,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "a0ff6a1ce130562667ce51dbe6eb72bb84fb7c92d91dbcc8c2bc641507d99472",
+        "home_after": "1934066e3baa1490e97dd93801ea2750bfb75ef3b4f1a078da842f3841d05cc4",
+        "tmp_before": "b13c1f6cf128870c23e0918db7036959bda3c2b8736e1ccef4fb47eaf3adc661",
+        "tmp_after": "b13c1f6cf128870c23e0918db7036959bda3c2b8736e1ccef4fb47eaf3adc661"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 29,
+      "pair_id": 28,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 30.82,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 31.714042,
+      "peak_rss_bytes": 9895936,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "48d50d012d0c2ae30739ee217baa850bbf74014499391a0a86129b37010b1421",
+        "home_after": "b0f37a20debcbfd3dc8ed2147d2dee506250fa61ac21491b5e0d91da1cb84145",
+        "tmp_before": "762512dcfb2f581eeccc817c3fe404c58c0f40967b65c401888dbbb22797aaf2",
+        "tmp_after": "762512dcfb2f581eeccc817c3fe404c58c0f40967b65c401888dbbb22797aaf2"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 29,
+      "pair_id": 28,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 46.639042,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 52.931375,
+      "peak_rss_bytes": 10747904,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "0fa92da94cac2b7b1e4e2ebfd1d23c51a66446194702f9444825419356a9abbd",
+        "home_after": "0fa92da94cac2b7b1e4e2ebfd1d23c51a66446194702f9444825419356a9abbd",
+        "tmp_before": "5cc6abc9ea79c78c6f4e32ad7aa0b36a426a931d013b0681710908480de2b7e5",
+        "tmp_after": "5cc6abc9ea79c78c6f4e32ad7aa0b36a426a931d013b0681710908480de2b7e5"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 30,
+      "pair_id": 29,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 25.762916,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 32.129291,
+      "peak_rss_bytes": 9879552,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "47d09f36bfe70312fc3d76fb4ce79379daaa4d123687dab41f62d4bada78a3b6",
+        "home_after": "55016bf385146ea9cbd8c00e81cd31151682fcb0b171e91b9844c87fe9e7f5af",
+        "tmp_before": "e8842b15f5c0175e97fdb920cad03ed5580a2009964ad5e6761714cd049e6d34",
+        "tmp_after": "e8842b15f5c0175e97fdb920cad03ed5580a2009964ad5e6761714cd049e6d34"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 30,
+      "pair_id": 29,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 49.817959,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 56.174375,
+      "peak_rss_bytes": 10764288,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "461d1dd82ba8428fedc2f504fe12e260af4960e5f9f2551548a89b0034567bdd",
+        "home_after": "461d1dd82ba8428fedc2f504fe12e260af4960e5f9f2551548a89b0034567bdd",
+        "tmp_before": "048bafe335e3f69c3c8e5722d78b50db3c05dc1a66c62a4b66ec531402afdb97",
+        "tmp_after": "048bafe335e3f69c3c8e5722d78b50db3c05dc1a66c62a4b66ec531402afdb97"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 31,
+      "pair_id": 30,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.336,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 32.573167,
+      "peak_rss_bytes": 9748480,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "fdea12d44a98e9ee583e693173d43d15647635986f384fc981cbf62ff3f79b92",
+        "home_after": "6ee202521a482a98cc3f43977ad4c8a477c39b5d79e1d15e21d354679747d957",
+        "tmp_before": "935046d87e05f0d8f8bcc2b52b8a2d657a0d82988006951ef283cbd57ef7d9ec",
+        "tmp_after": "935046d87e05f0d8f8bcc2b52b8a2d657a0d82988006951ef283cbd57ef7d9ec"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 31,
+      "pair_id": 30,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 43.709,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 49.998458,
+      "peak_rss_bytes": 10747904,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "e8c349b8c2852426fbfab0c61332419c54fb448fb73bfd01b964cf54fa087ccc",
+        "home_after": "e8c349b8c2852426fbfab0c61332419c54fb448fb73bfd01b964cf54fa087ccc",
+        "tmp_before": "c21e157789e32f5e5cc656bce282c9be5d09b7e1a5b5ed95da8df2d355104442",
+        "tmp_after": "c21e157789e32f5e5cc656bce282c9be5d09b7e1a5b5ed95da8df2d355104442"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "mole",
+      "index": 32,
+      "pair_id": 31,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 26.522292,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 27.038625,
+      "peak_rss_bytes": 9961472,
+      "stdout_bytes": 262346,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "5761f4b16d2a69e77e02f4ef930ce609a198e5134fc83dd16aab77b2b680913e",
+        "home_after": "0a8e8400656edcb8accbe31f2f9bbd02246aaf0541ac4f9e8b5ec0cd05376fb6",
+        "tmp_before": "e945c2b2e954bbe1483b1c29a7b1af60e82d4b549e91ff433335e6a5a29df984",
+        "tmp_after": "e945c2b2e954bbe1483b1c29a7b1af60e82d4b549e91ff433335e6a5a29df984"
+      }
+    },
+    {
+      "phase": "measurement",
+      "tool": "sayaka",
+      "index": 32,
+      "pair_id": 31,
+      "order": "AB",
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 43.766833,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 44.541958,
+      "peak_rss_bytes": 10813440,
+      "stdout_bytes": 601429,
+      "stderr_bytes": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "no_effects": {
+        "immutable_before": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "immutable_after": {
+          "fixture": "ceea5546f2d3f35cb74d47ce697ba24ab80226081104f61b94ab22a47b3904d9",
+          "binaries": "ac7718cdba95173e285bb2142adf58de22a9a5da7f1d9ff3498062c0a5ab9264",
+          "controls": "8c15cd8a7ae948e24179f1a1102816d06d495d932d9a51ae4b62f901d6d22ed2",
+          "empty_path": "e62a7d70db95f4cd14f5564b13e1757adadcdd7577177eff11d3063868a08be4"
+        },
+        "unchanged": true
+      },
+      "owned_state_effects": {
+        "home_before": "ca250384f37c6cde7af23170a30d3825f7fddbe8a7d468b9048588f21e047c0c",
+        "home_after": "ca250384f37c6cde7af23170a30d3825f7fddbe8a7d468b9048588f21e047c0c",
+        "tmp_before": "cf2efd5b2dbc03bf29fcbc5870907827eec4840642aaf4c309012a9b0328ff85",
+        "tmp_after": "cf2efd5b2dbc03bf29fcbc5870907827eec4840642aaf4c309012a9b0328ff85"
+      }
+    }
+  ],
+  "summary": {
+    "sayaka": {
+      "passed": 31,
+      "median_complete_ms": 49.998458,
+      "p95_complete_ms": 65.838125
+    },
+    "mole": {
+      "passed": 31,
+      "median_complete_ms": 32.369041,
+      "p95_complete_ms": 43.170875
+    }
+  }
+}

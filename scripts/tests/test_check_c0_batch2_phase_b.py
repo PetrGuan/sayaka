@@ -147,6 +147,81 @@ class CheckC0Batch2PhaseBTests(unittest.TestCase):
         self.assertLess(run["first_useful_result_ms"], run["complete_result_ms"])
         self.assertGreater(run["complete_result_ms"] - run["first_useful_result_ms"], 500)
 
+    def test_run_sample_v2_uses_last_non_whitespace_chunk(self) -> None:
+        profile = self._allow_all_profile()
+        run = self.module.run_sample(
+            profile=profile,
+            params={},
+            command=[
+                "/usr/bin/python3",
+                "-c",
+                "import sys,time;sys.stdout.write('1');sys.stdout.flush();time.sleep(1);sys.stdout.write('2');sys.stdout.flush();time.sleep(1)",
+            ],
+            env_map=self.env,
+            cwd=self.test_workspace,
+            timeout_seconds=5,
+            stdout_cap_bytes=1024,
+            stderr_cap_bytes=1024,
+            normalizer=lambda payload: payload,
+            run_root=self.test_workspace,
+            first_useful_result_method_id=self.module.FIRST_USEFUL_RESULT_METHOD_V2,
+        )
+        self.assertEqual(run["status"], "passed")
+        self.assertEqual(run["first_useful_result_status"], "measured")
+        self.assertLess(run["first_useful_result_ms"], run["complete_result_ms"])
+        self.assertGreater(run["complete_result_ms"] - run["first_useful_result_ms"], 500)
+
+    def test_run_sample_v2_handles_split_utf8_and_whitespace(self) -> None:
+        profile = self._allow_all_profile()
+        run = self.module.run_sample(
+            profile=profile,
+            params={},
+            command=[
+                "/usr/bin/python3",
+                "-c",
+                (
+                    "import sys,time;"
+                    "full='{\"msg\":\"😀\",\"nested\":[{\"k\":\"a\\\\\\\\\\\\\"b\"}]}'.encode('utf-8');"
+                    "part1=full[:10];part2=full[10:];"
+                    "sys.stdout.buffer.write(part1);sys.stdout.buffer.flush();"
+                    "time.sleep(1);"
+                    "sys.stdout.buffer.write(part2);sys.stdout.buffer.flush();"
+                    "time.sleep(1);"
+                    "sys.stdout.write(' \\n\\t');sys.stdout.flush()"
+                ),
+            ],
+            env_map=self.env,
+            cwd=self.test_workspace,
+            timeout_seconds=6,
+            stdout_cap_bytes=4096,
+            stderr_cap_bytes=1024,
+            normalizer=lambda payload: payload,
+            run_root=self.test_workspace,
+            first_useful_result_method_id=self.module.FIRST_USEFUL_RESULT_METHOD_V2,
+        )
+        self.assertEqual(run["status"], "passed")
+        self.assertEqual(run["first_useful_result_status"], "measured")
+        self.assertGreater(run["complete_result_ms"] - run["first_useful_result_ms"], 500)
+
+    def test_run_sample_v2_does_not_call_prefix_json_predicate(self) -> None:
+        profile = self._allow_all_profile()
+        with mock.patch.object(self.module, "_parse_json_complete", side_effect=AssertionError("must not be called")):
+            run = self.module.run_sample(
+                profile=profile,
+                params={},
+                command=["/bin/bash", "--noprofile", "--norc", "-c", "printf '{\"ok\":1}'"],
+                env_map=self.env,
+                cwd=self.test_workspace,
+                timeout_seconds=5,
+                stdout_cap_bytes=1024,
+                stderr_cap_bytes=1024,
+                normalizer=lambda payload: payload,
+                run_root=self.test_workspace,
+                first_useful_result_method_id=self.module.FIRST_USEFUL_RESULT_METHOD_V2,
+            )
+        self.assertEqual(run["status"], "passed")
+        self.assertEqual(run["first_useful_result_status"], "measured")
+
     def test_run_sample_stream_cap_trips_and_kills(self) -> None:
         profile = self._allow_all_profile()
         run = self.module.run_sample(
@@ -296,6 +371,31 @@ class CheckC0Batch2PhaseBTests(unittest.TestCase):
             self.assertEqual(result["failure_class"], expected)
             self.assertIsNone(result["first_useful_result_ms"])
         self.assertTrue(captures)
+
+    def test_v2_invalid_extra_and_normalizer_fail_do_not_measure(self) -> None:
+        profile = self._allow_all_profile()
+        cases = [
+            ("printf '{\"ok\":1}x'", "invalid_json"),
+            ("printf '{\"ok\":1}'", "normalization_failed"),
+        ]
+        for command, expected in cases:
+            result = self.module.run_sample(
+                profile=profile,
+                params={},
+                command=["/bin/bash", "--noprofile", "--norc", "-c", command],
+                env_map=self.env,
+                cwd=self.test_workspace,
+                timeout_seconds=5,
+                stdout_cap_bytes=1024,
+                stderr_cap_bytes=1024,
+                normalizer=lambda _payload: self.module.ensure(False, "controlled mismatch"),
+                run_root=self.test_workspace,
+                first_useful_result_method_id=self.module.FIRST_USEFUL_RESULT_METHOD_V2,
+            )
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["failure_class"], expected)
+            self.assertEqual(result["first_useful_result_status"], "not_measured")
+            self.assertIsNone(result["first_useful_result_ms"])
 
 
 if __name__ == "__main__":

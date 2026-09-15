@@ -33,6 +33,7 @@ For machine consumption, explicitly select JSON:
 ```sh
 sayaka scan . --json
 sayaka scan . --json --progress
+sayaka scan . --json --profile-scan-stderr
 ```
 
 At least one root is required; no command silently scans the current or home
@@ -62,6 +63,7 @@ non-gap skip.
 | `--timeout-ms` | 30000 | Cooperative traversal time budget |
 | `--json` | Off | One final versioned JSON object on stdout |
 | `--progress` | Auto for interactive human mode | Readable progress on stderr; NDJSON with `--json` |
+| `--profile-scan-stderr` | Off | Diagnostic one-line stderr JSON with aggregate phase timings; requires `--json` |
 
 The engine additionally bounds pending events (128), retained issues (128), root
 count (64), and individual emitted paths (at most 64 KiB or the smaller configured
@@ -100,6 +102,11 @@ used as M1 planner IDs or approval credentials.
 carries versioned progress records with task identity and observed counts; it
 must not be concatenated with stdout when parsing the final result. Human
 diagnostics escape control characters. Output failures are errors, not success.
+`--profile-scan-stderr` adds a separate diagnostic stderr line (`type:
+scan_profile`) with aggregate `main_to_dispatch_ms`, `setup_ms`, `scan_ms`,
+combined `json_encode_write_flush_ms`, optional `stdout_json_bytes`, and
+`engine_elapsed_ms`. The profile line is opt-in, keeps stdout JSON unchanged,
+and is not a claim of zero observer overhead.
 
 ## Measurement semantics
 
