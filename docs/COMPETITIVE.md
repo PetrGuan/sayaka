@@ -7,8 +7,9 @@ Initial M7 browser, T11 status, and T12 local lifecycle slices have local fixtur
 regression baselines only (`benchmarks/m7-v1.json`, `benchmarks/t11-v1.json`,
 `scripts/check_local_install.py`); these are not Mole parity proof.
 Native Trash/recovery acceptance remains a separate gate.
-No comparative runtime, usability, or full installation-footprint benchmark
-against Mole has been executed.
+One guarded direct-analyzer comparison against Mole has been executed on a
+flat regular-file fixture (see batch 3 below). Installed-CLI, human usability,
+and full installation-footprint comparisons remain unmeasured.
 
 ## Objective and scope
 
@@ -53,6 +54,73 @@ C0 source/ledger/protocol manifests are now pinned in:
 - `benchmarks/results/c0-batch2-phase-a-ready-v1.json` (current blocked guard record; the filename does not imply readiness)
 - `benchmarks/results/c0-batch2-phase-b-results-v1.json` (Phase B pipeline artifact produced without execution; `--execute` remains required and parent authorization is still required before any Mole execution)
 - `benchmarks/c0-sayaka-capability-current-v2.json` (machine-readable current Sayaka feature-subset capability ledger for batch-2 planning)
+- `benchmarks/c0-batch3-direct-analyzer-v1.json` (independent batch-3 preregistration for direct verified Mole `analyze` artifact vs owned Sayaka `scan` on the same frozen flat fixture and AB/BA order)
+- `benchmarks/results/c0-batch3-direct-analyzer-results-v1.json` (completed direct-artifact comparison: correctness checks, warmups, 31 AB/BA pairs, and no-effects fingerprints)
+- `benchmarks/c0-batch3-direct-analyzer-v2.json` (corrected preregistration using the post-validation last-non-whitespace collector method; keeps the same frozen 31-pair schedule and fixture contract)
+- `benchmarks/results/c0-batch3-direct-analyzer-results-v2.json` (completed corrected-method run using the original pinned binaries)
+- `benchmarks/c0-sayaka-scan-profile-diagnostic-v1.json` and its result (separate diagnostic-build phase/overhead experiment)
+
+### Batch 3: guarded direct-artifact observation
+
+The table immediately below is historical v1, using repeated prefix parsing.
+
+On macOS arm64, the pinned Mole analyzer artifact and the unchanged Sayaka
+product build both returned the exact 1,024-file, 4,194,304-byte fixture result.
+Both correctness checks, both warmups, and all 62 measured invocations passed.
+Fixture, binary, denied-control, and empty-PATH fingerprints stayed unchanged;
+expected cache effects were confined to each invocation's owned HOME/TMP.
+
+| Tool | Median completion | p95 completion | Maximum observed per-process peak RSS |
+| --- | ---: | ---: | ---: |
+| Mole direct analyzer | 31.00 ms | 44.73 ms | 9.61 MiB |
+| Sayaka scan | 51.98 ms | 66.08 ms | 10.42 MiB |
+
+These are local guarded **direct-artifact** observations, not installed CLI or
+full-product superiority evidence. PATH was an owned empty directory, so Mole's
+optional `mdfind`/`du` lookups were unavailable; the flat fixture's exact common
+file statistics were nevertheless verified. Sayaka emitted additional metadata
+(about 601 KB JSON versus 262 KB for Mole). The result must not be generalized
+to normal Mole configuration, larger/nested trees, other platforms, or
+installation size. Cancellation latency remains unmeasured in this scenario.
+The historical v1 rows were collected with the legacy prefix-decode timing
+method and remain immutable. v2 keeps them unchanged and records a separate
+collector/method binding for corrected reruns.
+
+### Corrected v2 and separate Sayaka phase diagnostics
+
+V2 uses the same original Mole/Sayaka artifact hashes and the same 31-pair
+fixture/order, but records the last non-whitespace stdout receipt in the capture
+loop and validates JSON once afterward. No growing-prefix JSON decoding is done
+for this method. All measured rows and immutable-input checks passed.
+
+| Tool | Median completion | p95 completion | Maximum observed peak RSS |
+| --- | ---: | ---: | ---: |
+| Mole direct analyzer | 32.37 ms | 43.17 ms | 9.75 MiB |
+| Original Sayaka scan artifact | 50.00 ms | 65.84 ms | 10.44 MiB |
+
+The v1/v2 runs happened at different times: differences between their medians
+must not be treated as an exact causal estimate of removed observer overhead.
+No superiority claim follows from this limited common-result projection.
+
+A separate diagnostic build was paired with its own profiling flag off/on
+(15 pairs on the 1024-file fixture, 7 on an empty fixture). It was not substituted
+for the original binary in the v2 comparison.
+
+| Diagnostic phase, median | 1024 files | Empty directory |
+| --- | ---: | ---: |
+| Run entry to scan dispatch (not OS loader) | 0.153 ms | 0.147 ms |
+| Scan setup | 0.036 ms | 0.034 ms |
+| Scan call, including native scope admission | 13.74 ms | 8.63 ms |
+| JSON encoding, write and flush combined | 4.55 ms | 0.037 ms |
+
+The median paired profiling-on overhead on the full fixture was 0.50 ms, with
+a 95% paired bootstrap interval of [-2.36, 9.58] ms. That is not evidence of
+zero overhead. Seven guarded version-only runs had median completion 21.17 ms.
+The median per-sample wall-time residual outside the four reported phases was
+31.46 ms on the full fixture; it mixes launch, loader, sandbox, observation and
+finalization costs and must not be labeled entirely as application startup.
+These observations prioritize fixed admission/launch costs for further study;
+they do not justify removing safety checks or JSON information.
 
 Batch 2 currently closes as tooling and preregistration only, not measured
 Mole installation or performance evidence. The pinned official installer calls

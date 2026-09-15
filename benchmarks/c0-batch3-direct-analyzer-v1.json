@@ -1,0 +1,176 @@
+{
+  "benchmark_id": "c0-batch3-direct-analyzer-v1",
+  "scope": "Issue #26 batch-3 direct verified Mole analyzer artifact versus owned Sayaka scan under guarded runtime; not installer/full CLI/full footprint.",
+  "current_batch_decision": {
+    "runtime_execution_authorized": true,
+    "requires_independent_guard_review": true,
+    "requires_explicit_parent_authorization": true,
+    "reason": "The user explicitly authorized this direct-artifact batch; execution still requires independent guard review and the explicit operator flag/profile hash."
+  },
+  "reference_lock": {
+    "tag": "V1.53.0",
+    "source_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+    "source_archive_sha256": "4de6c5ab78d2c723a6ff43418b52bfc5a229a8a01c98d9fe487a1bc42d3a73ac",
+    "assets": {
+      "analyze-darwin-arm64": {
+        "sha256": "637841dda6a56523af65c2befc4628732200cfe994476b38fde67b17432a0afb",
+        "size_bytes": 3620258
+      }
+    }
+  },
+  "sayaka_reference": {
+    "binary_path": "target/release/sayaka",
+    "binary_sha256": "7bc576ab8ceaf137fa6b2f2482cd8afb4f20e6dfe92a0dc14df43f2ba7394cba",
+    "source_commit_baseline": "88d77f491e081a8958de20456e1c5fffc7314ac1",
+    "source_commit_current": "f54d8b1c85e9",
+    "product_rust_changed": false
+  },
+  "ordering": {
+    "seed": 260026,
+    "method": "deterministic_ab_ba_pairs"
+  },
+  "repetitions": {
+    "paired_ab_ba": 31,
+    "warmup_per_tool": 1
+  },
+  "scenario": {
+    "scenario_id": "c0-b3-direct-analyzer-flat-regular-json-v1",
+    "ab_mapping": {
+      "A": "mole",
+      "B": "sayaka"
+    },
+    "pair_schedule": [
+      "BA", "AB", "BA", "AB", "BA", "AB", "BA", "BA", "AB", "BA", "BA", "BA", "BA", "AB", "BA", "BA", "AB", "AB", "AB", "AB", "BA", "AB", "BA", "AB", "BA", "AB", "BA", "AB", "AB", "AB", "AB"
+    ],
+    "fixture_truth": {
+      "fixture_id": "c0-b3-flat-regular-v1",
+      "file_count": 1024,
+      "bytes_per_file": 4096,
+      "logical_bytes": 4194304,
+      "filename_prefix": "f",
+      "name_width": 6,
+      "filename_suffix": ".bin",
+      "payload_seed": 260026,
+      "payload_algorithm": "SHAKE256(seed_u64_be || file_index_u32_be).digest(4096)",
+      "positive_path_set_required": true
+    }
+  },
+  "source_audit": {
+    "checks": [
+      {
+        "id": "analyze-target-resolution-and-json-entry",
+        "file": "cmd/analyze/main.go",
+        "requirements": [
+          {
+            "snippet": "resolveScanTarget(os.Getenv(\"MO_ANALYZE_PATH\"), flag.Args())",
+            "line_ranges": ["26-60"]
+          },
+          {
+            "snippet": "runJSONMode(abs, isOverview)",
+            "line_ranges": ["31-48"]
+          }
+        ]
+      },
+      {
+        "id": "analyze-json-schema-fields",
+        "file": "cmd/analyze/json.go",
+        "requirements": [
+          {
+            "snippet": "Path       string          `json:\"path\"`",
+            "line_ranges": ["16-23"]
+          },
+          {
+            "snippet": "Overview   bool            `json:\"overview\"`",
+            "line_ranges": ["16-23"]
+          },
+          {
+            "snippet": "Entries    []jsonEntry     `json:\"entries\"`",
+            "line_ranges": ["16-23"]
+          }
+        ]
+      },
+      {
+        "id": "analyze-cache-home-root",
+        "file": "cmd/analyze/cache.go",
+        "requirements": [
+          {
+            "snippet": "return filepath.Join(home, \".cache\", \"mole\")",
+            "line_ranges": ["266-317"]
+          },
+          {
+            "snippet": "if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {",
+            "line_ranges": ["300-320"]
+          }
+        ]
+      },
+      {
+        "id": "analyze-optional-helper-lookup",
+        "file": "cmd/analyze/scanner.go",
+        "requirements": [
+          {
+            "snippet": "exec.CommandContext(ctx, \"mdfind\", \"-onlyin\", root, query)",
+            "line_ranges": ["1-40", "737-814"]
+          },
+          {
+            "snippet": "exec.CommandContext(ctx, \"du\",",
+            "line_ranges": ["998-1096"]
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "runtime_read_literals": ["/", "/dev/null"],
+    "runtime_read_allowlist": ["/usr/lib", "/usr/share", "/System/Library"],
+    "metadata_read_literals": ["/System/Volumes/Data"],
+    "empty_path_policy": "PATH points to owned empty directory to suppress optional mdfind/du helper lookup",
+    "helper_exec_policy": "fixed /usr/bin/env + owned binaries only; no Bash/ps/curl/go/du/mdfind/network helpers"
+  },
+  "canary_contract": {
+    "required_ids": [
+      "literal-root-runtime-only",
+      "metadata-system-volumes-data",
+      "allowed-rw-owned",
+      "denied-other-tool-home-write",
+      "denied-other-tool-tmp-write",
+      "denied-prior-sample-write",
+      "denied-read-owned-outside-allow",
+      "denied-write-owned-outside-allow",
+      "denied-exec-readable-control",
+      "denied-network-loopback"
+    ]
+  },
+  "canary_timeouts_seconds": {
+    "guard_default": 15,
+    "sayaka_control_scan": 120
+  },
+  "phase_b_gate": {
+    "must_not_execute_mole_before_authorization": true,
+    "requires_independent_review": true,
+    "requires_explicit_parent_message": true
+  },
+  "phase_b": {
+    "requires_operator_execute_flag": true,
+    "requires_phase_a_revalidation": true,
+    "approved_profile_sha256": null,
+    "measurement_fixed": {
+      "stdout_capture_cap_bytes": 8388608,
+      "stderr_capture_cap_bytes": 8388608,
+      "timeout_seconds_per_sample": 180,
+      "rss_source": "wait4 exact child ru_maxrss bytes",
+      "first_useful_result_definition": "first complete parseable payload before normalizer",
+      "statistics": {
+        "p95": "nearest_rank",
+        "retain_failures": true
+      }
+    },
+    "runtime_classes": {
+      "direct_verified_artifact": "owned/bin/analyze-darwin-arm64 --json owned/fixture/root",
+      "owned_sayaka_scan": "owned/bin/sayaka scan --json owned/fixture/root"
+    },
+    "cancellation": {
+      "status": "not_measured",
+      "reason": "no equivalent frozen cancellation method for both tools"
+    }
+  }
+}

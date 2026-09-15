@@ -1,0 +1,45 @@
+{
+  "benchmark_id": "c0-sayaka-scan-profile-diagnostic-v1",
+  "class": "diagnostic_only_not_competitive_baseline",
+  "binary_sha256": "1a5a2d8b917249ce4887b0b13f93b4cf4dae1571f390f94af709bb529cb8b355",
+  "binary_role": "same diagnostic build with profiling flag off and on",
+  "original_comparison_binary_sha256": "7bc576ab8ceaf137fa6b2f2482cd8afb4f20e6dfe92a0dc14df43f2ba7394cba",
+  "collector_method": "post_validation_last_non_whitespace_stdout_chunk_v2",
+  "order_seed": 260015,
+  "paired_scenarios": [
+    {"id": "flat-1024", "files": 1024, "bytes_per_file": 4096, "pairs": 15},
+    {"id": "empty", "files": 0, "bytes_per_file": 0, "pairs": 7}
+  ],
+  "version_only_runs": 7,
+  "profiling_flag": "--profile-scan-stderr",
+  "profile_channel": "one aggregate scan_profile JSON record on stderr",
+  "phase_definitions": {
+    "main_to_dispatch_ms": "run entry to scan dispatch; excludes OS loader",
+    "setup_ms": "scan entry through argument, limits, terminal and cancellation setup",
+    "scan_ms": "wall duration inside scan::scan, including native scope admission",
+    "json_encode_write_flush_ms": "combined serialization and stdout writing/flushing, not pure encoding CPU"
+  },
+  "instrumentation_overhead": {
+    "estimator": "median of paired profiling-on minus profiling-off completion times",
+    "confidence": 0.95,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 260015
+  },
+  "guard": "same direct-artifact read/write restrictions; fresh owned HOME/TMP per invocation",
+  "invariants": [
+    "No new filesystem actions or deleted safety checks",
+    "Default stdout JSON schema and information are unchanged",
+    "Fixture, staged binaries and denied controls remain unchanged",
+    "Original v1 and corrected v2 baseline data are separate from diagnostics"
+  ],
+  "limits": {
+    "timeout_seconds": 30,
+    "stdout_cap_bytes": 8388608,
+    "stderr_cap_bytes": 1048576
+  },
+  "interpretation": [
+    "Parent wall minus child phase durations is a mixed launch/loader/observer/finalization residual, not pure startup",
+    "Version-only and empty-scan cases are diagnostic baselines, not full workload performance",
+    "Profiling overhead is measured; it is not assumed to be zero"
+  ]
+}

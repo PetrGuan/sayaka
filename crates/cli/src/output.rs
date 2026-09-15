@@ -206,6 +206,23 @@ fn line(writer: &mut impl Write, value: &impl Serialize) -> io::Result<()> {
     writer.flush()
 }
 
+struct CountingWriter<'a, W: Write> {
+    inner: &'a mut W,
+    bytes: usize,
+}
+
+impl<W: Write> Write for CountingWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let wrote = self.inner.write(buf)?;
+        self.bytes += wrote;
+        Ok(wrote)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 pub fn report(writer: &mut impl Write, report: &ScanReport) -> io::Result<()> {
     line(
         writer,
@@ -225,6 +242,15 @@ pub fn report(writer: &mut impl Write, report: &ScanReport) -> io::Result<()> {
             metrics: Metrics(&report.metrics),
         },
     )
+}
+
+pub fn report_with_count(writer: &mut impl Write, report_value: &ScanReport) -> io::Result<usize> {
+    let mut counting = CountingWriter {
+        inner: writer,
+        bytes: 0,
+    };
+    report(&mut counting, report_value)?;
+    Ok(counting.bytes)
 }
 
 pub fn fatal(writer: &mut impl Write, error: &ScanError) -> io::Result<()> {
@@ -294,7 +320,10 @@ pub fn progress(writer: &mut impl Write, progress: &ScanProgress) -> io::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sayaka_engine::model::Cancellation;
     use sayaka_engine::scan::ScanCode;
+    use sayaka_engine::scan::{self, ScanLimits};
+    use tempfile::tempdir;
 
     struct BrokenWriter;
 
@@ -334,5 +363,20 @@ mod tests {
                 .chars()
                 .any(char::is_control)
         );
+    }
+
+    #[test]
+    fn report_with_count_matches_written_bytes() {
+        let root = tempdir().expect("tempdir");
+        let limits = ScanLimits::default();
+        let cancellation = Cancellation::default();
+        let scan_report =
+            scan::scan(&[root.path().to_path_buf()], &limits, &cancellation, |_| {}).expect("scan");
+        let mut plain = Vec::new();
+        report(&mut plain, &scan_report).expect("report");
+        let mut counted = Vec::new();
+        let bytes = report_with_count(&mut counted, &scan_report).expect("counted report");
+        assert_eq!(bytes, counted.len());
+        assert_eq!(plain, counted);
     }
 }

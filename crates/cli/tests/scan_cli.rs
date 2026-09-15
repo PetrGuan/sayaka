@@ -3376,6 +3376,53 @@ mod native {
     }
 
     #[test]
+    fn profile_scan_stderr_is_opt_in_and_keeps_stdout_json_contract() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("data"), b"hello").unwrap();
+        let output = fixture.scan(&["--json", "--profile-scan-stderr"]);
+        let value = json(&output, 0);
+        assert_eq!(value["schema_version"], 1);
+        assert!(value["entries"].is_array());
+        let lines: Vec<&str> = std::str::from_utf8(&output.stderr)
+            .unwrap()
+            .lines()
+            .collect();
+        assert_eq!(lines.len(), 1);
+        let profile: Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(profile["schema_version"], 1);
+        assert_eq!(profile["type"], "scan_profile");
+        assert_eq!(profile["status"], value["status"]);
+        assert!(profile["main_to_dispatch_ms"].is_number());
+        assert!(profile["setup_ms"].is_number());
+        assert!(profile["scan_ms"].is_number());
+        assert!(profile["json_encode_write_flush_ms"].is_number());
+        assert!(profile["stdout_json_bytes"].is_u64());
+        assert_eq!(profile["stdout_json_bytes"], output.stdout.len());
+        let plain = fixture.scan(&["--json"]);
+        let plain_value = json(&plain, 0);
+        assert_eq!(plain_value["totals"], value["totals"]);
+        assert!(!String::from_utf8_lossy(&plain.stderr).contains("scan_profile"));
+    }
+
+    #[test]
+    fn profile_scan_requires_json_and_marks_unrun_phases() {
+        let fixture = Fixture::new();
+        let no_json = fixture.scan(&["--profile-scan-stderr"]);
+        assert_eq!(no_json.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&no_json.stderr).contains("--json"));
+
+        let output = fixture.scan(&["--json", "--profile-scan-stderr", "--max-open-dirs", "0"]);
+        let value = json(&output, 2);
+        assert_eq!(value["status"], "failed");
+        let profile: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(profile["status"], "failed");
+        assert!(profile["setup_ms"].is_number());
+        assert!(profile["scan_ms"].is_null());
+        assert!(profile["engine_elapsed_ms"].is_null());
+        assert_eq!(profile["output_error"], "invalid_limits");
+    }
+
+    #[test]
     fn sigint_cancels_an_owned_child_after_first_progress() {
         let fixture = Fixture::new();
         // Bounded, dedicated fixture; one worker keeps cancellation observable.

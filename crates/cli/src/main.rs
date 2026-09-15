@@ -19,10 +19,11 @@ mod trash;
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::scan::{self, ScanCode, ScanError, ScanLimits, ScanStatus};
+use serde::Serialize;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn command() -> Command {
     let defaults = ScanLimits::default();
@@ -47,6 +48,13 @@ fn command() -> Command {
                 .long("progress")
                 .action(ArgAction::SetTrue)
                 .help("Show progress on stderr (NDJSON only with --json)"),
+        )
+        .arg(
+            Arg::new("profile-scan-stderr")
+                .long("profile-scan-stderr")
+                .action(ArgAction::SetTrue)
+                .requires("json")
+                .help("Diagnostic: write one scan phase profile JSON line to stderr (--json only)"),
         );
     for (name, description, default) in [
         ("workers", "Directory workers, 1-32", defaults.workers),
@@ -139,8 +147,41 @@ pub(crate) fn limits(args: &ArgMatches) -> ScanLimits {
     limits
 }
 
-fn run_scan(args: &ArgMatches) -> io::Result<u8> {
+#[derive(Serialize)]
+struct ScanProfileRecord<'a> {
+    schema_version: u8,
+    #[serde(rename = "type")]
+    record_type: &'static str,
+    status: &'a str,
+    main_to_dispatch_ms: Option<f64>,
+    setup_ms: Option<f64>,
+    scan_ms: Option<f64>,
+    json_encode_write_flush_ms: Option<f64>,
+    stdout_json_bytes: Option<usize>,
+    engine_elapsed_ms: Option<u64>,
+    output_error: Option<&'a str>,
+}
+
+fn as_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+fn emit_scan_profile(stderr: &mut impl Write, record: &ScanProfileRecord<'_>) -> io::Result<()> {
+    serde_json::to_writer(&mut *stderr, record).map_err(io::Error::other)?;
+    stderr.write_all(b"\n")?;
+    stderr.flush()
+}
+
+fn run_scan(args: &ArgMatches, run_start: Instant) -> io::Result<u8> {
+    let dispatch_start = Instant::now();
     let json = args.get_flag("json");
+    let profile_scan = args.get_flag("profile-scan-stderr");
+    if profile_scan && !json {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--profile-scan-stderr requires --json",
+        ));
+    }
     let stdout_terminal = io::stdout().is_terminal();
     let stderr_terminal = io::stderr().is_terminal();
     let dumb = std::env::var_os("TERM").is_some_and(|term| term == "dumb");
@@ -158,8 +199,15 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
     let cancellation = Cancellation::default();
     let mut stderr = io::stderr().lock();
     let mut stdout = io::stdout().lock();
+    let main_to_dispatch_ms = profile_scan.then(|| as_ms(dispatch_start.duration_since(run_start)));
+    let setup_start = dispatch_start;
+    let mut setup_ms = None;
+    let mut scan_ms = None;
+    let mut json_encode_write_flush_ms = None;
+    let mut stdout_json_bytes = None;
+    let mut output_error: Option<String> = None;
     let mut progress_error = None;
-    let result = (|| {
+    let result: Result<scan::ScanReport, ScanError> = (|| {
         limits.validate()?;
         let roots = args
             .get_many::<PathBuf>("roots")
@@ -185,7 +233,11 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
                 format!("cannot install interrupt handler: {error}"),
             )
         })?;
-        scan::scan(&roots, &limits, &cancellation, |progress| {
+        if profile_scan {
+            setup_ms = Some(as_ms(setup_start.elapsed()));
+        }
+        let scan_start = profile_scan.then(Instant::now);
+        let report = scan::scan(&roots, &limits, &cancellation, |progress| {
             if show_progress && progress_error.is_none() {
                 let written = if json {
                     output::progress(&mut stderr, progress)
@@ -197,8 +249,13 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
                     progress_error = Some(error);
                 }
             }
-        })
+        });
+        scan_ms = scan_start.map(|start| as_ms(start.elapsed()));
+        report
     })();
+    if profile_scan && setup_ms.is_none() {
+        setup_ms = Some(as_ms(setup_start.elapsed()));
+    }
     if let Some(error) = progress_error {
         let fatal = ScanError::new(ScanCode::Io, format!("progress output failed: {error}"));
         if json {
@@ -209,7 +266,46 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
     match result {
         Ok(report) => {
             if json {
-                output::report(&mut stdout, &report)?;
+                if profile_scan {
+                    let output_start = Instant::now();
+                    let counted = output::report_with_count(&mut stdout, &report);
+                    match counted {
+                        Ok(bytes) => {
+                            stdout.flush()?;
+                            json_encode_write_flush_ms = Some(as_ms(output_start.elapsed()));
+                            stdout_json_bytes = Some(bytes);
+                        }
+                        Err(error) => {
+                            output_error = Some(format!("{:?}", error.kind()));
+                            if profile_scan {
+                                let profile = ScanProfileRecord {
+                                    schema_version: 1,
+                                    record_type: "scan_profile",
+                                    status: "failed",
+                                    main_to_dispatch_ms,
+                                    setup_ms,
+                                    scan_ms,
+                                    json_encode_write_flush_ms,
+                                    stdout_json_bytes,
+                                    engine_elapsed_ms: Some(report.metrics.elapsed_ms),
+                                    output_error: output_error.as_deref(),
+                                };
+                                if let Err(profile_error) = emit_scan_profile(&mut stderr, &profile)
+                                {
+                                    return Err(io::Error::new(
+                                        error.kind(),
+                                        format!(
+                                            "{error}; profile output also failed: {profile_error}"
+                                        ),
+                                    ));
+                                }
+                            }
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    output::report(&mut stdout, &report)?;
+                }
             } else if report.status == ScanStatus::Failed {
                 human::report(&mut stderr, &report, stderr_style)?;
                 human::notes(&mut stderr, &report, stderr_style)?;
@@ -223,6 +319,21 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
             }
             stdout.flush()?;
             stderr.flush()?;
+            if profile_scan {
+                let profile = ScanProfileRecord {
+                    schema_version: 1,
+                    record_type: "scan_profile",
+                    status: report.status.as_str(),
+                    main_to_dispatch_ms,
+                    setup_ms,
+                    scan_ms,
+                    json_encode_write_flush_ms,
+                    stdout_json_bytes,
+                    engine_elapsed_ms: Some(report.metrics.elapsed_ms),
+                    output_error: output_error.as_deref(),
+                };
+                emit_scan_profile(&mut stderr, &profile)?;
+            }
             Ok(report.status.exit_code())
         }
         Err(error) => {
@@ -233,6 +344,21 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
             }
             stdout.flush()?;
             stderr.flush()?;
+            if profile_scan {
+                let profile = ScanProfileRecord {
+                    schema_version: 1,
+                    record_type: "scan_profile",
+                    status: "failed",
+                    main_to_dispatch_ms,
+                    setup_ms,
+                    scan_ms,
+                    json_encode_write_flush_ms,
+                    stdout_json_bytes,
+                    engine_elapsed_ms: None,
+                    output_error: Some(error.code.as_str()),
+                };
+                emit_scan_profile(&mut stderr, &profile)?;
+            }
             Ok(
                 if matches!(error.code, ScanCode::InvalidRoot | ScanCode::InvalidLimits) {
                     2
@@ -245,6 +371,7 @@ fn run_scan(args: &ArgMatches) -> io::Result<u8> {
 }
 
 fn run() -> io::Result<u8> {
+    let run_start = Instant::now();
     let args = match command().try_get_matches() {
         Ok(args) => args,
         Err(error) => {
@@ -258,7 +385,7 @@ fn run() -> io::Result<u8> {
         }
     };
     match args.subcommand() {
-        Some(("scan", args)) => run_scan(args),
+        Some(("scan", args)) => run_scan(args, run_start),
         Some(("apps", args)) => apps::run(args),
         Some(("apps-related", args)) => apps_related::run(args),
         Some(("trash", args)) => trash::run(args),
@@ -286,5 +413,33 @@ fn main() -> ExitCode {
             let _ = writeln!(io::stderr().lock(), "output error: {:?}", error.to_string());
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_record_serializes_expected_shape() {
+        let record = ScanProfileRecord {
+            schema_version: 1,
+            record_type: "scan_profile",
+            status: "complete",
+            main_to_dispatch_ms: Some(1.25),
+            setup_ms: Some(0.5),
+            scan_ms: Some(9.0),
+            json_encode_write_flush_ms: Some(2.0),
+            stdout_json_bytes: Some(1234),
+            engine_elapsed_ms: Some(8),
+            output_error: None,
+        };
+        let mut buffer = Vec::new();
+        emit_scan_profile(&mut buffer, &record).expect("emit profile");
+        let value: serde_json::Value = serde_json::from_slice(&buffer).expect("json");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["type"], "scan_profile");
+        assert_eq!(value["stdout_json_bytes"], 1234);
+        assert!(value["output_error"].is_null());
     }
 }
