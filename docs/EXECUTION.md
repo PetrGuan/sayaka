@@ -64,6 +64,9 @@ sayaka clean exclusions list .
 sayaka clean exclusions add . ./pkg/__pycache__
 sayaka clean exclusions remove . ./pkg/__pycache__
 sayaka clean exclusions remove-root .
+sayaka installer . --select ./Example.dmg
+sayaka installer . --select ./Example.dmg --json
+sayaka installer . --execute
 sayaka trash --scope . ./file.txt
 sayaka trash --scope . ./file.txt --json
 sayaka trash --scope . ./file.txt --execute
@@ -103,6 +106,17 @@ else `$HOME/.config/sayaka`; override with `--config-dir`). This config is
 clean-only and is not read by `trash`, `rules trash`, or `browse`. Missing
 exclusion entries are reported as `needs_attention`; they block `clean --execute`
 until removed or repaired with explicit management commands.
+
+`installer` adds a narrower selection frontend over the same ordinary-file
+executor. It requires complete discovery, recognized UDIF/flat-PKG structure,
+current-user single-link files, private inspection-to-native witness matching,
+and a sealed plan before exact confirmation. A native refusal prevents approval
+of the whole installer batch. Its explicit exclusions are retained native
+protections; it does not import clean policy or classify installation state.
+Default preview JSON remains unchanged; explicit selection has a separate
+read-only action envelope. See [installer files](INSTALLER_PREVIEW.md).
+Installer outcomes reuse ordinary-file records; recognition is not a durable
+rule authorization, and no new journal/schema or recovery guarantee is implied.
 
 Without `--execute`, no target or application state is modified. `--execute`
 requires terminal stdin/stdout/stderr, shows the exact preview and risk statement,

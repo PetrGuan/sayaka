@@ -162,6 +162,75 @@ pub struct InstallerCandidate {
     pub counted: bool,
     pub name_kind: CandidateNameKind,
     pub format: CandidateFormat,
+    #[cfg(target_os = "macos")]
+    inspection: Option<InspectionWitness>,
+}
+
+impl InstallerCandidate {
+    /// Only a selection candidate, never permission to perform a native effect.
+    pub fn selectable(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.inspection.as_ref().is_some_and(|witness| {
+                self.path == witness.path
+                    && self.identity == witness.target.identity
+                    && self.logical_bytes == Some(witness.target.size)
+                    && self.owner_scope == OwnerScope::CurrentUser
+                    && witness.owner_scope == OwnerScope::CurrentUser
+                    && witness.target.links == 1
+                    && self.name_kind == witness.name_kind
+                    && self.format == witness.format
+                    && self.format.status == FormatStatus::Recognized
+                    && matches!(
+                        (self.name_kind, self.format.family),
+                        (CandidateNameKind::Dmg, FormatFamily::UdifDmg)
+                            | (CandidateNameKind::Pkg, FormatFamily::FlatPkgXar)
+                    )
+            })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn verify_admission(
+        &self,
+        root: &Path,
+        admission: &sayaka_platform_macos::NativeAdmissionWitness,
+    ) -> std::io::Result<()> {
+        let witness = self
+            .inspection
+            .as_ref()
+            .filter(|_| self.selectable())
+            .ok_or_else(|| {
+                crate::journal::invalid("installer has no eligible inspection witness")
+            })?;
+        let mut current = root.to_path_buf();
+        let ancestors_match = witness.ancestors.len() == admission.target_ancestors.len()
+            && witness
+                .ancestors
+                .iter()
+                .zip(&admission.target_ancestors)
+                .all(|(before, after)| {
+                    current.push(&before.name);
+                    after.path == current && before.baseline.matches_native(after)
+                });
+        if witness.root_path != root
+            || admission.root.path != root
+            || admission.target.path != self.path
+            || !witness.root.matches_native(&admission.root)
+            || !witness.target.matches_native(&admission.target)
+            || !ancestors_match
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "installer or ancestry changed after inspection; rerun preview",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,6 +335,44 @@ pub struct InstallerPreview {
     pub issues: Vec<InstallerIssue>,
     pub issues_omitted: usize,
     pub metrics: InstallerMetrics,
+    selection_context: Option<SelectionContext>,
+}
+
+#[derive(Clone, Debug)]
+struct SelectionContext {
+    root: PathBuf,
+    filter: String,
+    excludes: Vec<PathBuf>,
+}
+
+impl InstallerPreview {
+    pub fn selection_ready(&self) -> bool {
+        cfg!(target_os = "macos")
+            && self.schema_version == INSTALLER_PREVIEW_SCHEMA_VERSION
+            && self.kind == INSTALLER_KIND
+            && self.platform == "macos"
+            && self.complete
+            && self.issues_omitted == 0
+            && self.status == InstallerStatus::Complete
+            && !self.effects_performed
+            && self.selection_context.as_ref().is_some_and(|context| {
+                self.root == context.root
+                    && self.filter == context.filter
+                    && self.excludes == context.excludes
+            })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn selection_scope(&self) -> std::io::Result<crate::model::Scope> {
+        if !self.selection_ready() || self.excludes.len() > crate::journal::MAX_ITEMS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "installer selection requires a complete unchanged preview and at most 32 exclusions",
+            ));
+        }
+        crate::model::Scope::new(self.root.clone(), self.excludes.clone())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))
+    }
 }
 
 #[derive(Default)]
@@ -428,6 +535,7 @@ pub fn preview_installers(
         issues: Vec::new(),
         issues_omitted: report.issues_omitted,
         metrics: InstallerMetrics::default(),
+        selection_context: None,
     };
     if let Err(message) = limits.validate() {
         preview.status = InstallerStatus::Failed;
@@ -553,6 +661,8 @@ pub fn preview_installers(
                     counted: entry.counted,
                     name_kind,
                     format: format_unknown_for_error(error.code),
+                    #[cfg(target_os = "macos")]
+                    inspection: None,
                 }
             }
         };
@@ -597,6 +707,13 @@ pub fn preview_installers(
     if preview.complete {
         status = InstallerStatus::Complete;
         preview.status = status;
+        if preview.issues_omitted == 0 {
+            preview.selection_context = Some(SelectionContext {
+                root: preview.root.clone(),
+                filter: preview.filter.clone(),
+                excludes: preview.excludes.clone(),
+            });
+        }
     }
     preview
 }
@@ -709,6 +826,17 @@ fn inspect_candidate(
         CandidateNameKind::Dmg => parse_dmg(entry, &mut inspected, context, budget),
         CandidateNameKind::Pkg => parse_pkg(entry, &mut inspected, context, budget),
     };
+    #[cfg(target_os = "macos")]
+    let inspection = parsed.as_ref().ok().map(|format| InspectionWitness {
+        path: entry.path.clone(),
+        root_path: inspected.root_path.clone(),
+        root: inspected.root_baseline,
+        ancestors: inspected.dir_chain.clone(),
+        target: inspected.baseline,
+        owner_scope,
+        name_kind,
+        format: format.clone(),
+    });
     let finalize = inspected.finish();
     match (parsed, finalize) {
         (Ok(format), Ok(())) => Ok(InstallerCandidate {
@@ -720,6 +848,8 @@ fn inspect_candidate(
             counted: entry.counted,
             name_kind,
             format,
+            #[cfg(target_os = "macos")]
+            inspection,
         }),
         (Err(error), Ok(())) => Err(error),
         (Ok(_), Err(error)) => Err(error),
@@ -1586,21 +1716,64 @@ struct InspectedRead {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Debug)]
 struct DirCheckpoint {
     name: OsString,
     baseline: FileStamp,
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FileStamp {
     identity: FileIdentity,
     mode_kind: ResourceKind,
     flags: u32,
     size: u64,
     uid: u32,
+    gid: u32,
+    mode: u32,
+    links: u64,
+    created: (i64, i64),
     mtime: (i64, i64),
     ctime: (i64, i64),
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug)]
+struct InspectionWitness {
+    path: PathBuf,
+    root_path: PathBuf,
+    root: FileStamp,
+    ancestors: Vec<DirCheckpoint>,
+    target: FileStamp,
+    owner_scope: OwnerScope,
+    name_kind: CandidateNameKind,
+    format: CandidateFormat,
+}
+
+#[cfg(target_os = "macos")]
+impl FileStamp {
+    fn matches_native(&self, native: &sayaka_platform_macos::NativeWitnessInfo) -> bool {
+        self.identity
+            == (FileIdentity::Unix {
+                device: native.device,
+                inode: native.inode,
+            })
+            && matches!(
+                (self.mode_kind, native.kind),
+                (ResourceKind::File, "file") | (ResourceKind::Directory, "directory")
+            )
+            && self.uid == native.uid
+            && self.gid == native.gid
+            && self.mode == native.mode
+            && self.flags == native.flags
+            && self.created == (native.created_unix_seconds, native.created_nanoseconds)
+            && (self.mode_kind == ResourceKind::Directory
+                || (self.size == native.logical_bytes
+                    && self.links == native.nlink
+                    && self.mtime == (native.modified_unix_seconds, native.modified_nanoseconds)
+                    && self.ctime == (native.changed_unix_seconds, native.changed_nanoseconds)))
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1616,7 +1789,7 @@ fn directory_flags() -> rustix::fs::OFlags {
 #[cfg(target_os = "macos")]
 fn file_flags() -> rustix::fs::OFlags {
     use rustix::fs::OFlags;
-    OFlags::RDONLY | OFlags::CLOEXEC | OFlags::from_bits_retain(0x2000_0000)
+    OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK | OFlags::from_bits_retain(0x2000_0000)
 }
 
 #[cfg(target_os = "macos")]
@@ -1989,6 +2162,10 @@ fn stamp_from_stat(stat: &rustix::fs::Stat) -> Result<FileStamp, PreviewError> {
         flags: stat.st_flags,
         size,
         uid: stat.st_uid,
+        gid: stat.st_gid,
+        mode: u32::from(stat.st_mode),
+        links: u64::from(stat.st_nlink),
+        created: (stat.st_birthtime, stat.st_birthtime_nsec),
         mtime: (stat.st_mtime, stat.st_mtime_nsec),
         ctime: (stat.st_ctime, stat.st_ctime_nsec),
     })
@@ -2026,6 +2203,59 @@ mod tests {
     use std::io::Write;
     #[cfg(target_os = "macos")]
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[cfg(target_os = "macos")]
+    mod owned_fixture {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/owned_temp.rs"
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn scanned_installer_replaced_by_fifo_is_refused_without_blocking() {
+        use rustix::fs::OFlags;
+        // Fail before touching a FIFO if the nonblocking-open invariant regresses.
+        assert!(file_flags().contains(OFlags::NONBLOCK));
+        let fixture = owned_fixture::OwnedTempDir::new(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            "sayaka-installer-fifo-",
+        )
+        .unwrap();
+        let root = fixture.path();
+        let file = root.join("sample.pkg");
+        std::fs::write(&file, b"original regular file").unwrap();
+        let entry = file_entry(&file);
+        let root_identity = unix_identity(root);
+        std::fs::rename(&file, root.join("original.pkg")).unwrap();
+        let created = std::process::Command::new("/usr/bin/mkfifo")
+            .args(["-m", "600"])
+            .arg(&file)
+            .env_clear()
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+        let started = Instant::now();
+        let result = InspectedRead::open(&entry, root, root_identity, Path::new("sample.pkg"), &[]);
+        assert!(matches!(
+            result,
+            Err(PreviewError {
+                code: InstallerIssueCode::Changed,
+                ..
+            })
+        ));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(
+            std::fs::read(root.join("original.pkg")).unwrap(),
+            b"original regular file"
+        );
+    }
 
     #[test]
     fn udif_footer_accepts_basic_koly_and_rejects_bad_ranges() {

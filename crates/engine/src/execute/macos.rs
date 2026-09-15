@@ -489,6 +489,116 @@ pub struct CleanSession {
     clean_policy_context: CleanPolicyContextRecord,
 }
 
+/// Binds explicit installer selections to their inspected and native identities.
+/// Format recognition is a prerequisite, not a disposability or trust assertion.
+pub struct InstallerSession {
+    inner: TrashSession,
+    selected_count: usize,
+}
+
+impl InstallerSession {
+    pub fn prepare(
+        discovered: &crate::installer_preview::InstallerPreview,
+        paths: &[PathBuf],
+        cancellation: &Cancellation,
+    ) -> io::Result<Self> {
+        let scope = discovered.selection_scope()?;
+        if paths.is_empty() || paths.len() > journal::MAX_ITEMS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "select between 1 and 32 installer files",
+            ));
+        }
+        let mut selected = HashMap::new();
+        for path in paths {
+            if !crate::model::valid_absolute_path(path) || selected.contains_key(path) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "installer selections must be unique absolute paths without traversal",
+                ));
+            }
+            let candidate = discovered
+                .candidates
+                .iter()
+                .find(|candidate| candidate.path == *path && candidate.selectable())
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, format!(
+                        "selected path is not a recognized current-user installer candidate: {:?}",
+                        path.as_os_str(),
+                    ))
+                })?;
+            selected.insert(path.clone(), candidate);
+        }
+        let inner = TrashSession::prepare(scope, paths, &discovered.excludes, cancellation)?;
+        for item in inner.preview().items() {
+            let path = item.observation().path();
+            let retained = inner
+                .inner
+                .platform
+                .candidates
+                .get(path)
+                .ok_or_else(|| journal::invalid("installer native candidate missing"))?;
+            selected
+                .get(path)
+                .ok_or_else(|| journal::invalid("installer selection missing"))?
+                .verify_admission(&discovered.root, &retained.admission_witness()?)?;
+        }
+        Ok(Self {
+            inner,
+            selected_count: paths.len(),
+        })
+    }
+
+    pub fn preview(&self) -> &Plan {
+        self.inner.preview()
+    }
+
+    pub fn issues(&self) -> &[SelectionIssue] {
+        self.inner.issues()
+    }
+
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        self.inner.refusals()
+    }
+
+    pub fn ready(&self) -> bool {
+        self.preview().items().len() == self.selected_count
+            && self.preview().rejected().is_empty()
+            && self.issues().is_empty()
+    }
+
+    pub fn approve(&mut self) -> io::Result<Approval> {
+        if !self.ready() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "installer batch contains refusals; no files can be approved",
+            ));
+        }
+        for candidate in self.inner.inner.platform.candidates.values() {
+            candidate.revalidate()?;
+        }
+        self.inner
+            .approve(&self.inner.preview().clone())
+            .map_err(model_error)
+    }
+
+    pub fn execute(
+        &mut self,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+    ) -> io::Result<ExecutionReport> {
+        if !self.ready() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "installer batch was refused",
+            ));
+        }
+        self.inner
+            .execute(&self.inner.preview().clone(), approval, cancellation, store)
+    }
+}
+
 impl CleanSession {
     pub fn prepare_rule_selection(
         scope: Scope,

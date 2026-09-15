@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{
-    NativeFileInfo, NativeLastGuard, NativeRecoveryEvidence, NativeRuleBindingWitness,
-    NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo,
+    NativeAdmissionWitness, NativeFileInfo, NativeLastGuard, NativeRecoveryEvidence,
+    NativeRuleBindingWitness, NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo,
 };
 use crate::{ReadOnlyPolicy, VolumeInfo, volume_info};
 use std::ffi::{OsStr, OsString};
@@ -967,10 +967,7 @@ impl Candidate {
         Ok(())
     }
 
-    fn build_rule_binding_witness(&self) -> io::Result<Option<NativeRuleBindingWitness>> {
-        let Some(source) = &self.source else {
-            return Ok(None);
-        };
+    pub(super) fn admission_witness(&self) -> io::Result<NativeAdmissionWitness> {
         let root = self
             .ancestors
             .iter()
@@ -984,6 +981,18 @@ impl Candidate {
             })
             .map(native_witness)
             .collect();
+        Ok(NativeAdmissionWitness {
+            target: native_witness(&self.target),
+            root: native_witness(root),
+            target_ancestors,
+        })
+    }
+
+    fn build_rule_binding_witness(&self) -> io::Result<Option<NativeRuleBindingWitness>> {
+        let Some(source) = &self.source else {
+            return Ok(None);
+        };
+        let admission = self.admission_witness()?;
         let source_ancestors = ancestors_between(&self.scope, &source.path)?
             .into_iter()
             .map(|path| Evidence::open_safety(&path))
@@ -992,10 +1001,10 @@ impl Candidate {
             .map(|evidence| native_witness(&evidence))
             .collect();
         Ok(Some(NativeRuleBindingWitness {
-            target: native_witness(&self.target),
+            target: admission.target,
             source: native_witness(source),
-            root: native_witness(root),
-            target_ancestors,
+            root: admission.root,
+            target_ancestors: admission.target_ancestors,
             source_ancestors,
         }))
     }

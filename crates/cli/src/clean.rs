@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::trash;
+use crate::trash::{self, MAX_SELECTIONS, parse_selection_input};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use sayaka_engine::clean_policy::{self, PolicyFileState};
 use sayaka_engine::execute::CleanSession;
@@ -11,8 +11,6 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-
-const MAX_SELECTIONS: usize = 32;
 
 pub fn command() -> Command {
     Command::new("clean")
@@ -433,54 +431,6 @@ fn choose_interactively(
         .into_iter()
         .map(|index| candidates[index - 1].target_path.clone())
         .collect())
-}
-
-fn parse_selection_input(answer: &str, candidate_count: usize) -> io::Result<BTreeSet<usize>> {
-    if answer.is_empty() {
-        return Ok(BTreeSet::new());
-    }
-    let mut indices = BTreeSet::new();
-    for part in answer
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-    {
-        if let Some((from, to)) = part.split_once('-') {
-            let start = from.parse::<usize>().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "invalid numeric range")
-            })?;
-            let end = to.parse::<usize>().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "invalid numeric range")
-            })?;
-            if start == 0 || end == 0 || start > end || end > candidate_count {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "selection index out of bounds",
-                ));
-            }
-            for index in start..=end {
-                indices.insert(index);
-            }
-        } else {
-            let index = part.parse::<usize>().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "invalid selection number")
-            })?;
-            if index == 0 || index > candidate_count {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "selection index out of bounds",
-                ));
-            }
-            indices.insert(index);
-        }
-    }
-    if indices.len() > MAX_SELECTIONS {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "selection exceeds 32 items",
-        ));
-    }
-    Ok(indices)
 }
 
 fn run_exclusions(args: &ArgMatches) -> io::Result<u8> {

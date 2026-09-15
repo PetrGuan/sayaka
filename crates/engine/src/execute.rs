@@ -454,7 +454,49 @@ impl GuardPoint {
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{CleanSession, TrashSession};
+pub use macos::{CleanSession, InstallerSession, TrashSession};
+
+#[cfg(not(target_os = "macos"))]
+pub struct InstallerSession {
+    unavailable: std::convert::Infallible,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl InstallerSession {
+    pub fn prepare(
+        _: &crate::installer_preview::InstallerPreview,
+        _: &[PathBuf],
+        _: &Cancellation,
+    ) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "installer Trash is macOS-only",
+        ))
+    }
+    pub fn preview(&self) -> &Plan {
+        match self.unavailable {}
+    }
+    pub fn issues(&self) -> &[SelectionIssue] {
+        match self.unavailable {}
+    }
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        match self.unavailable {}
+    }
+    pub fn ready(&self) -> bool {
+        match self.unavailable {}
+    }
+    pub fn approve(&mut self) -> io::Result<Approval> {
+        match self.unavailable {}
+    }
+    pub fn execute(
+        &mut self,
+        _: &Approval,
+        _: &Cancellation,
+        _: &Store,
+    ) -> io::Result<ExecutionReport> {
+        match self.unavailable {}
+    }
+}
 
 #[cfg(not(target_os = "macos"))]
 pub struct TrashSession {

@@ -41,6 +41,13 @@ pub struct NativeRuleBindingWitness {
     pub source_ancestors: Vec<NativeWitnessInfo>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeAdmissionWitness {
+    pub target: NativeWitnessInfo,
+    pub root: NativeWitnessInfo,
+    pub target_ancestors: Vec<NativeWitnessInfo>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeTargetMarker {
     Prefix4([u8; 4]),
@@ -198,6 +205,18 @@ impl TrashCandidate {
         #[cfg(not(target_os = "macos"))]
         {
             None
+        }
+    }
+
+    /// Read-only metadata from the retained capture, not refreshed path lookups.
+    pub fn admission_witness(&self) -> io::Result<NativeAdmissionWitness> {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.admission_witness()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(unsupported())
         }
     }
 

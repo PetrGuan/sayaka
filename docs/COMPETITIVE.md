@@ -273,6 +273,16 @@ record both. Do not mark a major capability complete merely because it reports
 "unsupported." A safety-motivated scope change requires an explicit decision and
 a qualified comparison claim.
 
+The current installer slice adds explicit ordinary-file selection and native
+Trash approval to bounded UDIF/flat-PKG discovery. It retains inspection/native
+identity binding, no-effect default JSON, explicit exclusions, exact confirmation
+and ordinary-file receipts. Corrupt/unsupported formats and incomplete discovery
+cannot authorize that action; a native refusal blocks the entire batch.
+Provenance/signatures/installation state, directory installers, Windows actions
+and a real installer-file Trash round-trip acceptance remain separate gaps.
+This is not full T8/Mole installer parity, a new competitive timing result, or
+permission to rerun/alter the historical C0 benchmark records.
+
 Potentially irreversible maintenance, directory actions, and privileged
 operations require new action-specific design gates after M3. They are not
 authorized by the initial ordinary-file trash contract. "Optimize" must name the
