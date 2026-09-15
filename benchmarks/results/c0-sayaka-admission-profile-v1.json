@@ -1,0 +1,179 @@
+{
+  "benchmark_id": "c0-sayaka-admission-profile-v1",
+  "class": "diagnostic_only_not_competitive_baseline",
+  "manifest_sha256": "4eb113b7c6220c8b62ef245f5e716c67d9e33b94efdf7cf57a2cc01ea728cfcf",
+  "binaries": {
+    "baseline": "1a5a2d8b917249ce4887b0b13f93b4cf4dae1571f390f94af709bb529cb8b355",
+    "diagnostic": "24a93e2a9202890fa391f48767d9c028453b7913134a0428d80d486185021767"
+  },
+  "inputs": {
+    "scripts/check_sayaka_admission_profile.py": "41d5c8a8aff94ef05129c0d06502c0bea9c019e09ce6a069eea7394790585fbb",
+    "scripts/check_sayaka_scan_profile.py": "8f750e7f92eec7b61889d7898851f0ecfe3f1ae3a404cd0f6a2e2fc69f56617c",
+    "scripts/check_c0_batch3_direct_analyzer.py": "8f8c521fbea7dc05f69384e25e6bc944124d421fd0518b670aad11b48a854f5e",
+    "scripts/check_c0_batch2_phase_a.py": "01e25ee491469269aa24750cb2147a0f60c9c619a28bb7708df6b7d1ad7766e2",
+    "scripts/check_c0_batch2_phase_b.py": "ab2b2b0244de99ee35b0dabd23582b8e88ef7f804f0c022f72be42901863bdea",
+    "scripts/check_c0_statistics.py": "6fb24dd23d8a90aae83ced76b8bae7931e4dcedf965b39cf6ef13a790273bef4",
+    "benchmarks/c0-batch3-direct-analyzer-v2.json": "3d9d97a034b9795f3055f2ed5124fe442042cfd5983ce89412c5885d3cfcc8f1",
+    "benchmarks/c0-batch3-direct-analyzer-v1.json": "372daf8ff19474ed2f2deefc5f48901e0ad289e665a5a55b9df496ee7de8c5a4",
+    "benchmarks/results/c0-batch3-direct-analyzer-results-v1.json": "33001a8512b0d971423c7b1a54b52fef49905bc664eb115300e1875d3a3a09c3",
+    "benchmarks/results/c0-batch3-direct-analyzer-results-v2.json": "d1be71756ab985eed5cf4bd8ac4242faa0e6d10cfc99357d44f601f7d83a259d",
+    "benchmarks/c0-sayaka-scan-profile-diagnostic-v1.json": "b9adba42842fd65888785467c4728b20d11e779c452e77394b49b8561fa18817",
+    "benchmarks/results/c0-sayaka-scan-profile-diagnostic-v1.json": "9200c3657f22e76f7a71f92f3dc37a5330bb6a515a9f3fffb15b02249ad3b3bb",
+    "benchmarks/c0-batch2-manifest-v1.json": "e78d6bbed7ba740bf67e1a03ec2da52b4a49a1b765ba04473a92eae0aba00885",
+    "benchmarks/results/c0-batch2-phase-a-ready-v1.json": "fbf15ee24c0e3d5ed36e5094aa8f3601f65f68207f5fb963e207c47a54d60d37",
+    "benchmarks/results/c0-batch2-phase-b-results-v1.json": "f16b69c650a3fbf9a00efb7687cd45b6205fb5804f5dc7005a7e9f6c039bb6c7"
+  },
+  "status": "failed",
+  "mole_executed": false,
+  "samples": [
+    {
+      "status": "passed",
+      "failure_class": "none",
+      "first_useful_result_ms": 49.574125,
+      "first_useful_result_status": "measured",
+      "first_useful_result_method_id": "post_validation_last_non_whitespace_stdout_chunk_v2",
+      "complete_result_ms": 50.29175,
+      "peak_rss_bytes": 10616832,
+      "stdout_bytes": 635288,
+      "stderr_bytes": 677,
+      "stdout_truncated": false,
+      "stderr_truncated": false,
+      "exit_code": 0,
+      "stderr": "",
+      "normalized": {
+        "path_set_sha256": "7a41608216a7ab4bbf213c863b7ab3952787570728ad26a692351986b1dc245f",
+        "file_count": 1024,
+        "logical_bytes": 4194304
+      },
+      "label": "flat-1024-000-on",
+      "immutable_inputs_unchanged": true,
+      "scenario": "flat-1024",
+      "pair_index": 0,
+      "variant": "on",
+      "diagnostics_status": "pending",
+      "phases": {
+        "schema_version": 2,
+        "type": "scan_profile",
+        "status": "complete",
+        "main_to_dispatch_ms": 0.601167,
+        "setup_ms": 0.169291,
+        "scan_ms": 23.692125,
+        "json_encode_write_flush_ms": 4.6631670000000005,
+        "stdout_json_bytes": 635288,
+        "engine_elapsed_ms": 23,
+        "output_error": null,
+        "dispatch_clock_ns": 1576807893741625,
+        "native_admission": {
+          "caller_policy_enter_ms": 0.01325,
+          "native_walk_ms": 23.648125,
+          "caller_policy_restore_ms": 0.007167,
+          "roots": [
+            {
+              "open_ms": 0.190958,
+              "volume_ms": 16.963459,
+              "directory_setup_ms": 0.078167,
+              "volume_url_ms": 0.009290999999999999,
+              "volume_local_ms": 16.922459,
+              "volume_internal_ms": 0.0014169999999999999,
+              "volume_removable_ms": 0.000458,
+              "volume_ejectable_ms": 0.000125,
+              "error_code": null
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "run_root": "target/c0-admission-profile/runs/run-32244-e76b2fd1",
+  "profile_sha256": "4cff4cca9b89e13f22c9a0efb3f7452a28b5a150eeb6c38e3cd789be021e569f",
+  "immutable_before": {
+    "flat": "8c0a22ebdd4f0254c7698a4219a952749225196c7f6fa52cd9e235b6bc621370",
+    "binaries": "f530375299b5d26d13548db45c5a6c422054c00a8b7d8beed226f5d1f3e7a739",
+    "controls": "e88cf740ab1f2c2e68657cfae78c711fe7b0bfa9cd1dec0ab4718d6b6df5200c",
+    "empty_path": "6016cb5c6c660346174eee02cdac464765958668b76d2ac2a5d1760fba2a0ffd",
+    "empty-0": "6f2813225da4c410e5f5ab74832d88e64bffcb3c4d0333ed554275515f8a28d2",
+    "empty-1": "e0988eb2cb7011297c0d878f67ed06db991c27afdc867727c4b4d53a70a97d42",
+    "empty-2": "06de3f0bb1e833de64451bd3b9f4bca97fb3f11267351ccaf22ab22ae632738f"
+  },
+  "canaries": [
+    {
+      "id": "literal-root-runtime-only",
+      "status": "passed",
+      "classification": "passed",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "id": "metadata-system-volumes-data",
+      "status": "passed",
+      "classification": "passed",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "id": "allowed-rw-owned",
+      "status": "passed",
+      "classification": "passed",
+      "exit_code": 0,
+      "stderr": "",
+      "write_exit_code": 0
+    },
+    {
+      "id": "denied-other-tool-home-write",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/allowed/home/sayaka/must-not-exist failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-other-tool-tmp-write",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/allowed/tmp/sayaka/must-not-exist failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-prior-sample-write",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/allowed/home/mole/previous-sample/must-not-exist failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-read-owned-outside-allow",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "read <run-root>/denied-control/read-sentinel.txt failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-write-owned-outside-allow",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "write <run-root>/denied-control/write-parent/blocked-32244-3bbc.txt failed: Operation not permitted\n"
+    },
+    {
+      "id": "denied-exec-readable-control",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 126,
+      "stderr": "env: <run-root>/denied-control/exec-readable/true-copy: Operation not permitted\n",
+      "readable_exit_code": 0,
+      "baseline_exec_exit_code": 0
+    },
+    {
+      "id": "denied-network-loopback",
+      "status": "passed",
+      "classification": "policy_denied",
+      "exit_code": 1,
+      "stderr": "connect 127.0.0.1 failed: Operation not permitted\n",
+      "listener_accept_count": 2
+    }
+  ],
+  "summary": {},
+  "failure": {
+    "type": "ValidationError",
+    "message": "invalid clock ordering"
+  }
+}

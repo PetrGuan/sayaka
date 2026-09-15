@@ -6,6 +6,27 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr::{self, NonNull};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Default)]
+pub struct VolumeDiagnostics {
+    pub url: Option<Duration>,
+    pub local: Option<Duration>,
+    pub internal: Option<Duration>,
+    pub removable: Option<Duration>,
+    pub ejectable: Option<Duration>,
+}
+
+fn measured<T>(
+    slot: Option<&mut Option<Duration>>,
+    action: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    let Some(slot) = slot else { return action() };
+    let start = Instant::now();
+    let result = action();
+    *slot = Some(start.elapsed());
+    result
+}
 
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
@@ -94,7 +115,16 @@ fn boolean(url: &OwnedCf, flag: Flag) -> io::Result<bool> {
 
 /// Reads all four native flags without collapsing unavailable properties to false.
 pub fn volume_info(path: &Path) -> io::Result<VolumeInfo> {
-    with_policy(|| read_volume_info(path))
+    with_policy(|| read_volume_info(path, None))
+}
+
+/// Same checks as `volume_info`; unrun phases remain absent after a failure.
+pub fn volume_info_with_diagnostics(
+    path: &Path,
+    diagnostics: &mut VolumeDiagnostics,
+) -> io::Result<VolumeInfo> {
+    *diagnostics = VolumeDiagnostics::default();
+    with_policy(|| read_volume_info(path, Some(diagnostics)))
 }
 
 /// Uses the native package resource property, not filename suffix inference.
@@ -117,13 +147,26 @@ fn with_policy<T>(action: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     }
 }
 
-fn read_volume_info(path: &Path) -> io::Result<VolumeInfo> {
-    let url = directory_url(path)?;
+fn read_volume_info(
+    path: &Path,
+    mut diagnostics: Option<&mut VolumeDiagnostics>,
+) -> io::Result<VolumeInfo> {
+    let url = measured(diagnostics.as_deref_mut().map(|d| &mut d.url), || {
+        directory_url(path)
+    })?;
     Ok(VolumeInfo {
-        local: boolean(&url, Flag::Local)?,
-        internal: boolean(&url, Flag::Internal)?,
-        removable: boolean(&url, Flag::Removable)?,
-        ejectable: boolean(&url, Flag::Ejectable)?,
+        local: measured(diagnostics.as_deref_mut().map(|d| &mut d.local), || {
+            boolean(&url, Flag::Local)
+        })?,
+        internal: measured(diagnostics.as_deref_mut().map(|d| &mut d.internal), || {
+            boolean(&url, Flag::Internal)
+        })?,
+        removable: measured(diagnostics.as_deref_mut().map(|d| &mut d.removable), || {
+            boolean(&url, Flag::Removable)
+        })?,
+        ejectable: measured(diagnostics.map(|d| &mut d.ejectable), || {
+            boolean(&url, Flag::Ejectable)
+        })?,
     })
 }
 
@@ -166,5 +209,23 @@ mod tests {
                 io::ErrorKind::InvalidInput
             );
         }
+    }
+
+    #[test]
+    fn volume_diagnostics_preserve_results_and_unrun_phases() {
+        let mut diagnostics = VolumeDiagnostics::default();
+        assert_eq!(
+            volume_info_with_diagnostics(Path::new("/"), &mut diagnostics).unwrap(),
+            volume_info(Path::new("/")).unwrap(),
+        );
+        assert!(diagnostics.url.is_some() && diagnostics.ejectable.is_some());
+        assert_eq!(
+            volume_info_with_diagnostics(Path::new("relative"), &mut diagnostics)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput,
+        );
+        assert!(diagnostics.url.is_some());
+        assert!(diagnostics.local.is_none() && diagnostics.ejectable.is_none());
     }
 }

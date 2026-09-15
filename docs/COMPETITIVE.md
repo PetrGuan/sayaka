@@ -122,6 +122,96 @@ finalization costs and must not be labeled entirely as application startup.
 These observations prioritize fixed admission/launch costs for further study;
 they do not justify removing safety checks or JSON information.
 
+Further admission/launch diagnostics use
+`scripts/check_sayaka_admission_profile.py`. The runner reuses the direct-artifact
+guard, owned fixtures, exact output validation, and immutable input checks.
+The completed v2 baseline/new-off/new-on triples separate code-change overhead
+from opt-in instrumentation; empty and three-root controls distinguish first
+from subsequent native volume queries. Version-only pairs estimate added parent
+timestamp overhead. Parent spawn return, stdout receipt, pipe closure,
+and reaping are observations, not OS-loader or exact child-exit timestamps.
+The spawn interval overlaps child execution and must not be added to the
+launch-to-dispatch interval. This is not a new Mole comparison or permission to
+cache volume decisions, drop safety checks, or overwrite prior evidence.
+The first admission attempt is retained as failed: Python 3.9's
+`monotonic_ns()` rebases the clock per process despite reporting
+`mach_absolute_time()` as its implementation. Its cross-process timestamps were
+rejected, not reported as valid intervals. Admission protocol v2 instead uses
+Darwin `CLOCK_UPTIME_RAW` for all diagnostic parent timestamps, matching the
+child's mach-absolute nanoseconds; ordinary collector runs retain their previous
+Python-monotonic behavior.
+
+### Admission attribution and exit-observer correction
+
+The independent admission v2 manifest/result are
+`benchmarks/c0-sayaka-admission-profile-v2.json` and
+`benchmarks/results/c0-sayaka-admission-profile-v2.json`. All 135 scan samples
+(15 randomized baseline/off/on triples on each of flat/empty/three-root fixtures)
+and 30 version-control samples passed, with unchanged immutable inputs.
+
+| v2 profiled median | Flat 1024 files | Empty root |
+| --- | ---: | ---: |
+| Caller I/O-policy entry | 0.0032 ms | 0.0033 ms |
+| Root no-follow open | 0.0569 ms | 0.0492 ms |
+| Native volume validation | 9.1562 ms | 8.6541 ms |
+| First local-volume resource-property read (nested) | 9.1320 ms | 8.6282 ms |
+| Parent start to scan dispatch | 27.5461 ms | 27.9430 ms |
+
+In the three-root case, independently checked volume queries took
+8.5484 / 0.0217 / 0.0145 ms in admission order. This localizes the dominant
+fixed admission cost to the first native resource query, consistent with
+initialization/cache effects; it does not isolate CoreFoundation's internal
+work or justify skipping/caching any safety decision. The other native flags
+remain checked. Parent-to-dispatch still includes sandbox/env/loader/scheduling
+costs, not just Sayaka startup; Popen itself took about 3 ms and overlaps that
+interval. CLI dispatch (~0.15 ms) and thread policy are not the main targets.
+V2 full-fixture code-change overhead was +2.4691 ms paired median (95% CI
+[-6.6285, 7.1701]); profiling on-minus-off was -0.0005 ms
+([-1.8655, 2.1339]). These noisy estimates do not establish zero overhead.
+
+V2 also exposed occasional 5 ms post-EOF process-exit polling. The selected
+optimization is **measurement-side only**: optional
+`post_eof_kqueue_exit_v1` observes the owned child's NOTE_EXIT event. Pipe EOF
+alone never authorizes reaping as if the process had exited. Output caps,
+inherited-pipe deadlines, process-group termination and per-child `wait4` RSS
+collection remain. The original `post_eof_poll_5ms_v1` stays the default for old
+callers; the new method is explicitly bound in the v3 diagnostic manifest.
+
+V3 uses the **same** diagnostic binary for baseline/off/on (polling with
+profiling off / kqueue with profiling off / kqueue with profiling on), not a
+faster product build. Freeze a new manifest, then execute it:
+
+```sh
+python3 scripts/check_sayaka_admission_profile.py --freeze \
+  --baseline-binary target/release/sayaka --manifest benchmarks/admission-new.json
+python3 scripts/check_sayaka_admission_profile.py --execute \
+  --baseline-binary target/release/sayaka --manifest benchmarks/admission-new.json \
+  --output benchmarks/results/admission-new.json
+```
+
+Neither mode overwrites existing evidence. Recorded v3 data are in
+`benchmarks/c0-sayaka-admission-profile-v3.json` and the corresponding
+`benchmarks/results/c0-sayaka-admission-profile-v3.json`. All 186 scan samples
+(31 triples on flat/empty) and 30 version controls passed.
+
+| Post-EOF reaping observation p95 | Polling | kqueue |
+| --- | ---: | ---: |
+| Flat 1024 files, profiling off | 5.9764 ms | 0.0649 ms |
+| Empty root, profiling off | 5.2684 ms | 0.0869 ms |
+
+The preregistered primary **paired median** tail changes were -0.0023 ms
+(95% CI [-5.4929, 0.0041]) and -0.0002 ms ([-0.0018, 0.0013]); neither interval
+excludes zero. The p95 reduction is a descriptive tail observation, not a
+substitute statistical win for that primary metric. Secondary flat-fixture
+completion changed by -2.0458 ms paired median ([-4.3488, -0.8069]); empty
+completion was inconclusive. Parent timestamp overhead in v3 version controls
+was +0.4804 ms ([0.1190, 4.5036]), so it is not free. No observed completion
+change here is a Sayaka algorithm speedup or a renewed Mole comparison.
+
+No product optimization was selected that would remove native admission,
+cache volume classifications across runs, reduce JSON information, or change
+the process model. Such changes need separate evidence and contracts.
+
 Batch 2 currently closes as tooling and preregistration only, not measured
 Mole installation or performance evidence. The pinned official installer calls
 `/bin/ps` in its install-lock path; on the recorded macOS host that OS helper is

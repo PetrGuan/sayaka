@@ -3,7 +3,9 @@
 //! Bounded read-only traversal. Results describe observations, not a filesystem
 //! snapshot or authorization to perform maintenance.
 
+pub mod diagnostics;
 pub mod index;
+use diagnostics::ScanDiagnostics;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -441,6 +443,44 @@ pub(crate) fn scan_with_policy(
     traversal_policy: TraversalPolicy,
     progress: impl FnMut(&ScanProgress),
 ) -> Result<ScanReport, ScanError> {
+    scan_internal(
+        roots,
+        limits,
+        cancellation,
+        traversal_policy,
+        progress,
+        None,
+    )
+}
+
+/// Same default scan policy, with opt-in macOS admission diagnostics.
+/// Unsupported diagnostic fields stay absent; normal platform errors still apply.
+pub fn scan_with_diagnostics(
+    roots: &[PathBuf],
+    limits: &ScanLimits,
+    cancellation: &Cancellation,
+    progress: impl FnMut(&ScanProgress),
+    diagnostics: &mut ScanDiagnostics,
+) -> Result<ScanReport, ScanError> {
+    *diagnostics = ScanDiagnostics::default();
+    scan_internal(
+        roots,
+        limits,
+        cancellation,
+        TraversalPolicy::Default,
+        progress,
+        Some(diagnostics),
+    )
+}
+
+fn scan_internal(
+    roots: &[PathBuf],
+    limits: &ScanLimits,
+    cancellation: &Cancellation,
+    traversal_policy: TraversalPolicy,
+    progress: impl FnMut(&ScanProgress),
+    diagnostics: Option<&mut ScanDiagnostics>,
+) -> Result<ScanReport, ScanError> {
     limits.validate()?;
     let task_id = ScanTaskId::new()?;
     #[cfg(target_os = "macos")]
@@ -453,10 +493,12 @@ pub(crate) fn scan_with_policy(
             task_id,
             traversal_policy,
             progress,
+            diagnostics,
         )
     }
     #[cfg(windows)]
     {
+        let _ = diagnostics;
         let roots = walk::normalize_roots(roots, limits)?;
         windows::scan_native(
             roots,
@@ -469,7 +511,14 @@ pub(crate) fn scan_with_policy(
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
-        let _ = (roots, cancellation, task_id, traversal_policy, progress);
+        let _ = (
+            roots,
+            cancellation,
+            task_id,
+            traversal_policy,
+            progress,
+            diagnostics,
+        );
         Err(ScanError::new(
             ScanCode::UnsupportedPlatform,
             "native scanning requires macOS or Windows",
