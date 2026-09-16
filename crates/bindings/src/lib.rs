@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Narrow v1 C ABI for read-only scan tasks. See include/sayaka.h.
+//! Narrow v1 C ABI for read-only scan and installer tasks. See include/sayaka.h.
 //! Foreign pointer validity is the caller's responsibility; errors cannot
 //! recover invalid memory. No callbacks, signals, CLI children or effect APIs.
 
@@ -8,6 +8,8 @@
 
 mod browse;
 pub use browse::*;
+mod installer;
+pub use installer::*;
 
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
@@ -37,6 +39,7 @@ pub const PANIC: i32 = 10;
 pub const INVALID_NODE: i32 = 11;
 pub const NOT_DIRECTORY: i32 = 12;
 pub const QUERY_UNAVAILABLE: i32 = 13;
+pub const INVALID_CANDIDATE: i32 = 14;
 
 pub const UNIX_BYTES: u32 = 1;
 pub const WINDOWS_UTF16LE: u32 = 2;
@@ -84,6 +87,18 @@ struct Job {
 struct Registry {
     next_handle: u64,
     jobs: HashMap<u64, Arc<Mutex<Job>>>,
+    installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
+}
+
+impl Registry {
+    fn allocate_handle(&mut self) -> Result<u64, i32> {
+        if self.jobs.len() + self.installers.len() >= MAX_TASKS {
+            return Err(LIMIT_EXCEEDED);
+        }
+        let handle = self.next_handle;
+        self.next_handle = handle.checked_add(1).ok_or(LIMIT_EXCEEDED)?;
+        Ok(handle)
+    }
 }
 
 fn registry() -> &'static Mutex<Registry> {
@@ -92,6 +107,7 @@ fn registry() -> &'static Mutex<Registry> {
         Mutex::new(Registry {
             next_handle: 1,
             jobs: HashMap::new(),
+            installers: HashMap::new(),
         })
     })
 }
@@ -134,7 +150,7 @@ fn ensure_open(job: &Job) -> Result<(), i32> {
     }
 }
 
-fn lock_job(slot: &Mutex<Job>) -> Result<MutexGuard<'_, Job>, i32> {
+fn lock_job<T>(slot: &Mutex<T>) -> Result<MutexGuard<'_, T>, i32> {
     slot.try_lock().map_err(|error| match error {
         TryLockError::WouldBlock => BUSY,
         TryLockError::Poisoned(_) => INTERNAL_ERROR,
@@ -192,17 +208,18 @@ pub extern "C" fn sayaka_status_message_v1(code: i32) -> *const c_char {
         OK => c"ok",
         INVALID_ARGUMENT => c"invalid pointer, path, encoding, or argument",
         UNSUPPORTED_VERSION => c"unsupported ABI version or structure size",
-        UNSUPPORTED_PLATFORM => c"native scanning is unavailable on this platform",
-        INVALID_HANDLE => c"unknown or released scan handle",
+        UNSUPPORTED_PLATFORM => c"requested native operation is unavailable on this platform",
+        INVALID_HANDLE => c"unknown, released, or wrong-kind task handle",
         LIMIT_EXCEEDED => c"task, input, or result resource limit exceeded",
-        NOT_READY => c"scan result is not ready",
+        NOT_READY => c"task result is not ready",
         BUFFER_TOO_SMALL => c"caller buffer is too small; consult required bytes",
         BUSY => c"task or concurrent handle operation is busy; retain handle and retry later",
         INTERNAL_ERROR => c"internal task, state, or output failure",
         PANIC => c"Rust panic contained at the native boundary",
         INVALID_NODE => c"unknown node or node reference belongs to another scan handle",
         NOT_DIRECTORY => c"node is not an observed directory",
-        QUERY_UNAVAILABLE => c"scan failed; inspect the scan result for details",
+        QUERY_UNAVAILABLE => c"task failed; inspect its result for details",
+        INVALID_CANDIDATE => c"unknown, duplicate, or cross-task installer candidate reference",
         _ => c"unknown status code",
     }
     .as_ptr()
@@ -247,11 +264,7 @@ pub unsafe extern "C" fn sayaka_scan_start_v1(
             .map(|path| unsafe { decode_path(*path) })
             .collect::<Result<Vec<_>, _>>()?;
         let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
-        if registry.jobs.len() >= MAX_TASKS {
-            return Err(LIMIT_EXCEEDED);
-        }
-        let handle = registry.next_handle;
-        registry.next_handle = handle.checked_add(1).ok_or(LIMIT_EXCEEDED)?;
+        let handle = registry.allocate_handle()?;
         let task =
             ScanTask::start(roots, ScanLimits::default()).map_err(|error| match error.code {
                 ScanCode::InvalidRoot | ScanCode::InvalidLimits => INVALID_ARGUMENT,
@@ -340,6 +353,22 @@ struct LimitedBuffer {
     limit: usize,
     exceeded: bool,
 }
+
+fn bounded_json(value: &impl serde::Serialize, limit: usize) -> Result<Vec<u8>, i32> {
+    let mut writer = LimitedBuffer {
+        bytes: Vec::new(),
+        limit,
+        exceeded: false,
+    };
+    match serde_json::to_writer(&mut writer, value) {
+        Ok(()) => Ok(writer.bytes),
+        Err(_) if writer.exceeded => Err(LIMIT_EXCEEDED),
+        Err(_) => Err(INTERNAL_ERROR),
+    }
+}
+
+#[cfg(test)]
+static NATIVE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 impl Write for LimitedBuffer {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {

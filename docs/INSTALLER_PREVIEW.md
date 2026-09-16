@@ -2,6 +2,14 @@
 
 # Installer files: bounded preview and explicit Trash
 
+Native Apps can now use the [read-only installer ABI](BINDINGS.md#installer-discovery-and-read-only-selection)
+for background discovery, candidate pages/details and explicit selection checks.
+It shares the inspection, identity/admission and serialization logic below, but
+exports no approval/execution channel. A native selection result is only
+`checked`/`refused`/`cancelled`/`failed` observations, not the CLI's sealed
+action plan or permission to Trash files. Native inspection is macOS-only;
+other platforms return an explicit unsupported status before scanning.
+
 `sayaka installer ROOT` performs explicit-root discovery of existing ordinary
 `.dmg` and `.pkg` filenames and inspects only bounded structural bytes:
 

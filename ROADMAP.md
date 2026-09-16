@@ -10,7 +10,7 @@ the entry point and the linked technical contracts for precise restrictions.
 The model, macOS scanner, Windows x64 native read-only scan, macOS ordinary-file
 Trash/journal, terminal browser/menu, two built-in rules, installer-file approval,
 application previews, status/process top and local CLI lifecycle are present.
-The first read-only native scan ABI is present; directory effects, uninstall
+Read-only native scan, directory queries and installer selection checks are present; directory effects, uninstall
 and system-maintenance actions are not. Local controlled native evidence exists, including installer
 single/batch round trips; it neither closes the former atomic-binding proposal
 nor authorizes new real-Trash runs.
@@ -42,7 +42,7 @@ but the named milestone's wider outcome is incomplete.
 | M3 | Implemented narrow workflow | macOS ordinary-file revalidated Trash, durable intent/outcomes, receipts | Residual pathname race; broader environments and new action kinds need separate contracts |
 | M4 | Partial; x64 read-only slice accepted | Native Windows 11 x64 fixed-NTFS scan/CLI evidence | ARM64 linked/native acceptance, Windows writes and other native workflows remain separate |
 | M5 | Partial | CPython source-backed `.pyc` and OpenJDK `javac` source-backed `.class` rules | Broader useful rules/non-targets; native inspection currently macOS, not Windows rule parity |
-| M6 | Partial, read-only scan ABI | Versioned C task/progress/cancel/result/release interface and local C/Swift hosts | Native Windows linking/runtime, App integration, broader APIs and distribution |
+| M6 | Partial, read-only ABI | Scan/directory queries, macOS installer discovery/selection checks and local C/Swift hosts | Native Windows linking/runtime, App integration, broader APIs and distribution |
 | C0 | Partial evidence | Pinned Mole ledger, constrained direct-analyzer comparison, corrected collector and scan diagnostics | Full installed footprint, wider equivalent workloads, cancellation and real-user usability evidence |
 | M7 / T7 | Partial | macOS terminal browser/menu, filters/navigation, file selection and shared approval entries | Full task-family/UX acceptance and broader platform support |
 | M8 / T8 | Partial | Two-rule `clean`, persisted clean exclusions, installer-file selection/approval and controlled native round-trip evidence | Broad clean/purge catalog; directory effects are not approved or implemented |
@@ -81,7 +81,9 @@ mutating feature, or defer C0 measurements until the end.
    exposing effects. The [first C ABI](docs/BINDINGS.md) now covers that read-only
    path plus task-bound root/node/children queries, bounded pagination and shared
    directory summaries/sorting, with local C/Swift host evidence and Windows x64
-   type checks. Directory browsing is an App-reusable priority over standalone
+   type checks. Installer discovery/candidate queries and explicit read-only
+   selection checks now reuse the macOS engine path without exposing authority.
+   These App-reusable workflows take priority over standalone
    CLI distribution or further scan-duration tuning. Actual
    native App integration and Windows runtime remain separate gates; expand
    against real consumers rather than building a broad SDK in advance.

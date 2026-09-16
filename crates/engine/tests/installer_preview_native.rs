@@ -16,6 +16,7 @@ use sayaka_engine::scan::{self, ScanLimits};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
 
 fn scope(fixture: &Fixture) -> std::path::PathBuf {
     let root = fixture.path().canonicalize().unwrap().join("installer");
@@ -88,6 +89,74 @@ fn write_xar_with_xml_declared_uncompressed(path: &Path, xml: &str, declared_unc
     header[24..28].copy_from_slice(&1u32.to_be_bytes());
     header.extend_from_slice(&compressed);
     fs::write(path, header).unwrap();
+}
+
+#[test]
+fn installer_progress_and_empty_cancellation_do_not_become_complete_success() {
+    use sayaka_engine::installer_preview::{InstallerStatus, preview_installers_with_progress};
+    let fixture = Fixture::new_in(&fixture_parent()).unwrap();
+    let root = scope(&fixture);
+    for populated in [false, true] {
+        if populated {
+            write_udif_like(&root.join("owned.dmg"));
+        }
+        let report = scan::scan(
+            std::slice::from_ref(&root),
+            &ScanLimits::default(),
+            &Cancellation::default(),
+            |_| {},
+        )
+        .unwrap();
+        let cancel = Cancellation::default();
+        let during_callback = preview_installers_with_progress(
+            report.clone(),
+            &InstallerPreviewOptions::default(),
+            &cancel,
+            Duration::from_secs(30),
+            |_| cancel.cancel(),
+        );
+        assert_eq!(during_callback.status, InstallerStatus::Cancelled);
+        assert!(!during_callback.complete);
+        assert_eq!(during_callback.metrics.candidate_io_bytes, 0);
+        cancel.cancel();
+        let mut updates = Vec::new();
+        let preview = preview_installers_with_progress(
+            report,
+            &InstallerPreviewOptions::default(),
+            &cancel,
+            Duration::from_secs(30),
+            |update| updates.push(update.clone()),
+        );
+        assert_eq!(preview.status, InstallerStatus::Cancelled);
+        assert!(!preview.complete);
+        assert!(
+            preview
+                .issues
+                .iter()
+                .any(|issue| issue.code.as_str() == "cancelled")
+        );
+        assert!(!updates.is_empty());
+    }
+    let report = scan::scan(
+        std::slice::from_ref(&root),
+        &ScanLimits::default(),
+        &Cancellation::default(),
+        |_| {},
+    )
+    .unwrap();
+    let mut updates = Vec::new();
+    let preview = preview_installers_with_progress(
+        report,
+        &InstallerPreviewOptions::default(),
+        &Cancellation::default(),
+        Duration::from_secs(30),
+        |update| updates.push(update.clone()),
+    );
+    assert_eq!(preview.status, InstallerStatus::Complete);
+    assert_eq!(updates.first().unwrap().inspected_candidates, 0);
+    assert_eq!(updates.last().unwrap().inspected_candidates, 1);
+    assert_eq!(updates.last().unwrap().total_candidates, 1);
+    fixture.close().unwrap();
 }
 
 #[test]

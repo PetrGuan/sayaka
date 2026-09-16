@@ -2,6 +2,11 @@
 
 //! Read-only installer discovery for explicit scan roots.
 
+mod selection;
+pub mod task;
+pub mod wire;
+pub use selection::{InstallerSelectionPreview, SelectionCheckStatus, preview_selection};
+
 use crate::model::{Cancellation, FileIdentity, ResourceKind, overlaps, valid_absolute_path};
 use crate::scan::{ScanEntry, ScanIssue, ScanReport, ScanStatus};
 use flate2::{Decompress, FlushDecompress, Status};
@@ -494,6 +499,22 @@ pub fn preview_installers(
     cancellation: &Cancellation,
     probe_budget: Duration,
 ) -> InstallerPreview {
+    preview_installers_with_progress(report, options, cancellation, probe_budget, |_| {})
+}
+
+#[derive(Clone, Debug)]
+pub struct InstallerProbeProgress {
+    pub total_candidates: usize,
+    pub inspected_candidates: usize,
+}
+
+pub fn preview_installers_with_progress(
+    report: ScanReport,
+    options: &InstallerPreviewOptions,
+    cancellation: &Cancellation,
+    probe_budget: Duration,
+    mut progress: impl FnMut(&InstallerProbeProgress),
+) -> InstallerPreview {
     let started = Instant::now();
     let limits = options.limits;
     let root = report
@@ -518,7 +539,7 @@ pub fn preview_installers(
             "unsupported"
         },
         status,
-        complete: matches!(status, InstallerStatus::Complete),
+        complete: report.complete && matches!(status, InstallerStatus::Complete),
         effects_performed: false,
         root: root.clone(),
         filter: options.filter.clone(),
@@ -576,6 +597,11 @@ pub fn preview_installers(
     let mut retained_name_bytes = 0usize;
     let mut named = Vec::new();
     for entry in &report.entries {
+        if let Err(error) = context.check() {
+            record_probe_stop(&mut preview, error);
+            named.clear();
+            break;
+        }
         if entry.kind != ResourceKind::File || entry.dataless {
             continue;
         }
@@ -622,6 +648,17 @@ pub fn preview_installers(
         named.push((entry, kind));
     }
     preview.metrics.retained_name_bytes = retained_name_bytes;
+    if named.is_empty()
+        && preview.complete
+        && let Err(error) = context.check()
+    {
+        record_probe_stop(&mut preview, error);
+    }
+    let total_candidates = named.len();
+    progress(&InstallerProbeProgress {
+        total_candidates,
+        inspected_candidates: 0,
+    });
     let mut accounted = HashSet::new();
     let mut probe = ProbeBudget::default();
     for (entry, name_kind) in named {
@@ -693,12 +730,21 @@ pub fn preview_installers(
             FormatStatus::Cancelled => preview.counts.probe_issues += 1,
         }
         preview.candidates.push(candidate);
+        progress(&InstallerProbeProgress {
+            total_candidates,
+            inspected_candidates: preview.counts.inspected_candidates,
+        });
         if matches!(
             preview.status,
             InstallerStatus::Cancelled | InstallerStatus::Failed
         ) {
             break;
         }
+    }
+    if preview.complete
+        && let Err(error) = context.check()
+    {
+        record_probe_stop(&mut preview, error);
     }
     preview.metrics.elapsed_ms = elapsed_ms(started.elapsed());
     preview.metrics.probe_elapsed_ms = preview.metrics.elapsed_ms;
@@ -716,6 +762,24 @@ pub fn preview_installers(
         }
     }
     preview
+}
+
+fn record_probe_stop(preview: &mut InstallerPreview, error: PreviewError) {
+    preview.status = if error.code == InstallerIssueCode::Cancelled {
+        InstallerStatus::Cancelled
+    } else {
+        InstallerStatus::Partial
+    };
+    preview.complete = false;
+    push_issue(
+        preview,
+        InstallerIssue {
+            path: None,
+            code: error.code,
+            message: error.message,
+            os_code: error.os_code,
+        },
+    );
 }
 
 fn push_issue(preview: &mut InstallerPreview, issue: InstallerIssue) {

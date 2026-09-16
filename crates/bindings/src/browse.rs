@@ -30,7 +30,7 @@ pub struct SayakaPageRequestV1 {
 }
 
 impl SayakaPageRequestV1 {
-    fn validate(&self) -> Result<(usize, Sort, Metric), i32> {
+    pub(super) fn validate(&self) -> Result<(usize, Sort, Metric), i32> {
         if self.abi_version != ABI_VERSION || self.struct_size as usize != size_of::<Self>() {
             return Err(UNSUPPORTED_VERSION);
         }
@@ -148,19 +148,7 @@ fn serialize(tree: &ScanTree, handle: u64, data: impl Serialize) -> Result<Vec<u
         issues_omitted: report.issues_omitted,
         data,
     };
-    let mut writer = LimitedBuffer {
-        bytes: Vec::new(),
-        limit: MAX_QUERY_BYTES,
-        exceeded: false,
-    };
-    if serde_json::to_writer(&mut writer, &value).is_err() {
-        return Err(if writer.exceeded {
-            LIMIT_EXCEEDED
-        } else {
-            INTERNAL_ERROR
-        });
-    }
-    Ok(writer.bytes)
+    bounded_json(&value, MAX_QUERY_BYTES)
 }
 
 #[derive(Serialize)]
