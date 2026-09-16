@@ -6,6 +6,8 @@
 pub mod diagnostics;
 pub mod directory_review;
 pub mod index;
+pub mod task;
+pub mod wire;
 use diagnostics::ScanDiagnostics;
 
 #[cfg(target_os = "macos")]

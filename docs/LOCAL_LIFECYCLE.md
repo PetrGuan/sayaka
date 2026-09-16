@@ -1,9 +1,15 @@
 # History, completion and local installation
 
-This initial T12 slice makes the existing CLI easier to use without introducing
+The implemented T12 local lifecycle makes the CLI easier to use without introducing
 downloads, online updates, signing claims, authentication changes or a daemon.
 Local installation is initially macOS-only. Windows installation, launchers,
 stable/nightly distribution and Touch ID remain separate work.
+The current local surface is `install` / `update` / `recover` / `remove`,
+plus history and completions. `recover` handles installation/update state; it
+does not restore files from Trash. As of the 2026-09-16 status review, there is no
+published GitHub Release and Cargo package publication is disabled. A local
+build/copy is not an authenticated binary distribution; see the
+[roadmap priorities](../ROADMAP.md#near-term-priorities).
 
 ## Read-only history
 

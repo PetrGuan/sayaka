@@ -148,9 +148,12 @@ keeps its controlling session alive for terminal-state verification and uses
 a shared monotonic clock across processes.
 
 These are local same-scope regression budgets, not a Mole comparison, a claim
-of superiority or complete T11 capability coverage. Numerical temperatures,
-GPU utilization, top-process tables, Windows and unmeasured host matrices remain
-explicit gaps. No real-system load or configuration is changed by the runner.
+of superiority or complete T11 capability coverage. The original `t11-v1`
+baseline below does not enable process top. The implemented opt-in top path has
+its own [t11-top-v1 budget](../benchmarks/t11-top-v1.json); do not substitute
+base-mode measurements for its cost. Numerical temperatures, GPU utilization,
+Windows and unmeasured host matrices remain explicit gaps. No real-system load
+or configuration is changed by the runner.
 
 Local baseline on macOS 26.6.2 arm64 (12 snapshots per mode at 1 Hz):
 

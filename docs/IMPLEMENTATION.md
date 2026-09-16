@@ -1,47 +1,44 @@
 # Implementation work packages and ownership
 
-Status: M0, the M1 in-memory core and M2 macOS read-only scanning are implemented;
-M3 adds the initial native Trash/approval/journal slice under
-[the revised execution contract](EXECUTION.md). Native system acceptance remains
-separate; the remaining packages are planned. These do not establish Windows
-runtime behavior. See [SCANNING.md](SCANNING.md)
-for implemented M2 scope, local budgets and unavailable native environments.
-M7's initial terminal browser and directory accounting are described in
-[BROWSING.md](BROWSING.md); broader task-family coverage and human usability
-acceptance remain separate.
-The initial T11 macOS read-only sampler and its remaining capability gaps are
-documented in [STATUS.md](STATUS.md); it is not complete cross-platform telemetry.
-Initial T12 history/completion/local-prefix install/update/recover/remove behavior is described in
-[LOCAL_LIFECYCLE.md](LOCAL_LIFECYCLE.md); online distribution and authentication
-integration remain separate.
+Status: implemented foundations and partial user workflows coexist. The model,
+macOS scan/native ordinary-file Trash and Windows x64 read-only scan are present.
+Terminal interaction, two rules/clean, installer selection, app previews,
+status/process top and local CLI lifecycle are implemented slices, not wholly
+planned packages and not complete T7-T12 milestones.
+The [roadmap status table](../ROADMAP.md#milestone-status-and-remaining-gates)
+is the current delivery/gap summary; per-feature contracts provide evidence.
+The [installer native round trip](INSTALLER_PREVIEW.md#recorded-native-acceptance)
+is a scoped local macOS/APFS result, while [Windows x64 evidence](WINDOWS.md)
+independently covers its read-only slice. Neither certifies all platforms,
+directory effects, arbitrary recovery, public binary distribution or parity.
 This document describes public technical responsibilities, not staffing or dates.
 
 ## Work packages
 
-| Package | Files when needed | Deliverable | Dependency |
+| Package | Implementation surfaces | Responsibility and current scope | Dependency |
 | --- | --- | --- | --- |
 | T1: model and test foundation | `crates/engine/src/model.rs`, `plan.rs`, `receipt.rs`, unit tests and test support | Implemented in-memory facts/plans/results, decisions, clock/ID/probe injection and isolated test foundation | M0 |
-| T2: read-only scanner and CLI | `crates/engine/src/scan/`, `platform/`, `crates/cli/`, integration fixtures | Bounded enumeration, correct accounting, structured errors/progress and versioned JSON | T1 |
-| T3: execution and journal | `crates/engine/src/execute/`, `journal/`, macOS adapter, CLI confirmation | Feasibility evidence, exact-plan approval, durable intent, restricted trash actions, crash reconciliation | T2 |
-| T4: early Windows adapter | Windows adapter and native integration fixtures | Real Windows read-only slice first; write/partial-failure slice after T3 contracts | T1; T3 for writes |
-| T5: evidence-backed rules | `crates/engine/src/rules/`, rule fixtures | Small reviewed rule set with provenance, non-targets, version checks, recovery costs | T3 and T4 |
-| T6: bindings and release contract | `crates/bindings/`, native smoke consumers, release documentation | Versioned ownership/error/cancellation contracts and documented source/binary release gates | T3 and T4 |
-| C0: comparative evidence | Benchmark fixtures/harness and result manifests when implemented | Frozen capability cases, full-install size baseline, paired timing protocol, usability tasks | Starts with M0; harness grows with T1/T2 |
-| T7: interactive CLI | `crates/cli/`, terminal event/rendering and process fixtures | Discoverable menu/disk explorer, filtering, multiselect, preview, cancellation | T2; T3 for actions |
-| T8: full cleanup workflows | Rules, project/installer discovery and CLI flows | Clean/purge/installer task coverage with positive and protected cases | T5 and T7 |
-| T9: app management | App discovery/platform operations/rules and CLI flows | Installed-app removal and related-data selection with shared-state protection. Current implemented slice: read-only `apps-related` attribution preview (no uninstall/delete authorization). | T5 and T7 |
-| T10: specific system maintenance | Platform diagnostics/restricted maintenance operations and CLI flows | Explicit preconditions, reviewed privilege boundaries, native outcomes | T3 and T7 |
-| T11: status monitoring | Bounded platform collectors and CLI rendering/streaming | Accurate and fresh metrics, JSON/NDJSON, alerts, measured collector overhead | T2 |
-| T12: CLI lifecycle and convenience | CLI history, installation/update/removal support and completion/launch integration | Verifiable lifecycle and explicit OS-auth convenience | T3; T10 boundary for authentication setup |
+| T2: read-only scanner and CLI | `crates/engine/src/scan/`, native platform crates, `crates/cli/`, integration fixtures | Implemented bounded enumeration, accounting, errors/progress, JSON and indexes; broader environment evidence remains | T1 |
+| T3: execution and journal | `crates/engine/src/execute.rs`, `execute/`, `journal.rs`, macOS adapter, CLI confirmation | Implemented ordinary-file approval, durable intent/outcomes and reconciliation under the residual-race contract | T2 |
+| T4: early Windows adapter | Windows adapter and native integration fixtures | x64 fixed-NTFS read-only slice accepted; ARM64 linked/native evidence and Windows writes remain separate | T1; independent native contract for writes |
+| T5: evidence-backed rules | `crates/engine/src/rules.rs`, `rules/`, rule fixtures | CPython source-backed `.pyc` and `javac` source-backed `.class`; broader rule coverage and Windows native inspection remain | T3 and platform evidence |
+| T6: bindings and release contract | `crates/bindings/`, C/Swift host examples, integration documentation | Read-only scan C ABI implemented; native App/Windows runtime, broader APIs and binary delivery remain | Shared scan/lifecycle; independent native platform evidence |
+| C0: comparative evidence | `benchmarks/`, `scripts/`, versioned results | Fixed ledger and constrained direct-analyzer/diagnostic evidence exist; full installed size, complete equivalent-task coverage and real-user usability evidence remain gaps | M0, T1/T2; continues with T7-T12 |
+| T7: interactive CLI | `crates/cli/`, terminal event/rendering and process fixtures | Implemented macOS menu/browser and ordinary-file approval entries; full UX/platform acceptance remains | T2; T3 for actions |
+| T8: full cleanup workflows | Rules, installer discovery/selection and CLI flows | Two-rule clean and narrow installer workflow implemented; directory assessment is ModelOnly, not purge execution | T5 and T7; new contracts for directory actions |
+| T9: app management | App discovery/association and CLI flows | Implemented read-only `apps` and `apps-related`; no uninstall/delete authorization | T5 and T7; new action/ownership contracts |
+| T10: specific system maintenance | Future bounded native operations and CLI flows | No maintenance actions implemented; explicit preconditions, privilege boundaries and native outcomes required | T3 and T7 |
+| T11: status monitoring | Engine/native status modules and CLI rendering/streaming | macOS status/watch/process top implemented; numeric temperature, GPU and Windows remain gaps | T2 |
+| T12: CLI lifecycle and convenience | History, local installation lifecycle and completions | Local install/update/recover/remove implemented; distribution/authentication/launchers and Windows installation remain | T3; T10 boundary for authentication setup |
 
 Do not pre-create every listed module. Each package is a vertical slice with its
 own tests and error behavior, not a reason to land an entire speculative engine.
-T4 investigation starts early. Public APIs should remain cheap to change until
-both platforms have exercised their semantics.
+T4 already has a native x64 read-only baseline. Keep remaining platform work
+early rather than inferring its semantics from macOS.
 
-T7-T12 expand the original foundation into full CLI competition. M2 established
-a fourth, narrowly scoped native FFI crate; do not add further splits without
-a demonstrated boundary.
+T7-T12 expand the original foundation into full CLI competition. The five-crate
+workspace has separate macOS and Windows native audit boundaries; do not add
+further splits without a demonstrated need.
 T6 bindings and native GUI work must not inflate or block the CLI comparison
 profile. C0 spans all packages; C1 is the final acceptance gate, not another
 feature implementation. See [COMPETITIVE.md](COMPETITIVE.md) for the ledger and
@@ -57,8 +54,9 @@ the meaning of a verified usability, speed, or size advantage.
 | Maintainer | Product priorities, supported environments, privilege/signing decisions, release approval | Decisions and environment access where necessary | Routine automated tests that the implementer can run |
 
 Automated tests are part of implementation work, not a blanket manual handoff.
-Independent review is a role requirement for feature completion, not a claim that
-this initial scaffold has already received independent review.
+Independent review is a role requirement for feature completion. Existing scoped
+reviews do not replace a new review for changed behavior or a broader acceptance
+claim.
 
 ## Required implementation contract
 
@@ -109,8 +107,10 @@ Windows product targets are Windows 11 or later on x64 and ARM64. The early
 read-only acceptance slice uses a real Windows 11 x64 host; ARM64 native acceptance
 is a separate maintainer-approved follow-up, not certified by cross-compilation.
 See [WINDOWS.md](WINDOWS.md) for supported scope and actual evidence.
-Minimum macOS versions/architectures, initial rule categories, native binding
-tools, and binary distribution/signing channels remain unselected. Initial M3 uses Foundation Trash
+Minimum macOS versions and the broader architecture/support matrix, additional
+rule categories, native binding tools, and binary distribution/signing channels
+remain open. Local arm64 evidence and the two implemented rule families do not
+close those broader decisions. M3 uses Foundation Trash
 and the bounded journal described in [EXECUTION.md](EXECUTION.md); other action
 primitives still need their own decisions. Do not assume the developer's current
 machine represents a broader support matrix.

@@ -3,6 +3,11 @@
 M3 is a narrow, user-initiated ordinary-file workflow, not general cleaning.
 Scanning and M1 planning remain read-only. Native Trash/recovery environment
 acceptance is separate from default model, journal and admission checks.
+Plain file, rule-bound clean and installer selection frontends now use this
+shared executor. Controlled local native evidence includes
+[installer CLI single/batch round trips](INSTALLER_PREVIEW.md#recorded-native-acceptance);
+that does not certify every frontend/environment or provide a general restore
+command. Windows effects and directory execution remain unavailable.
 
 ## Approved guarantee and its limit
 
@@ -292,12 +297,15 @@ returned destination, restores only that object without overwrite and verifies
 contents before exact cleanup. Ambiguity after a call preserves recovery evidence
 instead of searching or deleting guessed Trash entries.
 
-The first authorized parent invocation of this ignored test failed **before any
-effect** because the fixture root was created in system temp (hidden/protected
-path class). Tests now require a non-hidden project-owned fixture parent at
-`<repo>/crates/engine/target/native-test-fixtures`.
+### Historical native failures and later scoped evidence
 
-The second authorized parent invocation reached Foundation and returned an
+An earlier authorized invocation failed **before any
+effect** because the fixture root was created in system temp (hidden/protected
+path class). Native cases now use non-hidden project-owned fixtures; the
+rule-bound case uses `<repo>/crates/engine/target/native-test-fixtures`, and
+other registered cases have their own explicit fixture locations.
+
+A subsequent authorized invocation reached Foundation and returned an
 `Unknown` outcome because destination verification observed a metadata transition
 during ACL capture (`object safety changed during ACL capture`). Recovery
 evidence preserved exact returned path and approved/held identities; parent
@@ -305,7 +313,15 @@ performed explicit identity-checked no-overwrite restore and fixture cleanup.
 That record did not include per-field deltas, so the exact changed field(s) are
 not known from that run alone. Default deterministic no-effect tests now
 reproduce and bound the ACL-window assumption used by post-move verification.
-This remains unresolved native evidence, not a pass claim.
+That historical attempt remains an Unknown outcome with an unresolved exact
+metadata-transition cause, not a retroactively passing run.
+
+The later independently authorized installer CLI acceptance recorded three
+successful owned-file moves, receipts, exclusive-restore conflict checks and
+restores. Its [sanitized evidence and limitations](INSTALLER_PREVIEW.md#recorded-native-acceptance)
+are separate from these earlier failures. It closes only that local synthetic
+installer slice, not all platforms, real downloads or arbitrary recovery.
+No historical or completed test authorization carries forward to a new run.
 
 ## Native references
 

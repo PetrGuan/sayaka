@@ -1,9 +1,13 @@
 # Core architecture
 
-Status: M1's in-memory contracts and M2's macOS read-only scanner are implemented.
-M3 adds explicit-file native Trash sessions and durable local records, described
-in [EXECUTION.md](EXECUTION.md). Full TUI workflows and bindings remain planned.
-The M1 APIs below remain model-only; native execution is a separate session.
+Status: the model, macOS/Windows read-only scan adapters, and narrow macOS native
+file workflows are implemented. Terminal browser/menu, rules/clean, installer
+selection, application previews, status/process top and local CLI lifecycle use
+that shared core. Native bindings now expose a read-only scan C ABI, while full maintenance
+coverage is incomplete. See the [current roadmap](../ROADMAP.md) and
+[platform summary](../README.md#platform-and-distribution-scope).
+The M1 APIs below remain model-only; native execution is a separate session
+described in [EXECUTION.md](EXECUTION.md).
 
 `scan::directory_review` adds a borrowed, task-bound assessment over `ScanTree`,
 not a new plan or executor. It exposes observed blockers and unresolved native
@@ -13,8 +17,9 @@ before proposing any directory action.
 
 ## Implemented M1 contract
 
-M1 implements `model`, `plan`, and `receipt` using the standard library. M2 adds
-`scan`, with targeted native dependencies. `tempfile` remains test-only.
+M1 implements deterministic `model`, `plan`, and `receipt` contracts, with
+serialization support for current model/record types. `scan` adds bounded
+traversal and indexes with target-specific adapters. `tempfile` remains test-only.
 
 | API | Behavior |
 | --- | --- |
@@ -92,14 +97,16 @@ model -> scan / rules -> plan -> approval -> execute -> journal
      OS APIs and filesystem
 ```
 
-The M2 implementation adds the deliberately isolated `sayaka-platform-macos`
-crate for native policy/volume FFI; `sayaka-engine` retains `forbid(unsafe_code)`.
-See [SCANNING.md](SCANNING.md) for the actual read-only contract. Within
-`sayaka-engine`, use `model`, `scan`, `rules`,
-`plan`, `execute`, `journal`, and `platform` modules when their implementations
-arrive. Do not create empty module trees, services, or general plugin frameworks
-in advance. Use direct calls and concrete types; introduce narrow effect
-interfaces only where deterministic tests or real platform differences need them.
+The workspace has separate `sayaka-platform-macos` and
+`sayaka-platform-windows` native audit boundaries. The former owns macOS
+policy/metadata/Trash/status FFI; the latter supplies Windows read-only NT
+directory/identity/volume operations. `sayaka-engine` retains
+`forbid(unsafe_code)` and owns models, scan/indexes, rules, previews, execution/
+journal, status and local lifecycle logic. See [SCANNING.md](SCANNING.md) and
+[WINDOWS.md](WINDOWS.md) for the distinct native contracts. Do not create empty
+module trees, services or general plugin frameworks in advance. Use direct
+calls and concrete types; introduce narrow effect interfaces only where
+deterministic tests or real platform differences need them.
 
 Clients do not own separate rule lists. All supported clients use the same
 planning and execution policy. Start embedded in the caller's process, not a
@@ -203,16 +210,22 @@ Never overwrite an occupied restore destination or promise universal rollback.
 
 ## CLI and bindings
 
-M2 introduces a versioned JSON result envelope with task ID, status, completeness,
-structured errors, and measurements. Emit diagnostics to stderr and machine
-results to stdout. The implementation issue must fix command names, output shape,
-and exit-code mapping before adding commands; `scan`, `plan`, `execute`, and
-`receipt` are candidate names only.
+The CLI has implemented command-specific JSON envelopes, errors and exit-code
+mappings. `scan` carries task identity, status, completeness and measurements;
+`receipt`/`history` read durable records. Native actions live behind the explicit
+`trash`, `rules trash`, `clean` and `installer` approval flows, not generic
+top-level `plan`/`execute` commands. Diagnostics go to stderr and machine
+results to stdout. New commands or incompatible output changes still require
+an explicit contract; see the README and per-feature docs for current surfaces.
 
-For bindings, expose versioned DTOs, stable error codes, opaque task/resource IDs,
-and explicit allocation, release, cancellation, and callback rules. No panic
-may cross an ABI boundary. Keep native path handling inside the engine and do
-not force Rust internals into lossy FFI-friendly strings.
+The [bindings crate](BINDINGS.md) exports the first versioned read-only scan C
+ABI: opaque handles, polled coalesced progress, cancellation, caller-buffer JSON
+results and nonblocking release. Engine `scan::task` owns the worker/lifecycle;
+`scan::wire` supplies the same JSON serializer used by the CLI. Unix bytes and
+Windows UTF-16 paths remain lossless. There are no foreign callbacks or effect
+APIs. Unwinding panics are contained at the C boundary; foreign pointer validity
+and library lifetime remain caller responsibilities, not a promise to recover
+arbitrary invalid memory or aborting failures.
 
 ## Full CLI capability expansion
 
@@ -226,8 +239,8 @@ Keep interactive state, key handling, rendering, and terminal restoration in
 still feed the shared plan/approval path. UI responsiveness must not depend on
 running enumeration or maintenance synchronously in the rendering loop.
 
-Introduce bounded read-only collectors in an engine module when T11 needs them.
-Retain sample timestamps, source/capability states and stale/unknown distinctions.
+The implemented `status` modules use bounded read-only collectors with sample
+timestamps, source/capability states and stale/unknown distinctions.
 Separate fast metrics from expensive probes; share snapshots where safe and
 measure overhead at the configured interval. Watch mode lives only as long as
 the explicitly started command; it does not install a daemon. A diagnostic
