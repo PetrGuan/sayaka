@@ -9,6 +9,11 @@ acceptance gates. The separate [disk browser](BROWSING.md) consumes
 these observations without changing this command or its JSON v1 contract. Read-only
 `.app` bundle inventory is documented separately in [APPLICATIONS.md](APPLICATIONS.md).
 
+The engine-only [directory assessment](DIRECTORY_ACTIONS.md) reuses the immutable
+scan index for observed subtree/ancestor evidence and rejection reasons. It
+does not alter scan output, infer ownership/closure from complete coverage, or
+authorize directory cleanup. There is no new directory-action CLI in this slice.
+
 ## CLI contract
 
 ```sh

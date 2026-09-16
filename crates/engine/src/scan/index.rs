@@ -286,7 +286,7 @@ fn checked_add(total: &mut u64, value: u64) -> Result<(), ScanError> {
     Ok(())
 }
 
-fn check_cancelled(cancellation: &Cancellation) -> Result<(), ScanError> {
+pub(super) fn check_cancelled(cancellation: &Cancellation) -> Result<(), ScanError> {
     if cancellation.is_cancelled() {
         Err(ScanError::new(ScanCode::Cancelled, "scan index cancelled"))
     } else {

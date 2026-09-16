@@ -8,6 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 
+#[path = "installer_roundtrip.rs"]
+mod installer_roundtrip;
+
 struct Fixture {
     root: PathBuf,
     anchors: Vec<Evidence>,

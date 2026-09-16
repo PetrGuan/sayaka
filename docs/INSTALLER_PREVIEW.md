@@ -114,6 +114,40 @@ failures and unknown results. A real installer-file Trash round trip still
 requires separate explicit native-system authorization; it is not claimed by
 these no-effect checks.
 
+## Recorded native acceptance
+
+A separately authorized local macOS arm64/internal-APFS run exercised the
+actual release CLI from `6a499555f66923b55ac7313d32ac9c562a15fa05`
+(SHA-256 `f4e8a28c1b6d7055b48957e0ce1dee278520bb891fc8d96526d8336c04adbba8`).
+The [sanitized native record](../benchmarks/results/installer-cli-native-roundtrip-v1.json)
+binds the helper, runner and private evidence hashes without publishing host
+paths, user identities or receipt contents.
+
+| Case | Selection | Actual Trash / restored | Exclusive restore conflicts |
+| --- | --- | ---: | ---: |
+| Synthetic recognized UDIF | Explicit path | 1 / 1 | 1 EEXIST, both objects preserved |
+| Fresh synthetic UDIF + flat-PKG | Numeric chooser | 2 / 2 | 2 EEXIST, both objects preserved |
+
+All three receipts were succeeded with no pending snapshots. Retained original
+identities, ACLs and full synthetic contents matched at the returned/restored
+locations; both non-target sentinels stayed unchanged. The successful run's
+registered fixture was cleaned and its three exact former Trash names were
+absent afterward. Only those registered identities/returned names were used;
+the Trash directory's contents were never enumerated or globally audited.
+The 4,194 logical bytes are handled fixture bytes, not measured freed space.
+
+An earlier attempt stopped after read-only preview with zero mutating intents
+because of a tool process-group signalling issue. Its source identity/content
+and empty journal were verified, and its inactive fixture/evidence were retained.
+After a live-broker fix, fresh review and renewed authorization/quiescence, the
+successful run above was performed once. No unknown result was retried.
+
+These are inert structural fixtures, not proof of mountability, installability,
+trust or suitability of real downloads. This closes only this local controlled
+installer CLI round-trip slice; Windows, arbitrary accounts/volumes, directory
+actions and general recovery guarantees remain unaccepted. The residual final
+pathname race and explicit opt-in requirements still apply to every future run.
+
 ## Frozen limits
 
 - Candidate paths: 512

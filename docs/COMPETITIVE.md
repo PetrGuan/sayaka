@@ -278,10 +278,20 @@ Trash approval to bounded UDIF/flat-PKG discovery. It retains inspection/native
 identity binding, no-effect default JSON, explicit exclusions, exact confirmation
 and ordinary-file receipts. Corrupt/unsupported formats and incomplete discovery
 cannot authorize that action; a native refusal blocks the entire batch.
+One explicitly authorized local macOS synthetic-fixture CLI Trash/receipt/
+no-overwrite-restore run now has
+[separate native evidence](INSTALLER_PREVIEW.md#recorded-native-acceptance).
 Provenance/signatures/installation state, directory installers, Windows actions
-and a real installer-file Trash round-trip acceptance remain separate gaps.
+and broader account/volume/real-download acceptance remain separate gaps.
 This is not full T8/Mole installer parity, a new competitive timing result, or
 permission to rerun/alter the historical C0 benchmark records.
+
+Directory cleanup remains unavailable. The separate
+[read-only directory foundation](DIRECTORY_ACTIONS.md) records observed
+subtree/ancestor blockers and unresolved native gates; its owned in-fixture
+rename counterexample shows why a stable root inode is not an exact member-set
+guarantee. This is preparation for a separately approved contract, not directory
+purge, application uninstall or additional parity coverage.
 
 Potentially irreversible maintenance, directory actions, and privileged
 operations require new action-specific design gates after M3. They are not

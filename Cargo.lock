@@ -694,8 +694,11 @@ dependencies = [
 name = "sayaka-platform-macos"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "libc",
  "objc2",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
