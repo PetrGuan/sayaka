@@ -1,20 +1,19 @@
 # Roadmap
 
-This is a development plan, not a list of supported features or promised dates.
-M0, the M1 in-memory core and the M2 macOS read-only scanner/CLI are present.
-M3 now has an initial explicit-file Trash session and durable journal under the
-approved revalidation contract. Native Trash/recovery environment acceptance
-remains separately gated; it does not satisfy the former atomic-binding proposal.
-Windows-native scanning and bindings remain unimplemented.
-M7 now provides an initial terminal browser, independent directory summaries and
-M3 plan integration. See [BROWSING.md](docs/BROWSING.md) for its current limits
-and local mechanical performance evidence; this is not full CLI parity.
-The initial T11 macOS status sampler adds read-only metrics, freshness-aware
-JSON/watch output and a terminal panel. See [STATUS.md](docs/STATUS.md) for its
-source ledger and explicit temperature/GPU/top-process gaps.
-The initial T12 slice adds history queries, generated completions and a verified
-dedicated local installation lifecycle; [LOCAL_LIFECYCLE.md](docs/LOCAL_LIFECYCLE.md)
-lists the separate online distribution, authentication and Windows gates.
+Current status reviewed on 2026-09-16: Sayaka is a source-built developer preview
+with usable narrow CLI workflows, not a complete maintenance suite or stable
+binary distribution. This document separates delivered slices from remaining
+milestone gates; it is not a schedule or a claim that all listed goals are done.
+Use the [README capability/platform summary](README.md#current-capabilities) as
+the entry point and the linked technical contracts for precise restrictions.
+
+The model, macOS scanner, Windows x64 native read-only scan, macOS ordinary-file
+Trash/journal, terminal browser/menu, two built-in rules, installer-file approval,
+application previews, status/process top and local CLI lifecycle are present.
+The first read-only native scan ABI is present; directory effects, uninstall
+and system-maintenance actions are not. Local controlled native evidence exists, including installer
+single/batch round trips; it neither closes the former atomic-binding proposal
+nor authorizes new real-Trash runs.
 
 ## Product objective
 
@@ -22,39 +21,84 @@ Cover all major Mole CLI capabilities, then demonstrate better usability, faster
 execution, and a smaller complete distribution. This is a staged engineering
 objective, not a claim that Sayaka already matches Mole. Compare CLI to CLI;
 native graphical applications have a separate roadmap.
+The shared engine is also intended for the macOS and Windows SayakaCleaner
+applications. Prioritize reusable capabilities and user workflows across those
+clients and the CLI; standalone CLI distribution is not the immediate prerequisite
+for continued engine development. Native client UI remains outside this repository.
 The [competitive contract](docs/COMPETITIVE.md) fixes the reference version,
 capability ledger, fair measurement rules, and acceptance gates.
 
-## Delivery sequence
+## Milestone status and remaining gates
 
-| Stage | Deliverable | Depends on | Exit gate |
+"Implemented foundation" means the bounded contract is present; it is not a
+blanket production/platform certification. "Partial" means useful slices exist
+but the named milestone's wider outcome is incomplete.
+
+| Stage | Current state | Delivered scope | Remaining gate / dependency |
 | --- | --- | --- | --- |
-| M0 | Workspace, MPL-2.0, basic CLI entry point | None | Complete |
-| M1 | Deterministic domain model, safety policy, plan lifecycle, test harness | M0 | Every defined decision/state transition has positive and rejection cases; no filesystem mutation API exposed |
-| M2 | Bounded, read-only macOS scanning and structured CLI output | M1 | Correct fixture accounting, explicit partial results, enforced resource budgets, cancellation evidence |
-| M3 | Narrow macOS approval/execution/journal loop | M2 and a successful platform mutation feasibility review | Only approved eligible objects are handled; failure, cancellation, and crash windows have truthful receipts |
-| M4 | Early Windows vertical slice | Starts after M1; complete before M5 | Shared contracts validated with real Windows filesystem and process behavior |
-| M5 | Small evidence-backed rule set | M3 and M4 | Each rule has ownership evidence, protected non-targets, recovery limits, and native-platform evidence |
-| M6 | Versioned client bindings and source-release readiness | M3 and M4; may proceed alongside M5 | Native consumer smoke builds, lifecycle/error checks, documented support matrix and reproducible release instructions |
-| C0 | Frozen Mole capability inventory and benchmark harness | Starts now; real harness alongside M1/M2 | Versioned cases, full-install footprint, equivalent-work speed protocol and usability study design |
-| M7 / T7 | Interactive CLI and disk explorer | M2; confirmed actions need M3 | Keyboard navigation, filtering, multiselect, previews, cancellation and terminal restoration |
-| M8 / T8 | Full cleaning, project-artifact and installer workflows | M5 and T7 | Version-pinned rule/task ledger covered with safe effects and protected non-targets |
-| M9 / T9 | Application discovery and uninstall workflows | M5 and T7 | Supported installation/removal cases, related-data plans, multi-copy protection, truthful partial outcomes |
-| M10 / T10 | Bounded system diagnostics and maintenance | M3 and T7 | Specific maintenance operations, capability/privilege review, recovery limits and native evidence |
-| M11 / T11 | Read-only system status and streaming | M2; can run alongside M3 onward | Native metric freshness, bounded sampling, JSON/NDJSON, alerts and steady-state overhead |
-| M12 / T12 | CLI history, install/update/remove and convenience | M3; auth convenience needs T10's reviewed boundary | Verified distribution lifecycle, completion, launch integration, explicit supported authentication setup |
-| C1 | Full CLI competitive acceptance | C0, T7-T12 and their prerequisites | Every major capability covered; usability, speed and complete-size gates all evidenced |
+| M0 | Implemented foundation | Workspace, MPL-2.0, source repository and CLI entry | Binary/package publication is separate from source availability |
+| M1 | Implemented foundation | Deterministic observations, plans, exact approval and read-only preflight | Remains model-only; never substitutes for native authority |
+| M2 | Implemented foundation | Bounded macOS scanning, JSON/progress, directory accounting and diagnostics | Broader OS/hardware/volume evidence; cloud/network/removable scope is not inferred |
+| M3 | Implemented narrow workflow | macOS ordinary-file revalidated Trash, durable intent/outcomes, receipts | Residual pathname race; broader environments and new action kinds need separate contracts |
+| M4 | Partial; x64 read-only slice accepted | Native Windows 11 x64 fixed-NTFS scan/CLI evidence | ARM64 linked/native acceptance, Windows writes and other native workflows remain separate |
+| M5 | Partial | CPython source-backed `.pyc` and OpenJDK `javac` source-backed `.class` rules | Broader useful rules/non-targets; native inspection currently macOS, not Windows rule parity |
+| M6 | Partial, read-only scan ABI | Versioned C task/progress/cancel/result/release interface and local C/Swift hosts | Native Windows linking/runtime, App integration, broader APIs and distribution |
+| C0 | Partial evidence | Pinned Mole ledger, constrained direct-analyzer comparison, corrected collector and scan diagnostics | Full installed footprint, wider equivalent workloads, cancellation and real-user usability evidence |
+| M7 / T7 | Partial | macOS terminal browser/menu, filters/navigation, file selection and shared approval entries | Full task-family/UX acceptance and broader platform support |
+| M8 / T8 | Partial | Two-rule `clean`, persisted clean exclusions, installer-file selection/approval and controlled native round-trip evidence | Broad clean/purge catalog; directory effects are not approved or implemented |
+| M9 / T9 | Partial, read-only | macOS `apps` inventory and `apps-related` association preview | Running/shared/multi-copy ownership, supported uninstall flows and native effects |
+| M10 / T10 | Not implemented | No system-maintenance action or privilege helper | Specific operations, authorization/recovery contracts and native evidence |
+| M11 / T11 | Partial | macOS native status, JSON/watch panel, freshness/alerts and opt-in process top | Numeric temperature/GPU, Windows sampler and broader metric/host coverage |
+| M12 / T12 | Partial, local lifecycle | History, completions, dedicated-prefix install/update/recover/remove | Public binary distribution, publisher authentication, online channels and Windows installation |
+| C1 | Not met | Goals and evidence rules defined | All major capabilities plus usability/speed/full-size evidence; current slices are not superiority proof |
 
-M4 is an early parallel workstream, not a port postponed until macOS feature
-expansion. Start with the shared model and read-only fixtures while M2/M3 proceed;
-its write path depends on the execution contract established in M3. If no Windows
-host is available, record that gate as blocked rather than calling mocks a port.
+Canonical evidence: [scanning](docs/SCANNING.md), [Windows](docs/WINDOWS.md),
+[execution](docs/EXECUTION.md), [installer native acceptance](docs/INSTALLER_PREVIEW.md#recorded-native-acceptance),
+[application previews](docs/APPLICATIONS.md), [status/process top](docs/STATUS.md),
+[local lifecycle](docs/LOCAL_LIFECYCLE.md), and [C0 limits](docs/COMPETITIVE.md).
+
+M4 started early and already has real x64 read-only evidence; it is not an
+unstarted port. Keep its remaining work parallel to macOS expansion. A macOS
+write contract or cross-compilation result cannot certify Windows native effects.
+Unavailable native hosts/toolchains must remain blocked/unverified, not mocked
+into a platform pass.
 
 M1-M6 remain foundation work, not full Mole parity. T6's native bindings are not
 a prerequisite for CLI competitive acceptance; their integration work can proceed
 separately. T12 owns the full CLI distribution lifecycle and uses the source/
 compatibility rules established by the core. Do not serialize T11 behind every
 mutating feature, or defer C0 measurements until the end.
+
+## Near-term priorities
+
+1. **Reusable engine capabilities and workflows (T5/T8).** Strengthen useful
+   discovery, selection, planning, cancellation and truthful result flows without
+   making business rules depend on a terminal. CLI and future SayakaCleaner
+   macOS/Windows clients must share policy and operation state, not duplicate
+   cleanup decisions. Expand one evidence-backed cleanup task at a time.
+2. **Native-client integration readiness (T6).** Establish a small read-only
+   consumer path for scanning, progress, cancellation and result ownership before
+   exposing effects. The [first C ABI](docs/BINDINGS.md) now covers that read-only
+   path with local C/Swift host evidence and Windows x64 type checks. Actual
+   native App integration and Windows runtime remain separate gates; expand
+   against real consumers rather than building a broad SDK in advance.
+3. **Directory effect decision gate (T8).** The
+   [ModelOnly foundation](docs/DIRECTORY_ACTIONS.md) is implemented. Choose and
+   explicitly approve exact-member-set versus whole-container semantics and
+   native/recovery limits before adding any directory effect. Read-only blocker
+   checks and a stable root inode are not permission.
+   Project cleanup still needs concrete ownership/non-target rules; names such
+   as `target/build` never authorize removal. App uninstall and broad system
+   maintenance retain their own gates.
+4. **Distribution readiness when needed (T12).** Local packaging, license notices,
+   checksums, installation instructions and publisher authentication remain
+   necessary delivery work, but do not displace shared-engine functionality.
+   No GitHub Release is currently published and Cargo publication is disabled.
+
+Continue bounded C0/platform evidence alongside those tasks. Do not spend
+another performance-only slice trying to claim a win by reducing information,
+checks or workload. Native bindings are needed for in-process app integration,
+not a prerequisite for using or independently delivering the CLI.
 
 ## Milestone boundaries
 
@@ -68,8 +112,9 @@ the first real logic; a passing suite with zero tests is not completion.
 Implemented in `sayaka-engine`: injected clock/IDs/probes, protected/excluded
 selection, immutable plans, session-bound approval, one-shot read-only preflight
 and pure receipt transitions. See the [M1 contract](docs/ARCHITECTURE.md#implemented-m1-contract).
-The M1 modules themselves use only the standard library. M2 adds targeted native
-scanner dependencies; fixture tooling remains dev-only.
+M1 separates deterministic planning from platform adapters; current models and
+records also use serialization support. M2 adds targeted native scanner
+dependencies, while fixture tooling remains dev-only.
 
 ### M2: understand a selected scope
 
@@ -77,12 +122,14 @@ Scan only explicitly selected roots. Do not follow links/reparse points, cross
 volumes, traverse network/removable volumes, or hydrate cloud placeholders by
 default. Do not treat denied access as an empty directory. Track logical bytes,
 allocated bytes when known, hard-link deduplication, completeness, and task IDs.
-No cleaning commands are available at this stage.
+The scanner itself performs no cleaning; separately implemented commands own
+all approval and effect behavior.
 
 The [M2 scanning contract](docs/SCANNING.md) specifies actual native restrictions,
 wire semantics, fixtures and resource/performance gates. The separate macOS
-FFI crate preserves the engine's unsafe-free boundary. Actual cloud-provider,
-external/network volume and Windows environments remain unverified.
+and Windows FFI crates preserve the engine's unsafe-free boundary. Windows x64
+has its own recorded fixed-NTFS native evidence; ARM64 runtime and cloud-provider/
+external/network environments are not certified by that or the macOS slice.
 
 ### M3: a narrow, honest write path
 
@@ -104,12 +151,20 @@ and preserve `Unknown` across ambiguous crashes. Never automatically replay
 unresolved actions. A trash move does not mean disk space was freed or that
 restoration is guaranteed.
 
+The installer-file frontend now has scoped local single/batch native CLI
+Trash/receipt/no-overwrite-restore evidence. It reuses the ordinary-file contract;
+that does not approve directory actions, arbitrary restoration or package trust.
+
 ### M4: prove the Windows differences
 
 Exercise native path representation, volume/file identity, sharing violations,
 reparse points, cancellation, supported trash behavior, and partial results.
 macOS mocks and cross-compilation are supporting evidence, not the exit gate.
 Keep unsupported behavior explicitly unavailable.
+
+The Windows 11 x64 read-only closeout is already recorded in
+[WINDOWS.md](docs/WINDOWS.md). ARM64 has compilation checks but no linked/native
+acceptance, and Windows Trash/status/installation remain unavailable.
 
 ### M5: expand only from evidence
 
@@ -119,6 +174,11 @@ rules ship with the engine; no executable rule DSL, shell snippets, or plugin
 marketplace. Application discovery can precede uninstall support, but lack of an
 observed owner is never proof that data is abandoned.
 
+The current catalog contains two implemented rule families: CPython source-backed
+cache files and same-directory `javac` class files. `clean` wraps those rules
+with explicit selection and persisted exclusions; it is not a general purge
+engine or permission to remove whole build directories.
+
 ### M6: integrate without duplicating policy
 
 Keep native graphical clients outside this repository. Evaluate Swift bindings
@@ -127,6 +187,9 @@ Choose binding dependencies only when implementing those consumers. Publish the
 actual tested OS/architecture matrix, not assumed support. Source publication is
 already enabled; binary releases, signing, and package publication are separate
 release gates, not consequences of a successful development build.
+The current binding slice uses a narrow C ABI with caller-owned result buffers,
+opaque non-reused handles and nonblocking release retries. It exports scan only;
+no foreign callback or cleanup/approval API has been introduced.
 
 ## Deferred
 

@@ -1,12 +1,15 @@
 # Mole CLI comparison and acceptance contract
 
 Status: development objective and measurement protocol, not a superiority claim.
-Sayaka has an M1 in-memory core, M2 macOS read-only scanning/CLI, and an initial
-M3 explicit-file Trash/receipt workflow under the revised revalidation contract.
-Initial M7 browser, T11 status, and T12 local lifecycle slices have local fixture
-regression baselines only (`benchmarks/m7-v1.json`, `benchmarks/t11-v1.json`,
-`scripts/check_local_install.py`); these are not Mole parity proof.
-Native Trash/recovery acceptance remains a separate gate.
+Sayaka has the model/scan foundations, Windows x64 native read-only evidence,
+macOS ordinary-file Trash/receipts, terminal workflows, two built-in rules,
+installer selection, application previews, status/process top and local CLI
+lifecycle. See the [current milestone/gap table](../ROADMAP.md#milestone-status-and-remaining-gates).
+These are bounded slices, not complete maintenance capability coverage.
+M7, T11 and T12 have local regression budgets/checks
+(`benchmarks/m7-v1.json`, `benchmarks/t11-v1.json`, `benchmarks/t11-top-v1.json`,
+`scripts/check_local_install.py`), and installer CLI has separate controlled
+native round-trip evidence. None establishes Mole parity or general recovery.
 One guarded direct-analyzer comparison against Mole has been executed on a
 flat regular-file fixture (see batch 3 below). Installed-CLI, human usability,
 and full installation-footprint comparisons remain unmeasured.
@@ -246,9 +249,11 @@ was executed for this document.
 This is a command-family inventory, not yet an exhaustive rule/subcommand audit.
 C0 must expand each row into version-pinned task cases, supported platforms,
 eligible targets, expected effects, exclusions, and evidence before parity is
-accepted. Read-only scan/JSON, explicit-file previews/confirmation and local
-receipt export implement only parts of the ledger; interactive exploration
-and the other complete task families remain unimplemented.
+accepted. Scan/JSON, terminal exploration, rule/installer file approval, application
+previews, status/process top and local lifecycle implement parts of the ledger.
+Directory purge, uninstall, system maintenance and full distribution are still
+gaps; implemented command families must not be mistaken for complete task
+coverage.
 
 | Mole capability | Required Sayaka user outcome | Delivery |
 | --- | --- | --- |

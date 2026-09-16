@@ -7,9 +7,16 @@ is a separate follow-up. ARM64 all-target compilation checks pass, but a complet
 linked build and native execution are not verified. Windows writes and provider/
 network/removable environments remain unsupported. A tested Insider host is not
 evidence that every Windows 11 release or architecture has been run.
-The new read-only CPython `rules preview` flow reuses this scanner but its
-runtime owner/link metadata checks are currently verified on macOS only; Windows
-rule-runtime evidence remains unverified in this slice.
+Rule catalog/preview entry points reuse the shared CLI, but the native
+ownership/ancestry/marker inspection used by the CPython and `javac` rules is
+currently implemented only on macOS. Unsupported native rule inspection is
+reported explicitly on Windows; parser/catalog availability is not rule parity.
+
+The first [native scan bindings](BINDINGS.md) have Windows x64 cross-target
+type-check coverage, including native UTF-16 input. Binding DLL linking and
+execution from a Windows host are not yet accepted. The macOS-only clean-policy
+implementation is now gated separately so it does not prevent a Windows scan
+library from compiling; unsupported policy operations do not become empty success.
 
 ## Contract
 

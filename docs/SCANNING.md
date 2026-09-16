@@ -14,6 +14,11 @@ scan index for observed subtree/ancestor evidence and rejection reasons. It
 does not alter scan output, infer ownership/closure from complete coverage, or
 authorize directory cleanup. There is no new directory-action CLI in this slice.
 
+Native hosts can use the [read-only C ABI](BINDINGS.md), backed by engine
+`scan::task` and the shared `scan::wire` JSON serializer. Its background worker,
+coalesced progress and cooperative cancellation do not change the synchronous
+scanner or CLI stdout contract.
+
 ## CLI contract
 
 ```sh
@@ -157,7 +162,9 @@ No byte field represents guaranteed reclaimable or already-freed capacity.
 
 The engine retains `forbid(unsafe_code)`. A small separately auditable
 `sayaka-platform-macos` crate contains the required native policy and volume
-metadata FFI; this is the deliberate fourth workspace crate.
+metadata FFI. The five-crate workspace also has a separate read-only
+`sayaka-platform-windows` boundary; the policies below describe macOS, not a
+shared guarantee for both operating systems.
 
 - The caller and each traversal worker disable dataless-file materialization
   for their own thread, with explicit restoration and error propagation.
