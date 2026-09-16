@@ -57,7 +57,8 @@ Clock changes, ID collisions/exhaustion, probe failures and cancellation are
 injected deterministically. The short process wait loop is only a bounded child
 lifecycle mechanism, not a timing assumption for model correctness.
 M2 adds bounded-scanner fault matrices, macOS metadata fixtures and CLI process
-tests. Native binding tests are still unavailable. Windows scanning has initial
+tests. Native binding tests and owned C/Swift consumers cover the read-only scan
+and directory-query ABI; see [BINDINGS.md](BINDINGS.md). Windows scanning has initial
 native NTFS and CLI evidence, with full acceptance still incomplete; see
 [WINDOWS.md](WINDOWS.md).
 See [SCANNING.md](SCANNING.md) for the precise scope and missing environments.

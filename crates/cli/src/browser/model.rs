@@ -5,21 +5,12 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use sayaka_engine::execute::ExecutionReport;
 use sayaka_engine::journal;
 use sayaka_engine::model::{Cancellation, ResourceKind};
+pub use sayaka_engine::scan::index::{Metric, Sort};
 use sayaka_engine::scan::{self, ScanEntry, ScanReport, index::ScanTree};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::io;
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Sort {
-    Size,
-    Name,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Metric {
-    Logical,
-    Allocated,
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Browse,
@@ -45,58 +36,17 @@ pub enum Command {
 pub struct BrowserData {
     pub tree: ScanTree,
     pub index_elapsed_ms: u64,
-    orders: HashMap<u64, [Vec<u64>; 3]>,
 }
 
 impl BrowserData {
     pub fn build(report: ScanReport, cancellation: &Cancellation) -> io::Result<Self> {
         let started = std::time::Instant::now();
         let tree = ScanTree::build(report, cancellation).map_err(super::scan_error)?;
-        let mut result = Self {
+        let result = Self {
             tree,
-            orders: HashMap::new(),
-            index_elapsed_ms: 0,
+            index_elapsed_ms: u64::try_from(started.elapsed().as_millis())
+                .map_err(io::Error::other)?,
         };
-        for entry in &result.tree.report().entries {
-            if cancellation.is_cancelled() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "browser indexing cancelled",
-                ));
-            }
-            if entry.kind != ResourceKind::Directory {
-                continue;
-            }
-            let children = result
-                .tree
-                .children(entry.id)
-                .ok_or_else(|| io::Error::other("directory has no index"))?;
-            let mut order = [children.to_vec(), children.to_vec(), children.to_vec()];
-            for (index, metric) in [(1, Metric::Logical), (2, Metric::Allocated)] {
-                order[index].sort_by(|a, b| {
-                    result
-                        .size(*b, metric)
-                        .cmp(&result.size(*a, metric))
-                        .then_with(|| {
-                            result
-                                .tree
-                                .entry(*a)
-                                .map(|entry| &entry.path)
-                                .cmp(&result.tree.entry(*b).map(|entry| &entry.path))
-                        })
-                });
-            }
-            order[0].sort_by(|a, b| {
-                result
-                    .tree
-                    .entry(*a)
-                    .map(|entry| &entry.path)
-                    .cmp(&result.tree.entry(*b).map(|entry| &entry.path))
-            });
-            result.orders.insert(entry.id, order);
-        }
-        result.index_elapsed_ms =
-            u64::try_from(started.elapsed().as_millis()).map_err(io::Error::other)?;
         Ok(result)
     }
     pub fn entry(&self, id: u64) -> io::Result<&ScanEntry> {
@@ -105,43 +55,10 @@ impl BrowserData {
             .ok_or_else(|| io::Error::other("unknown browser resource"))
     }
     pub fn children(&self, id: u64, sort: Sort, metric: Metric) -> &[u64] {
-        let index = match (sort, metric) {
-            (Sort::Name, _) => 0,
-            (_, Metric::Logical) => 1,
-            (_, Metric::Allocated) => 2,
-        };
-        self.orders
-            .get(&id)
-            .map(|order| order[index].as_slice())
-            .unwrap_or(&[])
+        self.tree.ordered_children(id, sort, metric).unwrap_or(&[])
     }
     pub fn size(&self, id: u64, metric: Metric) -> Option<u64> {
-        let entry = self.tree.entry(id)?;
-        if entry.kind == ResourceKind::Directory {
-            let summary = self.tree.summary(id)?;
-            let (bytes, unknown) = match metric {
-                Metric::Logical => (
-                    summary.logical_bytes_known,
-                    summary.logical_bytes_unknown_files,
-                ),
-                Metric::Allocated => (
-                    summary.allocated_bytes_known,
-                    summary.allocated_bytes_unknown_files,
-                ),
-            };
-            if (bytes == 0 && unknown > 0) || (!summary.complete && summary.unique_files == 0) {
-                None
-            } else {
-                Some(bytes)
-            }
-        } else if entry.kind == ResourceKind::File {
-            match metric {
-                Metric::Logical => entry.logical_bytes,
-                Metric::Allocated => entry.allocated_bytes,
-            }
-        } else {
-            None
-        }
+        self.tree.size(id, metric)
     }
     pub fn measure(&self, id: u64, metric: Metric) -> String {
         if self.tree.entry(id).is_some_and(|entry| {

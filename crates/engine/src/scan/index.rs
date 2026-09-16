@@ -10,7 +10,19 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 const MAX_ENTRIES: usize = 100_000;
 const MAX_PATH_BYTES: usize = 32 * 1024 * 1024;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sort {
+    Size,
+    Name,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Metric {
+    Logical,
+    Allocated,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct DirectorySummary {
     pub unique_files: u64,
     pub logical_bytes_known: u64,
@@ -25,6 +37,7 @@ pub struct DirectorySummary {
 struct Node {
     parent: Option<usize>,
     children: Vec<u64>,
+    size_orders: [Vec<u64>; 2],
     summary: Option<DirectorySummary>,
 }
 
@@ -34,6 +47,7 @@ pub struct ScanTree {
     positions: HashMap<u64, usize>,
     nodes: Vec<Node>,
     roots: Vec<u64>,
+    root_size_orders: [Vec<u64>; 2],
 }
 
 impl ScanTree {
@@ -96,6 +110,7 @@ impl ScanTree {
             nodes.push(Node {
                 parent: None,
                 children: Vec::new(),
+                size_orders: Default::default(),
                 summary: None,
             });
         }
@@ -172,12 +187,20 @@ impl ScanTree {
         check_cancelled(cancellation)?;
         drop(paths);
         drop(explicit_roots);
-        Ok(Self {
+        let mut tree = Self {
             report,
             positions,
             nodes,
             roots,
-        })
+            root_size_orders: Default::default(),
+        };
+        for position in 0..tree.nodes.len() {
+            check_cancelled(cancellation)?;
+            tree.nodes[position].size_orders =
+                tree.size_orders(&tree.nodes[position].children, cancellation)?;
+        }
+        tree.root_size_orders = tree.size_orders(&tree.roots, cancellation)?;
+        Ok(tree)
     }
 
     pub fn report(&self) -> &ScanReport {
@@ -211,6 +234,85 @@ impl ScanTree {
 
     pub fn summary(&self, id: u64) -> Option<&DirectorySummary> {
         self.nodes[*self.positions.get(&id)?].summary.as_ref()
+    }
+
+    /// Known subtotal, not necessarily a complete measurement. Consult summary
+    /// unknown counts and coverage. Non-file payloads have no size.
+    pub fn size(&self, id: u64, metric: Metric) -> Option<u64> {
+        let entry = self.entry(id)?;
+        match entry.kind {
+            ResourceKind::Directory => {
+                let summary = self.summary(id)?;
+                let (bytes, unknown) = match metric {
+                    Metric::Logical => (
+                        summary.logical_bytes_known,
+                        summary.logical_bytes_unknown_files,
+                    ),
+                    Metric::Allocated => (
+                        summary.allocated_bytes_known,
+                        summary.allocated_bytes_unknown_files,
+                    ),
+                };
+                if (bytes == 0 && unknown > 0) || (!summary.complete && summary.unique_files == 0) {
+                    None
+                } else {
+                    Some(bytes)
+                }
+            }
+            ResourceKind::File => match metric {
+                Metric::Logical => entry.logical_bytes,
+                Metric::Allocated => entry.allocated_bytes,
+            },
+            ResourceKind::Link | ResourceKind::Other => None,
+        }
+    }
+
+    /// Name is native path ascending; size is known subtotal descending,
+    /// unknown last, ties by native path ascending. Sibling sizes are not additive.
+    pub fn ordered_children(&self, id: u64, sort: Sort, metric: Metric) -> Option<&[u64]> {
+        let children = self.children(id)?;
+        let node = &self.nodes[*self.positions.get(&id)?];
+        Some(ordered(children, &node.size_orders, sort, metric))
+    }
+
+    pub fn ordered_roots(&self, sort: Sort, metric: Metric) -> &[u64] {
+        ordered(&self.roots, &self.root_size_orders, sort, metric)
+    }
+
+    fn size_orders(
+        &self,
+        ids: &[u64],
+        cancellation: &Cancellation,
+    ) -> Result<[Vec<u64>; 2], ScanError> {
+        let mut orders = [ids.to_vec(), ids.to_vec()];
+        for (order, metric) in orders.iter_mut().zip([Metric::Logical, Metric::Allocated]) {
+            check_cancelled(cancellation)?;
+            order.sort_unstable_by(|a, b| {
+                self.size(*b, metric)
+                    .cmp(&self.size(*a, metric))
+                    .then_with(|| {
+                        self.entry(*a)
+                            .unwrap()
+                            .path
+                            .cmp(&self.entry(*b).unwrap().path)
+                    })
+            });
+        }
+        check_cancelled(cancellation)?;
+        Ok(orders)
+    }
+}
+
+fn ordered<'a>(
+    names: &'a [u64],
+    sizes: &'a [Vec<u64>; 2],
+    sort: Sort,
+    metric: Metric,
+) -> &'a [u64] {
+    match (sort, metric) {
+        (Sort::Name, _) => names,
+        (Sort::Size, Metric::Logical) => &sizes[0],
+        (Sort::Size, Metric::Allocated) => &sizes[1],
     }
 }
 

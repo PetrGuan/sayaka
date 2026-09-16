@@ -79,7 +79,10 @@ mutating feature, or defer C0 measurements until the end.
 2. **Native-client integration readiness (T6).** Establish a small read-only
    consumer path for scanning, progress, cancellation and result ownership before
    exposing effects. The [first C ABI](docs/BINDINGS.md) now covers that read-only
-   path with local C/Swift host evidence and Windows x64 type checks. Actual
+   path plus task-bound root/node/children queries, bounded pagination and shared
+   directory summaries/sorting, with local C/Swift host evidence and Windows x64
+   type checks. Directory browsing is an App-reusable priority over standalone
+   CLI distribution or further scan-duration tuning. Actual
    native App integration and Windows runtime remain separate gates; expand
    against real consumers rather than building a broad SDK in advance.
 3. **Directory effect decision gate (T8).** The

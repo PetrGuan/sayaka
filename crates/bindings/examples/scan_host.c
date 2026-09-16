@@ -13,6 +13,9 @@
 
 _Static_assert(sizeof(SayakaScanSnapshotV1) == 72, "snapshot ABI size");
 _Static_assert(offsetof(SayakaScanSnapshotV1, progress_sequence) == 24, "snapshot ABI offset");
+_Static_assert(sizeof(SayakaNodeRefV1) == 16, "node reference ABI size");
+_Static_assert(sizeof(SayakaPageRequestV1) == 24, "page request ABI size");
+_Static_assert(offsetof(SayakaPageRequestV1, offset) == 8, "page offset ABI offset");
 
 static void require(int condition, const char *message) {
     if (!condition) {
@@ -73,6 +76,11 @@ static void *concurrent_calls(void *context) {
         status = sayaka_scan_result_v1(handle, NULL, 0, &needed);
         require(status == SAYAKA_BUFFER_TOO_SMALL || status == SAYAKA_BUSY || status == SAYAKA_INVALID_HANDLE,
                 "concurrent result");
+        SayakaPageRequestV1 page = {1, sizeof(page), 0, 1, SAYAKA_SORT_NAME};
+        status = sayaka_scan_roots_v1(handle, &page, NULL, 0, &needed);
+        require(status == SAYAKA_BUFFER_TOO_SMALL || status == SAYAKA_BUSY ||
+                status == SAYAKA_INVALID_HANDLE || status == SAYAKA_QUERY_UNAVAILABLE,
+                "concurrent roots query");
     }
     return NULL;
 }
@@ -129,6 +137,32 @@ static void run(const uint8_t *root, size_t length, uint32_t encoding, int expec
     require(again == required, "result length changed");
     require(fwrite(json, 1, required, stdout) == required, "result stdout");
     free(json);
+    SayakaPageRequestV1 page = {1, sizeof(page), 0, 1, SAYAKA_SORT_NAME};
+    required = 99;
+    int32_t query_status = sayaka_scan_roots_v1(handles[0], &page, NULL, 0, &required);
+    if (expected_failure) {
+        require(query_status == SAYAKA_QUERY_UNAVAILABLE && required == 0,
+                "failed scan became empty query success");
+    } else {
+        require(query_status == SAYAKA_BUFFER_TOO_SMALL && required > 0 &&
+                required <= SAYAKA_MAX_QUERY_BYTES_V1, "roots length query");
+        require(sayaka_scan_roots_v1(handles[0], &page, &guard[1], 1, &again) ==
+                SAYAKA_BUFFER_TOO_SMALL, "undersized roots buffer accepted");
+        require(again == required && guard[0] == 0xA1 && guard[1] == 0xB2 && guard[2] == 0xC3,
+                "undersized roots buffer was written");
+        json = malloc(required);
+        require(json != NULL, "query allocation");
+        check(sayaka_scan_roots_v1(handles[0], &page, json, required, &again));
+        require(again == required, "roots payload length changed");
+        free(json);
+        uint64_t refreshed = start(root, length, encoding);
+        SayakaNodeRefV1 old_node = {handles[0], 1};
+        require(sayaka_scan_node_v1(refreshed, &old_node, NULL, 0, &again) ==
+                SAYAKA_INVALID_NODE && again == 0, "cross-task node accepted");
+        require(sayaka_scan_children_v1(refreshed, &old_node, &page, NULL, 0, &again) ==
+                SAYAKA_INVALID_NODE && again == 0, "cross-task parent accepted");
+        release(refreshed);
+    }
 #ifndef _WIN32
     pthread_t callers[4];
     for (size_t i = 0; i < 4; ++i)
@@ -142,6 +176,8 @@ static void run(const uint8_t *root, size_t length, uint32_t encoding, int expec
     require(sayaka_scan_poll_v1(handles[0], &snapshot) == SAYAKA_INVALID_HANDLE,
             "stale handle accepted");
     require(sayaka_scan_release_v1(handles[0]) == SAYAKA_INVALID_HANDLE, "double release accepted");
+    require(sayaka_scan_roots_v1(handles[0], &page, NULL, 0, &again) == SAYAKA_INVALID_HANDLE,
+            "query accepted a released task");
 }
 
 #ifdef _WIN32

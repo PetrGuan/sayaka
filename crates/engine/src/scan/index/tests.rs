@@ -238,6 +238,71 @@ fn sparse_zero_unknown_and_non_file_payloads_stay_distinct() {
         assert_eq!(tree.children(id), None);
     }
     assert_eq!(tree.entry(100).map(|entry| entry.id), None);
+    assert_eq!(tree.size(1, Metric::Logical), Some((1 << 30) + 7));
+    assert_eq!(tree.size(2, Metric::Logical), Some(0));
+    assert_eq!(tree.size(3, Metric::Allocated), Some(4096));
+    assert_eq!(tree.size(4, Metric::Logical), Some(0));
+    for id in [5, 7, 8, 100] {
+        assert_eq!(tree.size(id, Metric::Logical), None);
+    }
+    assert_eq!(tree.size(6, Metric::Allocated), None);
+}
+
+#[test]
+fn shared_orders_are_stable_bounded_views_not_recomputed_measurements() {
+    let entries = vec![
+        directory(1, ""),
+        directory(2, "empty"),
+        directory(3, "unknown"),
+        file(4, "unknown/file", 4, None, None),
+        file(5, "a", 5, Some(8), Some(512)),
+        file(6, "b", 6, Some(8), Some(4096)),
+        file(7, "c", 7, Some(0), Some(0)),
+        entry(8, "link", ResourceKind::Link),
+    ];
+    for offset in 0..entries.len() {
+        let mut shuffled = entries.clone();
+        shuffled.rotate_left(offset);
+        let tree = tree(shuffled);
+        assert_eq!(tree.size(3, Metric::Logical), None);
+        assert_eq!(
+            tree.ordered_children(1, Sort::Name, Metric::Logical)
+                .unwrap(),
+            &[5, 6, 7, 2, 8, 3]
+        );
+        assert_eq!(
+            tree.ordered_children(1, Sort::Size, Metric::Logical)
+                .unwrap(),
+            &[5, 6, 7, 2, 8, 3]
+        );
+        assert_eq!(
+            tree.ordered_children(1, Sort::Size, Metric::Allocated)
+                .unwrap(),
+            &[6, 5, 7, 2, 8, 3]
+        );
+        assert_eq!(
+            tree.ordered_children(2, Sort::Size, Metric::Logical),
+            Some([].as_slice())
+        );
+        assert_eq!(tree.ordered_children(5, Sort::Name, Metric::Logical), None);
+        assert_eq!(tree.ordered_children(99, Sort::Name, Metric::Logical), None);
+        assert_eq!(tree.ordered_roots(Sort::Size, Metric::Logical), &[1]);
+        let first = tree
+            .ordered_children(1, Sort::Size, Metric::Logical)
+            .unwrap();
+        assert_eq!(
+            first.as_ptr(),
+            tree.ordered_children(1, Sort::Size, Metric::Logical)
+                .unwrap()
+                .as_ptr()
+        );
+    }
+    let mut partial = report(vec![directory(1, ""), directory(2, "empty")]);
+    partial.complete = false;
+    partial.status = ScanStatus::Partial;
+    let tree = ScanTree::build(partial, &Cancellation::default()).unwrap();
+    assert_eq!(tree.size(1, Metric::Logical), None);
+    assert_eq!(tree.size(2, Metric::Allocated), None);
     assert_eq!(tree.parent(100), None);
 }
 

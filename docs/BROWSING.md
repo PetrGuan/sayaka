@@ -60,6 +60,13 @@ identity once, independently of M2's global `counted` attribution. A hardlink in
 two siblings contributes to both siblings but only once to their parent.
 **Sibling sizes are not additive.**
 
+Known-subtotal interpretation and cached name/logical-size/allocated-size
+ordering also live in `ScanTree`, shared by this CLI and the
+[read-only native directory queries](BINDINGS.md#directory-queries).
+Apps can page the existing observations without parsing the full scan JSON or
+reimplementing directory accounting. Native queries do not expose the terminal
+browser's selection/approval/viewer actions.
+
 Logical and allocated measurements remain separate. Unknown or conflicting
 measurements for an identity are not resolved by arbitrarily choosing an alias.
 Their corresponding unknown counts remain explicit. Directories, links and other
@@ -73,7 +80,9 @@ an atomic snapshot nor reclaimable/free-space measurements.
 Indexing uses transient small-to-large identity-set merging. Completed descendant
 sets are not retained for every ancestor. Construction has checked arithmetic,
 cancellation, duplicate/invalid-input rejection, a 100,000-entry limit and a
-32 MiB native-path budget. Existing scanner worker, queue, descriptor, event,
+32 MiB native-path budget. Two size-order ID lists are retained per directory;
+the native-path child order is reused rather than copied again for name sorting.
+Existing scanner worker, queue, descriptor, event,
 depth and timeout budgets remain in force.
 
 ## Selection to native approval
