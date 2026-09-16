@@ -358,7 +358,7 @@ pub struct ScanProgress {
     pub elapsed_ms: u64,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ScanReport {
     pub task_id: ScanTaskId,
     pub roots: Vec<PathBuf>,

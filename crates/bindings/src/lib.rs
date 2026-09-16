@@ -6,6 +6,10 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod browse;
+pub use browse::*;
+
+use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
 use sayaka_engine::scan::{ScanCode, ScanLimits, wire};
 use std::collections::HashMap;
@@ -30,6 +34,9 @@ pub const BUFFER_TOO_SMALL: i32 = 7;
 pub const BUSY: i32 = 8;
 pub const INTERNAL_ERROR: i32 = 9;
 pub const PANIC: i32 = 10;
+pub const INVALID_NODE: i32 = 11;
+pub const NOT_DIRECTORY: i32 = 12;
+pub const QUERY_UNAVAILABLE: i32 = 13;
 
 pub const UNIX_BYTES: u32 = 1;
 pub const WINDOWS_UTF16LE: u32 = 2;
@@ -70,6 +77,7 @@ pub struct SayakaScanSnapshotV1 {
 struct Job {
     task: ScanTask,
     result: Option<Result<Vec<u8>, i32>>,
+    tree: Option<Result<ScanTree, i32>>,
     closed: bool,
 }
 
@@ -192,6 +200,9 @@ pub extern "C" fn sayaka_status_message_v1(code: i32) -> *const c_char {
         BUSY => c"task or concurrent handle operation is busy; retain handle and retry later",
         INTERNAL_ERROR => c"internal task, state, or output failure",
         PANIC => c"Rust panic contained at the native boundary",
+        INVALID_NODE => c"unknown node or node reference belongs to another scan handle",
+        NOT_DIRECTORY => c"node is not an observed directory",
+        QUERY_UNAVAILABLE => c"scan failed; inspect the scan result for details",
         _ => c"unknown status code",
     }
     .as_ptr()
@@ -252,6 +263,7 @@ pub unsafe extern "C" fn sayaka_scan_start_v1(
             Arc::new(Mutex::new(Job {
                 task,
                 result: None,
+                tree: None,
                 closed: false,
             })),
         );
@@ -389,38 +401,52 @@ pub unsafe extern "C" fn sayaka_scan_result_v1(
     required: *mut usize,
 ) -> i32 {
     boundary(|| {
-        pointer(required)?;
-        // SAFETY: Caller-provided aligned output slot.
-        unsafe {
-            required.write(0);
-        }
-        if capacity > MAX_RESULT_BYTES {
-            return Err(INVALID_ARGUMENT);
-        }
-        if capacity > 0 {
-            pointer(buffer)?;
-        }
+        // SAFETY: The caller supplies non-overlapping writable output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_RESULT_BYTES)? };
         let slot = get(handle)?;
         let mut job = lock_job(&slot)?;
         ensure_open(&job)?;
         let bytes = result_bytes(&mut job)?;
-        // SAFETY: required remains writable for this call.
-        unsafe {
-            required.write(bytes.len());
-        }
-        if capacity < bytes.len() {
-            return Err(BUFFER_TOO_SMALL);
-        }
-        if !bytes.is_empty() {
-            pointer(buffer)?;
-            // SAFETY: The caller provides enough non-overlapping writable memory;
-            // the source is privately owned immutable Rust result storage.
-            unsafe {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
-            }
-        }
-        Ok(())
+        // SAFETY: Output was validated above; bytes are privately owned.
+        unsafe { copy_output(bytes, buffer, capacity, required) }
     })
+}
+
+unsafe fn prepare_output(
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+    limit: usize,
+) -> Result<(), i32> {
+    pointer(required)?;
+    // SAFETY: Caller-provided aligned output slot.
+    unsafe { required.write(0) };
+    if capacity > limit {
+        return Err(INVALID_ARGUMENT);
+    }
+    if capacity > 0 {
+        pointer(buffer)?;
+    }
+    Ok(())
+}
+
+unsafe fn copy_output(
+    bytes: &[u8],
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> Result<(), i32> {
+    // SAFETY: prepare_output validated the caller-provided output slot.
+    unsafe { required.write(bytes.len()) };
+    if capacity < bytes.len() {
+        return Err(BUFFER_TOO_SMALL);
+    }
+    if !bytes.is_empty() {
+        pointer(buffer)?;
+        // SAFETY: Caller provides sufficient non-overlapping writable storage.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len()) };
+    }
+    Ok(())
 }
 
 /// Cancels active work and returns BUSY until it exits; retry with the same

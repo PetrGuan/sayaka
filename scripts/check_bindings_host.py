@@ -55,6 +55,15 @@ def main():
             path.write_bytes(payload)
             registered.append((path, fingerprint(path)))
             truth[name] = hashlib.sha256(payload).hexdigest(), len(payload)
+        for name in ("a", "b", "empty"):
+            path = fixture / name
+            path.mkdir(mode=0o700)
+            directories.append((path, fingerprint(path)))
+        for name in ("a/shared", "b/shared"):
+            path = fixture / name
+            os.link(fixture / "newline\nfile", path)
+            registered.append((path, fingerprint(path)))
+            truth[name] = truth["newline\nfile"]
         include = REPO / "crates/bindings/include"
         c_host, swift_host = root / "c-host", root / "swift-host"
         run(["xcrun", "--sdk", "macosx", "clang", "-isysroot", sdk, "-std=c11", "-Wall", "-Wextra", "-Werror",
@@ -75,11 +84,12 @@ def main():
             if payload["schema_version"] != 1 or payload["status"] != "complete" or not payload["complete"]:
                 raise RuntimeError("host returned incomplete fixture report")
             totals = payload["totals"]
-            if (totals["unique_files"] != len(truth) or totals["regular_files"] != len(truth)
-                    or totals["directories"] != 1
-                    or totals["logical_bytes_known"] != sum(size for _, size in truth.values())
+            if (totals["unique_files"] != 64 or totals["regular_files"] != len(truth)
+                    or totals["directories"] != 4 or totals["duplicate_files"] != 2
+                    or totals["logical_bytes_known"] != sum(size for _, size in truth.values()) -
+                    2 * truth["newline\nfile"][1]
                     or payload["issues"] or payload["issues_omitted"] != 0
-                    or len(payload["entries"]) != len(truth) + 1):
+                    or len(payload["entries"]) != len(truth) + 4):
                 raise RuntimeError("native result counts/bytes differ from fixture truth")
             names = set()
             for entry in payload["entries"]:
@@ -88,13 +98,15 @@ def main():
                     raise RuntimeError("native path encoding mismatch")
                 path = Path(os.fsdecode(bytes.fromhex(native["raw"])))
                 if entry["kind"] == "file":
-                    if path.parent != fixture or path.name not in truth or path.name in names:
+                    name = str(path.relative_to(fixture))
+                    if name not in truth or name in names:
                         raise RuntimeError("unexpected native path")
                     info = path.lstat()
                     if entry["identity"]["device"] != info.st_dev or entry["identity"]["inode"] != info.st_ino:
                         raise RuntimeError("native result identity mismatch")
-                    names.add(path.name)
-                elif entry["kind"] != "directory" or path != fixture:
+                    names.add(name)
+                elif entry["kind"] != "directory" or path not in [
+                        fixture, fixture / "a", fixture / "b", fixture / "empty"]:
                     raise RuntimeError("unexpected directory or special entry")
             if names != set(truth):
                 raise RuntimeError("native result omitted fixture entries")
@@ -117,8 +129,9 @@ def main():
             path.rmdir()
         root.rmdir()
         passed = True
-        print("C and Swift hosts passed: 64 files, exact bytes/identities/native paths; "
-              "error/capacity/stale-handle/cancel/release controls; owned fixture cleaned.")
+        print("C and Swift hosts passed: 64 unique files, 2 aliases, 4 directories; "
+              "exact bytes/identities/native paths, roots/detail/paging and both size sorts; "
+              "error/capacity/stale-task/cancel/release controls; owned fixture cleaned.")
     finally:
         if not passed:
             print(f"Failed host evidence retained without cleanup: {root}", file=sys.stderr)

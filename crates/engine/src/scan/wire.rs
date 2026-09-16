@@ -12,7 +12,8 @@ use serde::{Serialize, Serializer};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-struct NativePath<'a>(&'a Path);
+/// Lossless native-path JSON shared by full reports and bounded host queries.
+pub struct NativePath<'a>(pub &'a Path);
 
 impl Serialize for NativePath<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
