@@ -54,6 +54,11 @@ Each native candidate owns its descriptors and is private to the session.
 The existing `sayaka-platform-macos` crate owns FFI and thread I/O policy;
 the engine remains `forbid(unsafe_code)`.
 
+The [directory-action foundation](DIRECTORY_ACTIONS.md) is a separate read-only
+assessment and unapproved contract discussion. It always remains ModelOnly,
+cannot enter this executor as a plan, and does not lift the directory exclusion
+above. Stable directory identity does not imply stable descendant contents.
+
 ## CLI
 
 ```sh

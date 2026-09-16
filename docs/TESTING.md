@@ -178,6 +178,75 @@ native exclusive rename semantics. The test fixture root is created under
 `<repo>/crates/engine/target/native-test-fixtures` (non-hidden project-owned
 location on the same approved volume), not system temporary directories.
 
+### Installer CLI owned-fixture native acceptance
+
+The separate ignored platform test
+`trash::native::tests::installer_roundtrip::real_installer_cli_owned_fixture_round_trips`
+is an explicit native-effects gate, never a default test or permission to run
+all ignored cases. It requires a previously built/reviewed `target/release/sayaka`
+and that exact artifact's SHA-256:
+
+```sh
+SAYAKA_INSTALLER_TRASH_TEST=1 \
+SAYAKA_INSTALLER_TRASH_TEST_QUIESCENT=1 \
+SAYAKA_INSTALLER_CLI_SHA256='<reviewed-release-sha256>' \
+cargo test -p sayaka-platform-macos --lib --locked \
+  trash::native::tests::installer_roundtrip::real_installer_cli_owned_fixture_round_trips \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+Only use these flags after current explicit authorization and externally
+confirmed absence of competing Trash/fixture namespace operations. Do not
+automatically replace a failed artifact hash with a newly computed one.
+The native existing Trash directory must already be accessible and pass the
+retained-directory/private-mode/non-granting-ACL/same-device checks; the test
+does not guess, create or repair it.
+
+The frozen scope is one explicit-selection synthetic UDIF file, followed by
+two fresh synthetic UDIF/flat-PKG files selected numerically through the actual
+CLI. A bounded PTY driver observes the sealed-plan/exact-count prompt before
+sending the authorized phrase. Each case has dedicated HOME/TMP/state and an
+excluded sentinel. At most three installer files enter Trash; there is no retry.
+The test neither mounts images nor runs package payloads, and its structural
+fixtures are not assertions of mountability/installability/trust.
+The supervisor uses a private socket to receive command status from a broker
+that stays alive until the owned group is closed. It observes unexpected leader
+exit without reaping (`WNOWAIT`) and never signals a reused/reaped group id.
+Keeping a live broker avoids treating Darwin's zombie-only group signalling
+failure as success or losing supervision of failed-driver descendants.
+
+Receipts must contain precisely the registered successful identities, no
+pending/unknown outcomes, and exact native paths. Only returned locations whose
+parent matches the native Trash directory and whose identity/ACL/content match
+retained original descriptors can be restored. Each restoration first proves
+EEXIST against a newly created owned blocker without modifying either object,
+relocates the blocker exclusively within the fixture, and restores the original
+exclusively. It never enumerates Trash or identifies ownership by filename.
+As in the production verifier, post-move ctime is anchored to the observed
+location before returning to strict validation; identity, stable metadata,
+ACLs and complete synthetic contents must still match.
+
+Source/receipt/restore observations and hashes are retained privately under a
+unique ignored `target/installer-evidence-*` directory. Any unexpected result
+preserves the fixture and logs; a timeout after confirmation may be ambiguous
+and must not trigger a rerun or guessed cleanup. After complete verification,
+only registered fixture identities and bounded owned auxiliary entries are
+cleaned. The final pathname race remains; this is not atomic inode-bound
+recovery or a guarantee for arbitrary storage, files or accounts.
+
+No-effect helper controls can be run independently:
+
+```sh
+cargo test -p sayaka-platform-macos --lib --locked installer_roundtrip \
+  -- --skip real_installer_cli_owned_fixture_round_trips
+```
+
+An implemented test command is not evidence that its native gate has run;
+record actual outcomes separately from default helper/fixture checks.
+The [installer native acceptance record](INSTALLER_PREVIEW.md#recorded-native-acceptance)
+documents one completed local three-file run and an earlier preserved
+zero-effect tool failure; it does not authorize future runs.
+
 | Area | Cases that cannot be omitted |
 | --- | --- |
 | Selection/policy | Unknown IDs, expired plans, version changes, excluded/protected roots, parent/child overlaps, malformed approval |

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "evidence_id": "installer-cli-native-roundtrip-v1",
+  "class": "native_acceptance_not_competitive_benchmark",
+  "product_source_commit": "6a499555f66923b55ac7313d32ac9c562a15fa05",
+  "cli_sha256": "f4e8a28c1b6d7055b48957e0ce1dee278520bb891fc8d96526d8336c04adbba8",
+  "test_source_sha256": "761bf992564d5ceaad2a1ee8ea71c87993339dfc6f04f4b075bb0f173bea69cf",
+  "test_runner_sha256": "de3336becd6f1c9006c2fcc604f9cd52bf9204bff0e80b02cebe1387aee96f7e",
+  "private_event_log_sha256": "96cf595fa2a8ac1b24877f63f42ae534a94f8f2335b6d42f57f0fe12b35967d0",
+  "platform": {
+    "os": "macos",
+    "architecture": "aarch64",
+    "filesystem": "APFS",
+    "volume_scope": "local_internal_nonremovable"
+  },
+  "authorization": {
+    "owned_fixture_only": true,
+    "quiescence": "operator_confirmed",
+    "renewed_after_zero_effect_tool_failure": true,
+    "maximum_native_moves": 3
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "status": "stopped_before_effect",
+      "failure": "darwin_zombie_group_signal_eperm_after_read_only_preview",
+      "mutating_cli_intents": 0,
+      "native_moves": 0,
+      "source_identity_and_content_unchanged": true,
+      "journal_empty": true,
+      "failed_fixture_and_private_evidence_retained": true
+    },
+    {
+      "attempt": 2,
+      "status": "completed",
+      "mutating_cli_intents": 2,
+      "native_moves": 3,
+      "restored": 3,
+      "exclusive_restore_conflicts_verified": 3,
+      "successful_run_fixture_cleanup_verified": true
+    }
+  ],
+  "cases": [
+    {
+      "case": "single",
+      "selection_mode": "explicit",
+      "formats": ["udif_dmg"],
+      "native_moved": 1,
+      "logical_bytes": 2048,
+      "receipt_items_succeeded": 1,
+      "receipt_sha256": "8a8654cc3c93b9506aefed6cfbf89a2247e9dd6dc161857c102b78348471a753",
+      "original_identity_acl_content_verified": true,
+      "exclusive_restore_conflicts_verified": 1,
+      "restored": 1,
+      "sentinel_unchanged": true
+    },
+    {
+      "case": "batch",
+      "selection_mode": "numeric",
+      "formats": ["udif_dmg", "flat_pkg_xar"],
+      "native_moved": 2,
+      "logical_bytes": 2146,
+      "receipt_items_succeeded": 2,
+      "receipt_sha256": "9f38d671450cc60a7a12c63d9d58eb26c721468400fc93526993281e2c61cede",
+      "original_identity_acl_content_verified": true,
+      "exclusive_restore_conflicts_verified": 2,
+      "restored": 2,
+      "sentinel_unchanged": true
+    }
+  ],
+  "totals": {
+    "native_moved": 3,
+    "restored": 3,
+    "logical_bytes": 4194,
+    "freed_space_measured": false,
+    "exclusive_restore_conflicts_verified": 3,
+    "pending_receipt_snapshots": 0,
+    "failed_or_unknown_receipt_items": 0
+  },
+  "boundaries": {
+    "fixtures_are_synthetic_structure_only": true,
+    "operations_limited_to_registered_fixtures": true,
+    "trash_enumerated": false,
+    "whole_trash_contents_audited": false,
+    "known_restored_trash_pathnames_absent": true,
+    "raw_host_paths_and_receipts_kept_private": true,
+    "residual_pathname_race": true,
+    "general_restore_guarantee": false,
+    "mount_or_payload_execution": false,
+    "windows_acceptance": false,
+    "full_installer_parity": false,
+    "competitive_performance_claim": false
+  }
+}

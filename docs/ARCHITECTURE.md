@@ -5,6 +5,12 @@ M3 adds explicit-file native Trash sessions and durable local records, described
 in [EXECUTION.md](EXECUTION.md). Full TUI workflows and bindings remain planned.
 The M1 APIs below remain model-only; native execution is a separate session.
 
+`scan::directory_review` adds a borrowed, task-bound assessment over `ScanTree`,
+not a new plan or executor. It exposes observed blockers and unresolved native
+gates while always remaining ModelOnly. See
+[directory boundaries and the owned-fixture counterexample](DIRECTORY_ACTIONS.md)
+before proposing any directory action.
+
 ## Implemented M1 contract
 
 M1 implements `model`, `plan`, and `receipt` using the standard library. M2 adds

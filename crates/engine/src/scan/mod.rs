@@ -4,6 +4,7 @@
 //! snapshot or authorization to perform maintenance.
 
 pub mod diagnostics;
+pub mod directory_review;
 pub mod index;
 use diagnostics::ScanDiagnostics;
 
