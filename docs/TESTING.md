@@ -63,6 +63,24 @@ native NTFS and CLI evidence, with full acceptance still incomplete; see
 [WINDOWS.md](WINDOWS.md).
 See [SCANNING.md](SCANNING.md) for the precise scope and missing environments.
 
+The installer binding slice adds owned C/Swift discovery and read-only selection
+checks to `scripts/check_bindings_host.py`. Focused selection coverage in the
+existing engine integration target does not call approve or execute:
+
+```sh
+cargo test -p sayaka-bindings --locked
+cargo test -p sayaka-engine --test installer_execution --locked readonly_selection
+cargo test -p sayaka-engine --test installer_preview_native --locked
+cargo test -p sayaka-cli --test scan_cli --locked installer_
+cargo build -p sayaka-bindings --locked
+python3 scripts/check_bindings_host.py
+```
+
+These fixtures cover recognised/corrupt candidates, paging, mixed task capacity,
+source/selection lifetimes, changed target/root/ancestor evidence, whole-batch
+refusal, cancellation and preservation of source files/state. They do not
+certify Windows installer inspection or execute a native Trash round trip.
+
 Existing workspace commands:
 
 ```sh

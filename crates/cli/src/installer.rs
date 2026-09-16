@@ -2,15 +2,18 @@
 
 use crate::{human, output, trash};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
+use sayaka_engine::installer_preview::wire::{
+    family, native_path as write_native_path, preview_json, status,
+};
 use sayaka_engine::installer_preview::{
-    CandidateNameKind, FormatFamily, FormatStatus, INSTALLER_KIND,
-    INSTALLER_PREVIEW_SCHEMA_VERSION, INSTALLER_TOTAL_BUDGET, InstallerIssueCode,
-    InstallerPreviewLimits, InstallerPreviewOptions, InstallerStatus, OwnerScope,
-    preview_installers,
+    CandidateNameKind, INSTALLER_KIND, INSTALLER_PREVIEW_SCHEMA_VERSION,
+};
+use sayaka_engine::installer_preview::{
+    INSTALLER_TOTAL_BUDGET, InstallerIssueCode, InstallerPreviewLimits, InstallerPreviewOptions,
+    InstallerStatus, preview_installers,
 };
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::scan::{ScanCode, ScanError, display_path};
-use std::fmt::Write as _;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -385,64 +388,6 @@ fn write_preview_human(
     Ok(())
 }
 
-fn family(value: FormatFamily) -> &'static str {
-    match value {
-        FormatFamily::UdifDmg => "udif_dmg",
-        FormatFamily::FlatPkgXar => "flat_pkg_xar",
-        FormatFamily::Xar => "xar",
-        FormatFamily::Unknown => "unknown",
-    }
-}
-
-fn status(value: FormatStatus) -> &'static str {
-    match value {
-        FormatStatus::Recognized => "recognized",
-        FormatStatus::Unsupported => "unsupported",
-        FormatStatus::Corrupt => "corrupt",
-        FormatStatus::Changed => "changed",
-        FormatStatus::PermissionDenied => "permission_denied",
-        FormatStatus::Partial => "partial",
-        FormatStatus::Cancelled => "cancelled",
-        FormatStatus::Unknown => "unknown",
-    }
-}
-
-fn owner_scope(value: OwnerScope) -> &'static str {
-    match value {
-        OwnerScope::CurrentUser => "current_user",
-        OwnerScope::OtherUser => "other_user",
-        OwnerScope::Unknown => "unknown",
-    }
-}
-
-fn write_native_path(path: &Path) -> serde_json::Value {
-    let mut raw = String::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        for byte in path.as_os_str().as_bytes() {
-            write!(&mut raw, "{byte:02x}").expect("hex write");
-        }
-        serde_json::json!({
-            "display": display_path(path),
-            "encoding": "unix_bytes_hex",
-            "raw": raw,
-        })
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        for unit in path.as_os_str().encode_wide() {
-            write!(&mut raw, "{unit:04x}").expect("hex write");
-        }
-        serde_json::json!({
-            "display": display_path(path),
-            "encoding": "windows_utf16_hex",
-            "raw": raw,
-        })
-    }
-}
-
 fn write_preview_json(
     out: &mut impl Write,
     preview: &sayaka_engine::installer_preview::InstallerPreview,
@@ -450,80 +395,6 @@ fn write_preview_json(
     serde_json::to_writer(&mut *out, &preview_json(preview))?;
     writeln!(out)?;
     out.flush()
-}
-
-fn preview_json(preview: &sayaka_engine::installer_preview::InstallerPreview) -> serde_json::Value {
-    serde_json::json!({
-        "schema_version": INSTALLER_PREVIEW_SCHEMA_VERSION,
-        "kind": INSTALLER_KIND,
-        "platform": preview.platform,
-        "status": preview.status.as_str(),
-        "complete": preview.complete,
-        "effects_performed": preview.effects_performed,
-        "root": write_native_path(&preview.root),
-        "filters": {
-            "text": preview.filter,
-            "excludes": preview.excludes.iter().map(|path| write_native_path(path)).collect::<Vec<_>>(),
-        },
-        "scan_task_id": preview.scan_task_id,
-        "counts": {
-            "scan_entries": preview.counts.scan_entries,
-            "named_candidates": preview.counts.named_candidates,
-            "inspected_candidates": preview.counts.inspected_candidates,
-            "recognized": preview.counts.recognized,
-            "unsupported": preview.counts.unsupported,
-            "corrupt": preview.counts.corrupt,
-            "changed": preview.counts.changed,
-            "permission_denied": preview.counts.permission_denied,
-            "aliases": preview.counts.aliases,
-            "scan_issues": preview.counts.scan_issues,
-            "probe_issues": preview.counts.probe_issues,
-        },
-        "bytes": {
-            "matched_logical_bytes": preview.bytes.matched_logical_bytes,
-            "matched_logical_unknown_files": preview.bytes.matched_logical_unknown_files,
-            "matched_allocated_bytes": preview.bytes.matched_allocated_bytes,
-            "matched_allocated_unknown_files": preview.bytes.matched_allocated_unknown_files,
-            "matched_sizes_are_reclaimable": false,
-        },
-        "candidates": preview.candidates.iter().map(|candidate| serde_json::json!({
-            "path": write_native_path(&candidate.path),
-            "identity": candidate.identity,
-            "owner_scope": owner_scope(candidate.owner_scope),
-            "logical_bytes": candidate.logical_bytes,
-            "allocated_bytes": candidate.allocated_bytes,
-            "counted": candidate.counted,
-            "name_kind": match candidate.name_kind { CandidateNameKind::Dmg => "dmg", CandidateNameKind::Pkg => "pkg" },
-            "format": {
-                "family": family(candidate.format.family),
-                "status": status(candidate.format.status),
-                "detection_level": candidate.format.detection_level,
-                "evidence": candidate.format.evidence,
-                "limitations": candidate.format.limitations,
-            },
-            "provenance": { "where_froms": "not_read", "quarantine": "not_read" },
-        })).collect::<Vec<_>>(),
-        "scan_issues": preview.scan_issues.iter().map(|issue| serde_json::json!({
-            "path": issue.path.as_deref().map(write_native_path),
-            "code": issue.code.as_str(),
-            "message": issue.message,
-            "os_code": issue.os_code,
-        })).collect::<Vec<_>>(),
-        "issues": preview.issues.iter().map(|issue| serde_json::json!({
-            "path": issue.path.as_deref().map(write_native_path),
-            "code": issue.code.as_str(),
-            "message": issue.message,
-            "os_code": issue.os_code,
-        })).collect::<Vec<_>>(),
-        "issues_omitted": preview.issues_omitted,
-        "metrics": {
-            "elapsed_ms": preview.metrics.elapsed_ms,
-            "probe_elapsed_ms": preview.metrics.probe_elapsed_ms,
-            "candidate_io_bytes": preview.metrics.candidate_io_bytes,
-            "expanded_bytes": preview.metrics.expanded_bytes,
-            "retained_xml_name_bytes": preview.metrics.retained_name_bytes,
-        },
-    })
 }
 
 fn run_selection(

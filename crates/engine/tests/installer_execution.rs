@@ -4,7 +4,8 @@
 
 use sayaka_engine::execute::InstallerSession;
 use sayaka_engine::installer_preview::{
-    FormatStatus, InstallerPreview, InstallerPreviewOptions, InstallerStatus, preview_installers,
+    FormatStatus, InstallerPreview, InstallerPreviewOptions, InstallerStatus, SelectionCheckStatus,
+    preview_installers, preview_selection,
 };
 use sayaka_engine::journal::{ItemState, Store};
 use sayaka_engine::model::Cancellation;
@@ -87,6 +88,107 @@ fn pkg(path: &Path) {
     bytes.extend(toc);
     fs::write(path, bytes).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+#[test]
+fn readonly_selection_returns_exact_observations_without_plan_or_state() {
+    let fixture = Fixture::new();
+    dmg(&fixture.root.join("image.dmg"));
+    pkg(&fixture.root.join("package.pkg"));
+    let preview = fixture.preview(vec![], ScanLimits::default());
+    let indices: Vec<_> = (0..preview.candidates.len()).collect();
+    let checked = preview_selection(&preview, &indices, &Cancellation::default()).unwrap();
+    assert_eq!(checked.status, SelectionCheckStatus::Checked);
+    assert_eq!(checked.selected.len(), 2);
+    assert!(checked.issues.is_empty());
+    let json = sayaka_engine::installer_preview::wire::selection_json(&checked);
+    assert_eq!(json["effects_performed"], false);
+    assert_eq!(json["execution_authority"], false);
+    assert_eq!(json["snapshot_only"], true);
+    assert!(json.get("plan").is_none() && json.get("approval").is_none());
+    assert!(!fixture.owned.path().join("journal").exists());
+    assert!(fixture.root.join("image.dmg").exists());
+    assert!(fixture.root.join("package.pkg").exists());
+    for invalid in [vec![], vec![0, 0], vec![usize::MAX], vec![0; 33]] {
+        assert!(preview_selection(&preview, &invalid, &Cancellation::default()).is_err());
+    }
+    let cancellation = Cancellation::default();
+    cancellation.cancel();
+    let cancelled = preview_selection(&preview, &indices, &cancellation).unwrap();
+    assert_eq!(cancelled.status, SelectionCheckStatus::Cancelled);
+    assert_eq!(cancelled.selected.len(), 2);
+}
+
+#[test]
+fn readonly_selection_refuses_changed_target_root_and_ancestor() {
+    for change in ["content", "target", "root", "ancestor", "mode", "partial"] {
+        let fixture = Fixture::new();
+        let nested = fixture.root.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let image = nested.join("image.dmg");
+        dmg(&image);
+        let mut preview = fixture.preview(vec![], ScanLimits::default());
+        match change {
+            "content" => {
+                let mut bytes = fs::read(&image).unwrap();
+                bytes[0] ^= 1;
+                fs::write(&image, bytes).unwrap();
+            }
+            "target" => {
+                fs::rename(&image, nested.join("old.dmg")).unwrap();
+                dmg(&image);
+            }
+            "root" => {
+                fs::rename(&fixture.root, fixture.owned.path().join("old-downloads")).unwrap();
+                fs::create_dir(&fixture.root).unwrap();
+                fs::create_dir(&nested).unwrap();
+                dmg(&image);
+            }
+            "ancestor" => {
+                let old = fixture.root.join("old-nested");
+                fs::rename(&nested, &old).unwrap();
+                fs::create_dir(&nested).unwrap();
+                fs::rename(old.join("image.dmg"), &image).unwrap();
+            }
+            "mode" => fs::set_permissions(&image, fs::Permissions::from_mode(0o640)).unwrap(),
+            "partial" => {
+                preview.complete = false;
+                preview.status = InstallerStatus::Partial;
+            }
+            _ => unreachable!(),
+        }
+        let refused = preview_selection(&preview, &[0], &Cancellation::default()).unwrap();
+        assert_eq!(refused.status, SelectionCheckStatus::Refused, "{change}");
+        assert!(!refused.issues.is_empty(), "{change}");
+        assert_eq!(refused.selected.len(), 1);
+        assert!(image.exists());
+        assert!(!fixture.owned.path().join("journal").exists());
+    }
+}
+
+#[test]
+fn readonly_selection_keeps_invalid_members_and_unknown_measurements_visible() {
+    let fixture = Fixture::new();
+    dmg(&fixture.root.join("good.dmg"));
+    fs::write(fixture.root.join("bad.pkg"), b"not a package").unwrap();
+    let preview = fixture.preview(vec![], ScanLimits::default());
+    let refused = preview_selection(&preview, &[0, 1], &Cancellation::default()).unwrap();
+    assert_eq!(refused.status, SelectionCheckStatus::Refused);
+    assert_eq!(refused.selected.len(), 2);
+    assert!(
+        refused
+            .issues
+            .iter()
+            .any(|issue| issue.code == "format_not_recognized")
+    );
+    let mut unknown = preview.clone();
+    unknown.candidates[0].logical_bytes = None;
+    let result = preview_selection(&unknown, &[0], &Cancellation::default()).unwrap();
+    assert_eq!(result.status, SelectionCheckStatus::Refused);
+    assert_eq!(result.selected[0].logical_bytes, None);
+    assert_eq!(result.bytes.matched_logical_unknown_files, 1);
+    assert_eq!(result.bytes.matched_logical_bytes, 0);
+    assert!(!fixture.owned.path().join("journal").exists());
 }
 
 #[test]

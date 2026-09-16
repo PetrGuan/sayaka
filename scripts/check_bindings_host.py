@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import zlib
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -64,22 +65,46 @@ def main():
             os.link(fixture / "newline\nfile", path)
             registered.append((path, fingerprint(path)))
             truth[name] = truth["newline\nfile"]
+        installer_root = root / "installer-fixture"
+        installer_root.mkdir(mode=0o700)
+        directories.append((installer_root, fingerprint(installer_root)))
+        dmg = bytearray(2048)
+        dmg[1536:1540] = b"koly"
+        dmg[1540:1544] = (4).to_bytes(4, "big")
+        dmg[1544:1548] = (512).to_bytes(4, "big")
+        dmg[1536 + 0xd8:1536 + 0xe0] = (128).to_bytes(8, "big")
+        dmg[1536 + 0xe0:1536 + 0xe8] = (64).to_bytes(8, "big")
+        xml = b"<xar><toc><file><name>PackageInfo</name><type>file</type></file></toc></xar>"
+        compressed = zlib.compress(xml)
+        pkg = (b"xar!" + (28).to_bytes(2, "big") + (1).to_bytes(2, "big") +
+               len(compressed).to_bytes(8, "big") + len(xml).to_bytes(8, "big") +
+               (0).to_bytes(4, "big") + compressed)
+        installer_payloads = {"one.dmg": bytes(dmg), "two.pkg": pkg,
+                              "unknown.pkg": b"not a package", "sentinel.txt": b"not a target"}
+        for name, payload in installer_payloads.items():
+            path = installer_root / name
+            path.write_bytes(payload)
+            path.chmod(0o600)
+            registered.append((path, fingerprint(path)))
         include = REPO / "crates/bindings/include"
-        c_host, swift_host = root / "c-host", root / "swift-host"
-        run(["xcrun", "--sdk", "macosx", "clang", "-isysroot", sdk, "-std=c11", "-Wall", "-Wextra", "-Werror",
-             "-I", str(include), str(REPO / "crates/bindings/examples/scan_host.c"),
-             "-L", str(library.parent), "-lsayaka_bindings",
-             f"-Wl,-rpath,{library.parent}", "-o", str(c_host)], root)
-        registered.append((c_host, fingerprint(c_host)))
-        run(["xcrun", "--sdk", "macosx", "swiftc", "-sdk", sdk, "-import-objc-header", str(include / "sayaka.h"),
-             str(REPO / "crates/bindings/examples/scan_host.swift"),
-             "-L", str(library.parent), "-lsayaka_bindings",
-             "-Xlinker", "-rpath", "-Xlinker", str(library.parent), "-o", str(swift_host)], root)
-        registered.append((swift_host, fingerprint(swift_host)))
+        hosts = {}
+        for kind in ("scan", "installer"):
+            c_host, swift_host = root / f"{kind}-c-host", root / f"{kind}-swift-host"
+            run(["xcrun", "--sdk", "macosx", "clang", "-isysroot", sdk, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                 "-I", str(include), str(REPO / f"crates/bindings/examples/{kind}_host.c"),
+                 "-L", str(library.parent), "-lsayaka_bindings",
+                 f"-Wl,-rpath,{library.parent}", "-o", str(c_host)], root)
+            registered.append((c_host, fingerprint(c_host)))
+            run(["xcrun", "--sdk", "macosx", "swiftc", "-sdk", sdk, "-import-objc-header", str(include / "sayaka.h"),
+                 str(REPO / f"crates/bindings/examples/{kind}_host.swift"),
+                 "-L", str(library.parent), "-lsayaka_bindings",
+                 "-Xlinker", "-rpath", "-Xlinker", str(library.parent), "-o", str(swift_host)], root)
+            registered.append((swift_host, fingerprint(swift_host)))
+            hosts[kind] = (c_host, swift_host)
         env = {"HOME": str(home), "TMPDIR": str(tmp), "XDG_STATE_HOME": str(home / "state"),
                "XDG_CONFIG_HOME": str(home / "config"), "XDG_CACHE_HOME": str(home / "cache"),
                "PATH": "/usr/bin:/bin"}
-        for host in (c_host, swift_host):
+        for host in hosts["scan"]:
             payload = json.loads(run([str(host), str(fixture)], root, env))
             if payload["schema_version"] != 1 or payload["status"] != "complete" or not payload["complete"]:
                 raise RuntimeError("host returned incomplete fixture report")
@@ -110,15 +135,49 @@ def main():
                     raise RuntimeError("unexpected directory or special entry")
             if names != set(truth):
                 raise RuntimeError("native result omitted fixture entries")
-        failed = json.loads(run([str(c_host), str(fixture / "missing"), "expect-failure"], root, env))
+        failed = json.loads(run([str(hosts["scan"][0]), str(fixture / "missing"), "expect-failure"], root, env))
         if failed["status"] != "failed" or failed["complete"]:
             raise RuntimeError("missing root became empty success")
+        for index, host in enumerate(hosts["installer"]):
+            payload = json.loads(run([str(host), str(installer_root)], root, env))
+            discovery = payload["discovery"]["data"]
+            selection = payload["selection"]["data"]
+            if (discovery["kind"] != "installer_preview" or discovery["status"] != "complete" or
+                    not discovery["complete"] or discovery["effects_performed"] or
+                    discovery["counts"]["named_candidates"] != 3 or
+                    discovery["counts"]["recognized"] != 2 or
+                    discovery["counts"]["corrupt"] != 1 or discovery["issues"] or discovery["scan_issues"]):
+                raise RuntimeError("installer discovery differs from fixture truth")
+            candidates = {Path(os.fsdecode(bytes.fromhex(item["path"]["raw"]))).name: item
+                          for item in discovery["candidates"]}
+            if set(candidates) != {"one.dmg", "two.pkg", "unknown.pkg"}:
+                raise RuntimeError("installer candidate set differs")
+            for name, candidate in candidates.items():
+                if (candidate["path"]["encoding"] != "unix_bytes_hex" or
+                        bytes.fromhex(candidate["path"]["raw"]) != os.fsencode(installer_root / name) or
+                        candidate["logical_bytes"] != len(installer_payloads[name])):
+                    raise RuntimeError("installer native path or bytes differ")
+            expected_selected = {"one.dmg"} if index == 0 else {"one.dmg", "two.pkg"}
+            selected = {Path(os.fsdecode(bytes.fromhex(item["path"]["raw"]))).name
+                        for item in selection["selected"]}
+            if (selection["status"] != "checked" or not selection["batch_checks_passed"] or
+                    selection["effects_performed"] or selection["execution_authority"] or
+                    not selection["snapshot_only"] or selection["issues"] or
+                    "plan" in selection or "approval" in selection or selected != expected_selected or
+                    selection["bytes"]["matched_logical_bytes"] !=
+                    sum(len(installer_payloads[name]) for name in expected_selected)):
+                raise RuntimeError("read-only selection changed scope or produced authority")
+            if payload["selection"]["source_task_handle"] != payload["discovery"]["task_handle"]:
+                raise RuntimeError("selection lost source-task binding")
         for path, expected in registered:
             if fingerprint(path) != expected:
                 raise RuntimeError("registered fixture identity changed")
         for name, (digest, _) in truth.items():
             if hashlib.sha256((fixture / name).read_bytes()).hexdigest() != digest:
                 raise RuntimeError("fixture content changed")
+        for name, expected in installer_payloads.items():
+            if (installer_root / name).read_bytes() != expected:
+                raise RuntimeError("read-only installer host changed fixture contents")
         if fingerprint(root) != identity or any(fingerprint(path) != original for path, original in directories):
             raise RuntimeError("fixture ancestry changed")
         if list(home.iterdir()) or list(tmp.iterdir()):
@@ -131,7 +190,8 @@ def main():
         passed = True
         print("C and Swift hosts passed: 64 unique files, 2 aliases, 4 directories; "
               "exact bytes/identities/native paths, roots/detail/paging and both size sorts; "
-              "error/capacity/stale-task/cancel/release controls; owned fixture cleaned.")
+              "installer DMG/PKG/corrupt discovery and read-only explicit-selection checks; "
+              "error/shared-capacity/stale-task/cancel/release controls; owned fixtures cleaned.")
     finally:
         if not passed:
             print(f"Failed host evidence retained without cleanup: {root}", file=sys.stderr)

@@ -20,6 +20,8 @@ extern "C" {
 #define SAYAKA_MAX_RESULT_BYTES_V1 67108864u
 #define SAYAKA_MAX_QUERY_BYTES_V1 1048576u
 #define SAYAKA_MAX_PAGE_NODES_V1 256u
+#define SAYAKA_MAX_INSTALLER_CANDIDATES_V1 512u
+#define SAYAKA_MAX_INSTALLER_SELECTIONS_V1 32u
 #define SAYAKA_PATH_UNIX_BYTES_V1 1u
 #define SAYAKA_PATH_WINDOWS_UTF16LE_V1 2u
 
@@ -37,7 +39,8 @@ enum SayakaStatusV1 {
     SAYAKA_PANIC = 10,
     SAYAKA_INVALID_NODE = 11,
     SAYAKA_NOT_DIRECTORY = 12,
-    SAYAKA_QUERY_UNAVAILABLE = 13
+    SAYAKA_QUERY_UNAVAILABLE = 13,
+    SAYAKA_INVALID_CANDIDATE = 14
 };
 
 enum SayakaScanStateV1 {
@@ -95,6 +98,44 @@ typedef struct SayakaPageRequestV1 {
     uint32_t sort;
 } SayakaPageRequestV1;
 
+typedef struct SayakaInstallerRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    SayakaPathV1 root; /* One explicit native absolute root; input copied. */
+} SayakaInstallerRequestV1;
+
+typedef struct SayakaInstallerCandidateRefV1 {
+    uint64_t task_handle; /* Discovery handle, never a scan or selection handle. */
+    uint64_t candidate_id;
+} SayakaInstallerCandidateRefV1;
+
+enum SayakaInstallerTaskKindV1 {
+    SAYAKA_INSTALLER_DISCOVERY = 1,
+    SAYAKA_INSTALLER_SELECTION = 2
+};
+
+enum SayakaInstallerPhaseV1 {
+    SAYAKA_INSTALLER_SCANNING = 1,
+    SAYAKA_INSTALLER_INSPECTING = 2,
+    SAYAKA_INSTALLER_CHECKING_SELECTION = 3
+};
+
+typedef struct SayakaInstallerSnapshotV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t kind;
+    uint32_t state; /* SayakaScanStateV1; selection PARTIAL means a refused batch. */
+    uint32_t cancellation_requested;
+    uint32_t has_progress;
+    uint32_t phase;
+    uint32_t reserved;
+    uint64_t progress_sequence;
+    uint64_t observed_entries;
+    uint64_t total_candidates; /* Meaningful after scanning, not a scan estimate. */
+    uint64_t inspected_candidates; /* Selection: full checked batch count, else 0. */
+    uint64_t elapsed_ms;
+} SayakaInstallerSnapshotV1;
+
 /* Caller pointers must be valid, correctly aligned and non-overlapping.
  * Null/alignment checks cannot validate arbitrary foreign memory.
  * No Rust allocation is returned for the caller to free. */
@@ -135,6 +176,36 @@ SAYAKA_API int32_t sayaka_scan_children_v1(uint64_t handle, const SayakaNodeRefV
  * Do not unload while any handle is live or any host API call is in flight.
  * Cancellation cannot forcibly interrupt a blocked native OS call. */
 SAYAKA_API int32_t sayaka_scan_release_v1(uint64_t handle);
+
+/* Installer discovery and selection checks are macOS-only in this slice;
+ * other platforms return UNSUPPORTED_PLATFORM before discovery starts.
+ * Scan and installer tasks share the total four-handle limit and never reuse
+ * handles. Each API accepts only its own kind; wrong-kind is INVALID_HANDLE.
+ * The lifecycle/release/buffer memory contracts above apply unchanged. */
+SAYAKA_API int32_t sayaka_installer_start_v1(const SayakaInstallerRequestV1 *request, uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_installer_poll_v1(uint64_t handle, SayakaInstallerSnapshotV1 *out_snapshot);
+SAYAKA_API int32_t sayaka_installer_cancel_v1(uint64_t handle);
+/* Immutable cached observations, no filesystem I/O. Page limits/sorts/buffer cap
+ * match scan queries. Candidate references are decimal-string IDs in JSON.
+ * Format recognition/selection_check_eligible is not trust or cleanup authority.
+ * Failed discovery returns QUERY_UNAVAILABLE; inspect installer_result instead. */
+SAYAKA_API int32_t sayaka_installer_candidates_v1(uint64_t handle, const SayakaPageRequestV1 *request,
+                                                uint8_t *buffer, size_t capacity, size_t *required);
+SAYAKA_API int32_t sayaka_installer_candidate_v1(uint64_t handle, const SayakaInstallerCandidateRefV1 *candidate,
+                                               uint8_t *buffer, size_t capacity, size_t *required);
+/* Copies 1..32 unique references from this discovery, then starts a separate
+ * read-only native check task. The source may be released after a successful
+ * start: the new task owns the required evidence. Old/cross-task refs fail.
+ * Revalidation runs off-thread; a changed/unknown/refused member refuses the
+ * entire batch. No Plan/Approval or executable session survives the check.
+ * A "checked" result is an observation at check time, NOT future authority. */
+SAYAKA_API int32_t sayaka_installer_selection_start_v1(uint64_t discovery_handle,
+                                                     const SayakaInstallerCandidateRefV1 *candidates,
+                                                     size_t count, uint64_t *out_handle);
+/* Terminal discovery/selection/error envelope, max MAX_RESULT_BYTES_V1, no NUL.
+ * Inspect data.status and issues even when the copy returns OK. */
+SAYAKA_API int32_t sayaka_installer_result_v1(uint64_t handle, uint8_t *buffer, size_t capacity, size_t *required);
+SAYAKA_API int32_t sayaka_installer_release_v1(uint64_t handle);
 
 #ifdef __cplusplus
 }

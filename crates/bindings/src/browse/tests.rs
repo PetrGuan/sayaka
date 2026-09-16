@@ -183,6 +183,7 @@ mod native {
 
     #[test]
     fn owned_native_queries_page_sort_account_refresh_and_preserve_results() {
+        let _serial = NATIVE_TEST_LOCK.lock().unwrap();
         let fixture = tempfile::Builder::new()
             .prefix("query-owned-")
             .tempdir_in(env!("CARGO_MANIFEST_DIR"))

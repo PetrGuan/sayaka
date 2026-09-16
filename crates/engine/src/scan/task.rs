@@ -4,9 +4,8 @@
 
 use super::{ScanCode, ScanError, ScanLimits, ScanProgress, ScanReport, ScanStatus};
 use crate::model::{Cancellation, valid_absolute_path};
+use crate::readonly_task::ReadOnlyTask;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanTaskState {
@@ -25,44 +24,13 @@ pub struct ScanTaskSnapshot {
     pub progress: Option<ScanProgress>,
 }
 
-#[derive(Default)]
-struct ProgressSlot {
-    sequence: u64,
-    progress: Option<ScanProgress>,
-}
-
 pub struct ScanTask {
-    cancellation: Cancellation,
-    progress: Arc<Mutex<ProgressSlot>>,
-    worker: Option<JoinHandle<Result<ScanReport, ScanError>>>,
-    outcome: Option<Result<ScanReport, ScanError>>,
+    inner: ReadOnlyTask<ScanReport, ScanProgress>,
 }
 
 impl ScanTask {
     pub fn start(roots: Vec<PathBuf>, limits: ScanLimits) -> Result<Self, ScanError> {
-        limits.validate()?;
-        if roots.is_empty()
-            || roots.len() > 64
-            || roots.iter().any(|root| {
-                !valid_absolute_path(root)
-                    || root.parent().is_none()
-                    || root.as_os_str().len() > limits.max_path_bytes.min(65_536)
-            })
-        {
-            return Err(ScanError::new(
-                ScanCode::InvalidRoot,
-                "provide 1..64 non-root absolute scan paths without traversal or NUL",
-            ));
-        }
-        let bytes = roots
-            .iter()
-            .try_fold(0usize, |sum, path| sum.checked_add(path.as_os_str().len()));
-        if bytes.is_none_or(|bytes| bytes > limits.max_path_bytes) {
-            return Err(ScanError::new(
-                ScanCode::InvalidRoot,
-                "scan roots exceed path budget",
-            ));
-        }
+        validate_roots(&roots, &limits)?;
         Self::spawn(move |cancel, progress| super::scan(&roots, &limits, cancel, progress))
     }
 
@@ -74,72 +42,22 @@ impl ScanTask {
         + Send
         + 'static,
     ) -> Result<Self, ScanError> {
-        let cancellation = Cancellation::default();
-        let cancel = cancellation.clone();
-        let progress = Arc::new(Mutex::new(ProgressSlot::default()));
-        let slot = Arc::clone(&progress);
-        let worker = thread::Builder::new()
-            .name("sayaka-host-scan".into())
-            .spawn(move || {
-                let mut progress_error = None;
-                let result = operation(&cancel, &mut |update| match slot.lock() {
-                    Ok(mut slot) => {
-                        if let Some(sequence) = slot.sequence.checked_add(1) {
-                            slot.sequence = sequence;
-                            slot.progress = Some(update.clone());
-                        } else {
-                            progress_error = Some(internal("scan progress sequence exhausted"));
-                            cancel.cancel();
-                        }
-                    }
-                    Err(_) => {
-                        progress_error = Some(internal("scan progress state poisoned"));
-                        cancel.cancel();
-                    }
-                });
-                if let Some(error) = progress_error {
-                    Err(error)
-                } else {
-                    result
-                }
-            })
-            .map_err(|error| ScanError::new(ScanCode::WorkerStartFailed, error.to_string()))?;
         Ok(Self {
-            cancellation,
-            progress,
-            worker: Some(worker),
-            outcome: None,
+            inner: ReadOnlyTask::spawn("sayaka-host-scan", operation)?,
         })
     }
 
     pub fn cancel(&self) {
-        self.cancellation.cancel();
+        self.inner.cancel();
     }
 
     pub fn is_finished(&self) -> bool {
-        self.worker.as_ref().is_none_or(JoinHandle::is_finished)
-    }
-
-    fn collect_finished(&mut self) {
-        if self.is_finished()
-            && let Some(worker) = self.worker.take()
-        {
-            self.outcome = Some(worker.join().unwrap_or_else(|_| {
-                Err(ScanError::new(
-                    ScanCode::WorkerPanic,
-                    "owned scan worker panicked",
-                ))
-            }));
-        }
+        self.inner.is_finished()
     }
 
     pub fn poll(&mut self) -> Result<ScanTaskSnapshot, ScanError> {
-        self.collect_finished();
-        let slot = self
-            .progress
-            .lock()
-            .map_err(|_| internal("scan progress state poisoned"))?;
-        let state = match self.outcome.as_ref() {
+        let slot = self.inner.poll()?;
+        let state = match self.inner.outcome() {
             None => ScanTaskState::Running,
             Some(Err(_)) => ScanTaskState::Failed,
             Some(Ok(report)) => match report.status {
@@ -151,35 +69,43 @@ impl ScanTask {
         };
         Ok(ScanTaskSnapshot {
             state,
-            cancellation_requested: self.cancellation.is_cancelled(),
-            progress_sequence: slot.sequence,
-            progress: slot.progress.clone(),
+            cancellation_requested: slot.cancellation_requested,
+            progress_sequence: slot.progress_sequence,
+            progress: slot.progress,
         })
     }
 
     /// None until the owned worker has exited; polling never joins active work.
     pub fn result(&mut self) -> Option<&Result<ScanReport, ScanError>> {
-        self.collect_finished();
-        self.outcome.as_ref()
+        self.inner.result()
     }
 }
 
-impl Drop for ScanTask {
-    fn drop(&mut self) {
-        self.cancel();
-        if let Some(worker) = self.worker.take() {
-            match worker.join() {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) if error.code == ScanCode::Cancelled => {}
-                Ok(Err(error)) => eprintln!("scan task cleanup: {error}"),
-                Err(_) => eprintln!("scan task worker panicked during cleanup"),
-            }
-        }
+pub(crate) fn validate_roots(roots: &[PathBuf], limits: &ScanLimits) -> Result<(), ScanError> {
+    limits.validate()?;
+    if roots.is_empty()
+        || roots.len() > 64
+        || roots.iter().any(|root| {
+            !valid_absolute_path(root)
+                || root.parent().is_none()
+                || root.as_os_str().len() > limits.max_path_bytes.min(65_536)
+        })
+    {
+        return Err(ScanError::new(
+            ScanCode::InvalidRoot,
+            "provide 1..64 non-root absolute scan paths without traversal or NUL",
+        ));
     }
-}
-
-fn internal(message: &str) -> ScanError {
-    ScanError::new(ScanCode::Internal, message)
+    let bytes = roots
+        .iter()
+        .try_fold(0usize, |sum, path| sum.checked_add(path.as_os_str().len()));
+    if bytes.is_none_or(|bytes| bytes > limits.max_path_bytes) {
+        return Err(ScanError::new(
+            ScanCode::InvalidRoot,
+            "scan roots exceed path budget",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -187,6 +113,7 @@ mod tests {
     use super::*;
     use crate::scan::{ScanMetrics, ScanTaskId, ScanTotals};
     use std::sync::mpsc;
+    use std::thread;
     use std::time::{Duration, Instant};
 
     fn report(status: ScanStatus) -> ScanReport {
@@ -265,7 +192,8 @@ mod tests {
 
     #[test]
     fn failure_and_worker_panic_remain_terminal_errors() {
-        let mut error = ScanTask::spawn(|_, _| Err(internal("injected"))).unwrap();
+        let mut error =
+            ScanTask::spawn(|_, _| Err(ScanError::new(ScanCode::Internal, "injected"))).unwrap();
         assert_eq!(finish(&mut error).state, ScanTaskState::Failed);
         assert_eq!(
             error.result().unwrap().as_ref().unwrap_err().message,
