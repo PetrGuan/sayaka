@@ -11,6 +11,7 @@
 
 pub mod app_inventory;
 pub mod app_related;
+pub mod app_uninstall;
 pub mod clean_policy;
 pub mod execute;
 pub mod history;

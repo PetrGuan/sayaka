@@ -22,7 +22,7 @@ not full Mole parity or support on every target platform.
 | Native file Trash and records | Exact plans, explicit confirmation, durable intent/outcomes, `receipt` and `history` | Ordinary single-link files on accepted local internal APFS; no permanent-delete fallback or automatic restoration |
 | Rules and `clean` | CPython source-backed `.pyc` and OpenJDK `javac` source-backed `.class`; clean-only persistent exclusions | Two narrow rules, not a broad cache/log/project-artifact cleanup catalog |
 | Installer files | Bounded UDIF/flat-PKG discovery, selected native plans and terminal-confirmed file Trash | Recognized current-user files and complete discovery only; no trust/install-state assessment |
-| Applications | `apps` inventory, `apps-related` association preview and opt-in running-process attribution | Read-only evidence; no uninstall or related-data removal |
+| Applications | `apps` inventory, `apps-related` association preview, opt-in running-process attribution and read-only `uninstall` preview (execution deferred) | Read-only evidence; no uninstall execution or related-data removal |
 | System status | CPU/memory/network/disk/power/thermal state, IOKit GPU utilization, optional process top, JSON/watch panel | No numeric temperature, Windows sampler or system-maintenance actions |
 | Local CLI lifecycle | Dedicated-prefix install/update/recover/remove, shell completion and Raycast/Alfred terminal launchers | Local executable input only; no online updater or authenticated release channel |
 | Directory-action foundation | Task-bound engine-only observations, blockers and unresolved native gates | Always ModelOnly; no directory action, executable plan or new CLI |

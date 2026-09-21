@@ -36,6 +36,31 @@ sayaka apps . --running
 
 Exit codes: **0 complete, 3 partial, 130 cancelled, 1 runtime failure, 2 invalid arguments**.
 
+## Uninstall preview contract (execution deferred)
+
+```sh
+sayaka uninstall --bundle ./Fixture.app
+sayaka uninstall --bundle ./Fixture.app --json
+```
+
+This is the read-only preview of the T9 uninstall contract for one explicit
+`.app` bundle. **It performs no effects**: no Trash, deletion, signals or
+approval surface, and `can_execute` is always `false`. Execution is deferred
+to a separately reviewed execution/recovery contract; a clean preview is not
+approval. Exit codes: **0 no refusals, 3 refusals present, 2 invalid arguments**.
+
+The preview publishes the bundle identity (nofollow), the count of regular
+executables directly under `Contents/MacOS`, a running-process observation
+(any match refuses with the exact PIDs; enumeration failure is `unknown`,
+never `not_running`), explicit refusals (`not_found`, `not_directory`,
+`not_app_bundle`, `symlink_bundle`, `missing_info_plist`,
+`info_plist_not_regular_file`, `system_location`, `non_local_volume`,
+`running`, `internal_error`), the standing protections (related data,
+preferences, caches, credentials and other copies untouched; running bundles
+refused, never signaled; no permanent-delete fallback; `/System` refused) and
+the recovery note (future execution targets the user Trash with Finder
+'Put Back'; no programmatic restore).
+
 ## Related-data preview contract
 
 ```sh

@@ -360,7 +360,7 @@ fn field_value(field: &StringField) -> String {
     }
 }
 
-fn write_native_path(path: &Path) -> serde_json::Value {
+pub(crate) fn write_native_path(path: &Path) -> serde_json::Value {
     use std::fmt::Write;
     #[cfg(unix)]
     {
