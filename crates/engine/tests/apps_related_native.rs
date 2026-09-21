@@ -4,7 +4,8 @@
 
 use sayaka_engine::app_inventory::{
     AppInventory, AppInventoryCounts, AppInventoryMetrics, AppInventoryStatus, AppKind, AppRecord,
-    ExecutableMetadata, NameSource, PathStatus, PlistFormat, StringField, StringState,
+    ExecutableMetadata, NameSource, PathStatus, PlistFormat, RunningObservation, StringField,
+    StringState,
 };
 use sayaka_engine::app_related::preview_app_related_data;
 use sayaka_engine::model::{Cancellation, FileIdentity};
@@ -70,6 +71,7 @@ fn firefox_inventory() -> AppInventory {
                 declared_value: Some("firefox".into()),
                 path_status: PathStatus::PresentFile,
             },
+            running: RunningObservation::NotChecked,
         }],
         scan_issues: vec![],
         issues: vec![],

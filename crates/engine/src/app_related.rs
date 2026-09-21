@@ -1734,7 +1734,8 @@ fn issue_for_errno(
 mod tests {
     use super::*;
     use crate::app_inventory::{
-        AppInventoryMetrics, AppIssueCode, ExecutableMetadata, NameSource, PlistFormat, StringField,
+        AppInventoryMetrics, AppIssueCode, ExecutableMetadata, NameSource, PlistFormat,
+        RunningObservation, StringField,
     };
     use crate::scan::ScanTaskId;
     use std::fs;
@@ -1781,6 +1782,7 @@ mod tests {
                 declared_value: Some("Run".into()),
                 path_status: PathStatus::PresentFile,
             },
+            running: RunningObservation::NotChecked,
         }
     }
 

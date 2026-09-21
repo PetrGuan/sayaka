@@ -104,7 +104,8 @@ pub enum ThermalState {
 mod native;
 #[cfg(target_os = "macos")]
 pub use native::{
-    cpu, disk, gpu, memory, network, power, processes, processes_top, sampler, thermal,
+    cpu, disk, gpu, memory, network, power, processes, processes_top, running_executable_paths,
+    sampler, thermal,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -146,6 +147,16 @@ pub fn processes_top(
     ))
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn running_executable_paths(
+    _max_pids: usize,
+) -> std::io::Result<Vec<(u32, std::path::PathBuf)>> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "macOS running_executable_paths source is unavailable on this platform",
+    ))
+}
+
 #[cfg(all(test, not(target_os = "macos")))]
 mod tests {
     use super::*;
@@ -160,6 +171,7 @@ mod tests {
             sampler().unwrap_err(),
             processes().unwrap_err(),
             processes_top(1, ProcessTopSort::Cpu, 1, 1).unwrap_err(),
+            running_executable_paths(1).unwrap_err(),
             power().unwrap_err(),
             thermal().unwrap_err(),
             gpu().unwrap_err(),

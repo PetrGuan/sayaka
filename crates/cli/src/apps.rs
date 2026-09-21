@@ -4,8 +4,8 @@ use crate::{human, output};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use sayaka_engine::app_inventory::{
     APP_INVENTORY_KIND, APP_INVENTORY_SCHEMA_VERSION, APP_INVENTORY_TOTAL_BUDGET, AppInventory,
-    AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, StringField,
-    StringState, inventory_apps,
+    AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, RunningObservation,
+    StringField, StringState, inventory_apps,
 };
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::scan::{ScanCode, ScanError, display_path};
@@ -44,6 +44,12 @@ pub fn command() -> Command {
                 .long("json")
                 .action(ArgAction::SetTrue)
                 .help("Write one versioned JSON report to stdout"),
+        )
+        .arg(
+            Arg::new("running")
+                .long("running")
+                .action(ArgAction::SetTrue)
+                .help("Opt-in read-only attribution of running processes by exact executable path"),
         )
         .arg(
             Arg::new("progress")
@@ -176,6 +182,7 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
                 excludes,
                 limits: AppInventoryLimits::default(),
                 metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
+                running_attribution: args.get_flag("running"),
             },
             &cancellation,
             remaining,
@@ -311,6 +318,21 @@ fn write_inventory_human(
             field_value(&app.build_version),
             display_path(&app.bundle_path)
         )?;
+        match &app.running {
+            RunningObservation::NotChecked => {}
+            RunningObservation::Running(pids) => {
+                writeln!(out, "    running: yes (pids: {pids:?})")?;
+            }
+            RunningObservation::NotRunning => {
+                writeln!(out, "    running: no matching process observed")?;
+            }
+            RunningObservation::NotAttributable(reason) => {
+                writeln!(out, "    running: not attributable ({reason})")?;
+            }
+            RunningObservation::Unknown => {
+                writeln!(out, "    running: unknown (process enumeration failed)")?;
+            }
+        }
     }
     if !inventory.issues.is_empty() {
         writeln!(out, "issues:")?;
@@ -417,6 +439,17 @@ fn write_inventory_json(out: &mut impl Write, inventory: &AppInventory) -> io::R
                 "state": app.executable.state.as_str(),
                 "declared_value": app.executable.declared_value,
                 "path_status": app.executable.path_status.as_str(),
+            },
+            "running": {
+                "state": app.running.as_str(),
+                "pids": match &app.running {
+                    RunningObservation::Running(pids) => serde_json::json!(pids),
+                    _ => serde_json::Value::Null,
+                },
+                "reason": match &app.running {
+                    RunningObservation::NotAttributable(reason) => serde_json::json!(reason),
+                    _ => serde_json::Value::Null,
+                },
             },
             "trust": {
                 "signature": "not_read",

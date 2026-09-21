@@ -505,6 +505,50 @@ pub fn processes() -> io::Result<u64> {
     pid_count(&pids, written as usize)
 }
 
+/// Bounded (pid, executable path) pairs for visible running processes from
+/// `proc_pidpath`. PIDs whose path cannot be read are skipped; a skipped PID
+/// is not evidence that a given executable is not running. A truncated PID
+/// enumeration is an error, never a partial "not running" answer.
+pub fn running_executable_paths(max_pids: usize) -> io::Result<Vec<(u32, std::path::PathBuf)>> {
+    if max_pids == 0 || max_pids > PID_CAP {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "running path PID cap must be in 1..=65536",
+        ));
+    }
+    let mut pids = bounded_vec(max_pids, PID_CAP, 0 as libc::pid_t)?;
+    let capacity = std::mem::size_of_val(pids.as_slice());
+    // SAFETY: The integer-aligned output has capacity bytes and the selector
+    // returns PID integers. Unlike proc_listallpids, this API returns BYTES.
+    let written =
+        unsafe { libc::proc_listpids(PROC_ALL_PIDS, 0, pids.as_mut_ptr().cast(), capacity as i32) };
+    if written <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let (pids, truncated) = pid_list(&pids, written as usize)?;
+    if truncated {
+        return Err(invalid(
+            "visible PID list is truncated; running attribution would be incomplete",
+        ));
+    }
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let mut out = Vec::new();
+    for &pid in pids {
+        // SAFETY: buffer is writable for the passed length; on success the
+        // call returns the path length excluding the NUL terminator.
+        let length =
+            unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+        if length <= 0 || length as usize >= buffer.len() {
+            continue;
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let path =
+            std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&buffer[..length as usize]));
+        out.push((pid as u32, path));
+    }
+    Ok(out)
+}
+
 /// Bounded per-process PID/name/RSS/CPU counters from `PROC_PIDTASKALLINFO`.
 /// No command line, executable path, cwd, environment, UID names, or arguments.
 pub fn processes_top(

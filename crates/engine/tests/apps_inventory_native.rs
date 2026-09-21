@@ -59,6 +59,7 @@ fn run_inventory(roots: &[PathBuf]) -> sayaka_engine::app_inventory::AppInventor
             excludes: vec![],
             limits: AppInventoryLimits::default(),
             metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
+            running_attribution: false,
         },
         &cancellation,
         Duration::from_secs(30),
