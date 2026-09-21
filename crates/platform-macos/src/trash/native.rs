@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{
-    NativeAdmissionWitness, NativeFileInfo, NativeLastGuard, NativeRecoveryEvidence,
-    NativeRuleBindingWitness, NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo,
+    NativeAdmissionWitness, NativeCaptureFailure, NativeFileInfo, NativeLastGuard,
+    NativeRecoveryEvidence, NativeRuleBindingWitness, NativeTargetMarker, NativeTrashOutcome,
+    NativeWitnessInfo,
 };
 use crate::{ReadOnlyPolicy, VolumeInfo, volume_info};
 use std::ffi::{OsStr, OsString};
@@ -203,24 +204,46 @@ impl Evidence {
     }
 
     fn open_bound(path: &Path, binding: Binding) -> io::Result<Self> {
-        let (file, stamp) = Self::open_handle(path, binding)?;
-        Self::complete(path, binding, file, stamp)
+        Self::open_observed(path, binding, &mut "unobserved")
+    }
+
+    fn open_observed(
+        path: &Path,
+        binding: Binding,
+        operation: &mut &'static str,
+    ) -> io::Result<Self> {
+        let (file, stamp) = Self::open_handle_observed(path, binding, operation)?;
+        Self::complete_observed(path, binding, file, stamp, operation)
     }
 
     fn open_handle(path: &Path, binding: Binding) -> io::Result<(File, Stamp)> {
+        Self::open_handle_observed(path, binding, &mut "unobserved")
+    }
+
+    fn open_handle_observed(
+        path: &Path,
+        binding: Binding,
+        operation: &mut &'static str,
+    ) -> io::Result<(File, Stamp)> {
+        *operation = "validate_path";
         valid_path(path)?;
+        *operation = "symlink_metadata";
         let before = fs::symlink_metadata(path)?;
+        *operation = "link_or_dataless_policy";
         if before.file_type().is_symlink() || before.st_flags() & SF_DATALESS != 0 {
             return Err(refused("link or dataless object"));
         }
+        *operation = "no_follow_open";
         let file = OpenOptions::new()
             .read(true)
             // O_NOFOLLOW_ANY is mutually exclusive with O_NOFOLLOW on Darwin.
             // O_EVTONLY does not request file content; NONBLOCK avoids FIFO waits.
             .custom_flags(O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_EVTONLY | libc::O_CLOEXEC)
             .open(path)?;
+        *operation = "handle_metadata";
         let mut stamp = Stamp::read(&file.metadata()?);
         apply_test_probe_hook(TestProbeStage::OpenHandle, &mut stamp);
+        *operation = "identity_comparison";
         if !binding.matches(&stamp, &Stamp::read(&before)) {
             return Err(refused("object changed during no-follow capture"));
         }
@@ -228,10 +251,24 @@ impl Evidence {
     }
 
     fn complete(path: &Path, binding: Binding, file: File, stamp: Stamp) -> io::Result<Self> {
+        Self::complete_observed(path, binding, file, stamp, &mut "unobserved")
+    }
+
+    fn complete_observed(
+        path: &Path,
+        binding: Binding,
+        file: File,
+        stamp: Stamp,
+        operation: &mut &'static str,
+    ) -> io::Result<Self> {
+        *operation = "physical_path";
         let physical = physical_path(&file)?;
+        *operation = "acl_snapshot";
         let acl = crate::acl::snapshot(&file)?;
+        *operation = "metadata_after_acl";
         let mut observed = Stamp::read(&file.metadata()?);
         apply_test_probe_hook(TestProbeStage::Complete, &mut observed);
+        *operation = "identity_after_acl";
         if !binding.matches(&stamp, &observed) {
             return Err(refused(&format!(
                 "object safety changed during ACL capture: {}",
@@ -528,8 +565,49 @@ pub(super) struct Candidate {
 }
 
 impl Candidate {
-    pub(super) fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
-        with_policy(|| Self::capture_inner(scope, path, None, None, protected))
+    pub(super) fn capture_diagnostic(
+        scope: &Path,
+        path: &Path,
+        protected: &[PathBuf],
+    ) -> Result<Self, NativeCaptureFailure> {
+        let policy = ReadOnlyPolicy::enter().map_err(|error| NativeCaptureFailure {
+            phase: "policy",
+            operation: "enter",
+            error,
+            restoration_error: None,
+        })?;
+        let mut phase = "request";
+        let mut operation = "validation";
+        let result = Self::capture_inner(
+            scope,
+            path,
+            None,
+            None,
+            protected,
+            &mut phase,
+            &mut operation,
+        );
+        match (result, policy.restore()) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(NativeCaptureFailure {
+                phase,
+                operation,
+                error,
+                restoration_error: None,
+            }),
+            (Ok(_), Err(error)) => Err(NativeCaptureFailure {
+                phase: "policy",
+                operation: "restore",
+                error,
+                restoration_error: None,
+            }),
+            (Err(first), Err(second)) => Err(NativeCaptureFailure {
+                phase,
+                operation,
+                error: first,
+                restoration_error: Some(second),
+            }),
+        }
     }
 
     pub(super) fn capture_with_source_and_marker(
@@ -539,7 +617,17 @@ impl Candidate {
         marker: Option<NativeTargetMarker>,
         protected: &[PathBuf],
     ) -> io::Result<Self> {
-        with_policy(|| Self::capture_inner(scope, target, Some(source), marker, protected))
+        with_policy(|| {
+            Self::capture_inner(
+                scope,
+                target,
+                Some(source),
+                marker,
+                protected,
+                &mut "request",
+                &mut "validation",
+            )
+        })
     }
 
     fn capture_inner(
@@ -548,8 +636,12 @@ impl Candidate {
         source_path: Option<&Path>,
         marker: Option<NativeTargetMarker>,
         protected: &[PathBuf],
+        phase: &mut &'static str,
+        operation: &mut &'static str,
     ) -> io::Result<Self> {
+        *operation = "ordinary_authority";
         let uid = ordinary_authority()?;
+        *operation = "scope_validation";
         valid_path(scope)?;
         valid_path(path)?;
         if path == scope || !path.starts_with(scope) {
@@ -563,14 +655,22 @@ impl Candidate {
         }
         let mut ancestors = Vec::with_capacity(parents.len());
         for parent in parents.into_iter().rev() {
-            let evidence = Evidence::open_safety(parent)?;
+            *phase = "ancestor";
+            let evidence = Evidence::open_observed(parent, Binding::Safety, operation)?;
+            *operation = "ancestor_admission";
             admissible_ancestor(&evidence.stamp, uid)?;
+            *operation = "package_classification";
             reject_package(&evidence)?;
             ancestors.push(evidence);
         }
-        let target = Evidence::open(path)?;
+        *phase = "target";
+        let target = Evidence::open_observed(path, Binding::FullTarget, operation)?;
+        *operation = "file_admission";
         admissible_file(&target.stamp, uid)?;
+        *operation = "cloud_attributes";
         reject_cloud_attributes(&target.file)?;
+        *phase = "source";
+        *operation = "source_capture";
         let source = if let Some(source_path) = source_path {
             if source_path == path {
                 return Err(refused("source and target must be different files"));
@@ -585,6 +685,8 @@ impl Candidate {
         } else {
             None
         };
+        *phase = "scope";
+        *operation = "physical_containment";
         let scope_evidence = ancestors
             .iter()
             .find(|ancestor| ancestor.path == scope)
@@ -600,16 +702,22 @@ impl Candidate {
         }
         let mut protections = Vec::with_capacity(protected.len());
         for protection in protected {
+            *phase = "protection";
+            *operation = "validate_path";
             valid_path(protection)?;
             // Exclusions may themselves be aliases. Resolve only the exclusion,
             // under the no-materialization policy, then retain its physical object.
             // Missing/inaccessible exclusions are unknown, not permission.
+            *operation = "canonicalize";
             let canonical = fs::canonicalize(protection)?;
-            let mut evidence = Evidence::open_safety(&canonical)?;
+            let mut evidence = Evidence::open_observed(&canonical, Binding::Safety, operation)?;
             evidence.path = protection.clone();
             protections.push(evidence);
         }
+        *phase = "volume";
+        *operation = "target_volume";
         let volume = supported_volume(&target)?;
+        *operation = "scope_volume";
         if supported_volume(scope_evidence)? != volume
             || scope_evidence.stamp.device != target.stamp.device
         {
@@ -617,6 +725,8 @@ impl Candidate {
                 "scope and target must share the supported APFS volume",
             ));
         }
+        *phase = "target";
+        *operation = "final_metadata";
         let metadata = target.file.metadata()?;
         let candidate = Self {
             info: NativeFileInfo {
@@ -637,8 +747,11 @@ impl Candidate {
             attempted: AtomicBool::new(false),
             rule_binding_witness: None,
         };
+        *phase = "revalidation";
+        *operation = "full_candidate_revalidation";
         candidate.revalidate_inner()?;
         let mut candidate = candidate;
+        *operation = "rule_binding_witness";
         candidate.rule_binding_witness = candidate.build_rule_binding_witness()?;
         Ok(candidate)
     }
