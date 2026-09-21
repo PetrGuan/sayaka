@@ -24,7 +24,7 @@ not full Mole parity or support on every target platform.
 | Installer files | Bounded UDIF/flat-PKG discovery, selected native plans and terminal-confirmed file Trash | Recognized current-user files and complete discovery only; no trust/install-state assessment |
 | Applications | `apps` inventory and `apps-related` association preview | Read-only evidence; no uninstall or related-data removal |
 | System status | CPU/memory/network/disk/power/thermal state, optional process top, JSON/watch panel | No numeric temperature/GPU metrics, Windows sampler or system-maintenance actions |
-| Local CLI lifecycle | Dedicated-prefix install/update/recover/remove and shell completion | Local executable input only; no online updater or authenticated release channel |
+| Local CLI lifecycle | Dedicated-prefix install/update/recover/remove, shell completion and Raycast/Alfred terminal launchers | Local executable input only; no online updater or authenticated release channel |
 | Directory-action foundation | Task-bound engine-only observations, blockers and unresolved native gates | Always ModelOnly; no directory action, executable plan or new CLI |
 | Native-client bindings | C ABI for scans/directory queries, bounded diagnostic pages, installer discovery, candidate pages and explicit read-only selection checks; local C/Swift consumers | Installer checks are macOS-only; Windows cross-check is not native host acceptance; no effects/status bindings |
 
@@ -89,7 +89,8 @@ filled with zeroes.
 
 The [local CLI lifecycle tools](docs/LOCAL_LIFECYCLE.md) provide filtered
 `history`, generated `completions`, and preview-first `install`, `update`,
-`recover` and `remove` for a dedicated user prefix. They do not download updates,
+`recover` and `remove` for a dedicated user prefix, plus Raycast/Alfred
+terminal `launchers` with owned-artifact cleanup. They do not download updates,
 edit shell startup files or remove operation history. `recover` reconciles local
 installation state; it is not a Trash-restore command.
 

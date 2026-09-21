@@ -8,6 +8,7 @@ mod completions;
 mod history;
 mod human;
 mod installer;
+mod launchers;
 mod lifecycle;
 mod menu;
 mod output;
@@ -107,7 +108,7 @@ fn command() -> Command {
         .bin_name("sayaka")
         .version(env!("CARGO_PKG_VERSION"))
         .about("An open-source local maintenance engine and CLI")
-        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka menu            Guided terminal entry for browse/rule previews/approval\n  sayaka installer .     Read-only installer discovery\n  sayaka installer . --json\n  sayaka apps .          Read-only macOS app inventory\n  sayaka apps . --json\n  sayaka apps-related --app-root /Applications --library-root \"$HOME/Library\"\n  sayaka apps-related --app-root /Applications --library-root \"$HOME/Library\" --json\n  sayaka rules list      Built-in read-only rule catalog\n  sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc\n  sayaka rules preview . --rule org.openjdk.javac.source_backed_class\n  sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc\n  sayaka rules trash . --rule org.openjdk.javac.source_backed_class --select ./Foo.class\n  sayaka clean .         Clean preview for CPython source-backed __pycache__ .pyc\n  sayaka clean . --rule org.openjdk.javac.source_backed_class\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n\nScanning and previews never modify targets. Trash requires --execute and terminal confirmation.")
+        .after_help("Examples:\n  sayaka scan .          Readable read-only report\n  sayaka scan . --json   Machine-readable report\n  sayaka menu            Guided terminal entry for browse/rule previews/approval\n  sayaka installer .     Read-only installer discovery\n  sayaka installer . --json\n  sayaka apps .          Read-only macOS app inventory\n  sayaka apps . --json\n  sayaka apps-related --app-root /Applications --library-root \"$HOME/Library\"\n  sayaka apps-related --app-root /Applications --library-root \"$HOME/Library\" --json\n  sayaka rules list      Built-in read-only rule catalog\n  sayaka rules preview . --rule org.python.cpython.pep3147.source_backed_pyc\n  sayaka rules preview . --rule org.openjdk.javac.source_backed_class\n  sayaka rules trash . --rule org.python.cpython.pep3147.source_backed_pyc --select ./pkg/__pycache__/m.cpython-311.pyc\n  sayaka rules trash . --rule org.openjdk.javac.source_backed_class --select ./Foo.class\n  sayaka clean .         Clean preview for CPython source-backed __pycache__ .pyc\n  sayaka clean . --rule org.openjdk.javac.source_backed_class\n  sayaka trash --scope . ./file.txt   Preview one explicit file\n  sayaka launchers print raycast     Raycast script to stdout\n\nScanning and previews never modify targets. Trash requires --execute and terminal confirmation.")
         .arg_required_else_help(true)
         .subcommand(scan)
         .subcommand(apps::command())
@@ -122,6 +123,7 @@ fn command() -> Command {
         .subcommand(rules::command())
         .subcommand(clean::command())
         .subcommand(completions::command())
+        .subcommand(launchers::command())
         .subcommand(lifecycle::install_command())
         .subcommand(lifecycle::update_command())
         .subcommand(lifecycle::recover_command())
@@ -419,6 +421,7 @@ fn run() -> io::Result<u8> {
         Some(("rules", args)) => rules::run(args),
         Some(("clean", args)) => clean::run(args),
         Some(("completions", args)) => completions::run(args),
+        Some(("launchers", args)) => launchers::run(args),
         Some(("install", args)) => lifecycle::run(args, "install"),
         Some(("update", args)) => lifecycle::run(args, "update"),
         Some(("recover", args)) => lifecycle::run(args, "recover"),
