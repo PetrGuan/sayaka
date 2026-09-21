@@ -15,6 +15,7 @@ deletion/uninstall authorization.
 sayaka apps .
 sayaka apps . --json
 sayaka apps . --filter Safari --exclude ./archive
+sayaka apps . --running
 ```
 
 - Roots are explicit (1..64). No implicit HOME/CWD/system roots.
@@ -23,6 +24,15 @@ sayaka apps . --filter Safari --exclude ./archive
 - Nested apps inside bundle resources are intentionally not discovered in this
   slice.
 - `--exclude` is explicit and command-local (not inherited from `clean`).
+- `--running` is opt-in read-only running-process attribution: visible PIDs
+  are enumerated once and matched by the exact canonically resolved
+  `Contents/MacOS/<CFBundleExecutable>` path. Each record reports `running`,
+  `not_running`, `not_attributable` (no trustworthy executable path) or
+  `unknown` (enumeration failed or was truncated — never evidence of
+  absence). Without the flag every record is `not_checked`. This is an
+  observation only; it does not signal, trace or terminate processes, and a
+  `not_running` result is not proof that no instance exists (skipped PIDs,
+  helper processes and renamed executables are not matched).
 
 Exit codes: **0 complete, 3 partial, 130 cancelled, 1 runtime failure, 2 invalid arguments**.
 

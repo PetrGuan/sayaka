@@ -122,6 +122,8 @@ pub struct AppInventoryOptions {
     pub excludes: Vec<PathBuf>,
     pub limits: AppInventoryLimits,
     pub metadata_read_mode: AppInventoryMetadataReadMode,
+    /// Opt-in read-only running-process attribution by exact executable path.
+    pub running_attribution: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -294,6 +296,32 @@ pub struct ExecutableMetadata {
     pub path_status: PathStatus,
 }
 
+/// Read-only observation of whether an app's declared executable is running.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunningObservation {
+    /// Attribution was not requested.
+    NotChecked,
+    /// No trustworthy executable path exists (missing, non-file, link, or
+    /// unresolvable); absence of a match is never reported instead.
+    NotAttributable(&'static str),
+    NotRunning,
+    Running(Vec<u32>),
+    /// Enumeration failed or was incomplete; not evidence of absence.
+    Unknown,
+}
+
+impl RunningObservation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::NotChecked => "not_checked",
+            Self::NotAttributable(_) => "not_attributable",
+            Self::NotRunning => "not_running",
+            Self::Running(_) => "running",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AppRecord {
     pub bundle_path: PathBuf,
@@ -310,6 +338,7 @@ pub struct AppRecord {
     pub package_type: StringField,
     pub declared_product_dir_name: StringField,
     pub executable: ExecutableMetadata,
+    pub running: RunningObservation,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -717,7 +746,76 @@ fn inventory_apps_with_now(
         status = AppInventoryStatus::Complete;
         inventory.status = status;
     }
+    if options.running_attribution {
+        attribute_running_state(&mut inventory.apps);
+    }
     inventory
+}
+
+/// Resolves the declared executable of each record to a canonical path and
+/// matches it against the visible running processes exactly once. A failed
+/// or incomplete enumeration marks every record Unknown rather than
+/// reporting "not running" from incomplete evidence.
+fn attribute_running_state(apps: &mut [AppRecord]) {
+    let running = match native_running_paths() {
+        Ok(paths) => {
+            let mut by_path: std::collections::HashMap<PathBuf, Vec<u32>> =
+                std::collections::HashMap::new();
+            for (pid, path) in paths {
+                by_path.entry(path).or_default().push(pid);
+            }
+            by_path
+        }
+        Err(_) => {
+            for app in apps.iter_mut() {
+                app.running = RunningObservation::Unknown;
+            }
+            return;
+        }
+    };
+    for app in apps.iter_mut() {
+        app.running = running_observation(&app.bundle_path, &app.executable, &running);
+    }
+}
+
+/// Pure attribution rule, separated for fixtures: only a declared, valid,
+/// present regular-file executable whose path canonically resolves can be
+/// matched; everything else is explicitly not attributable.
+fn running_observation(
+    bundle_path: &Path,
+    executable: &ExecutableMetadata,
+    running: &std::collections::HashMap<PathBuf, Vec<u32>>,
+) -> RunningObservation {
+    if executable.state != StringState::Present {
+        return RunningObservation::NotAttributable("no valid declared executable");
+    }
+    if executable.path_status != PathStatus::PresentFile {
+        return RunningObservation::NotAttributable("executable is not a present regular file");
+    }
+    let Some(name) = executable.declared_value.as_deref() else {
+        return RunningObservation::NotAttributable("no declared executable value");
+    };
+    let candidate = bundle_path.join("Contents").join("MacOS").join(name);
+    let Ok(resolved) = std::fs::canonicalize(&candidate) else {
+        return RunningObservation::NotAttributable("executable path cannot be resolved");
+    };
+    match running.get(&resolved) {
+        Some(pids) if !pids.is_empty() => RunningObservation::Running(pids.clone()),
+        _ => RunningObservation::NotRunning,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn native_running_paths() -> std::io::Result<Vec<(u32, PathBuf)>> {
+    sayaka_platform_macos::status::running_executable_paths(65_536)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_running_paths() -> std::io::Result<Vec<(u32, PathBuf)>> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "running attribution currently requires macOS",
+    ))
 }
 
 fn push_issue(inventory: &mut AppInventory, issue: AppIssue, limits: AppInventoryLimits) {
@@ -937,6 +1035,7 @@ fn inspect_bundle(
         package_type: parsed.package_type,
         declared_product_dir_name: parsed.cr_product_dir_name,
         executable,
+        running: RunningObservation::NotChecked,
     })
 }
 
@@ -976,6 +1075,7 @@ fn unknown_record(path: PathBuf, identity: FileIdentity) -> AppRecord {
             declared_value: None,
             path_status: PathStatus::NotChecked,
         },
+        running: RunningObservation::NotChecked,
     }
 }
 
@@ -2515,6 +2615,90 @@ mod tests {
     #[cfg(target_os = "macos")]
     use std::os::unix::fs::MetadataExt;
 
+    #[test]
+    fn running_observation_matches_only_resolved_present_executables() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = root.path().join("Fixture.app");
+        let macos = bundle.join("Contents").join("MacOS");
+        fs::create_dir_all(&macos).expect("create app tree");
+        fs::write(macos.join("Run"), b"inert").expect("write executable");
+        let resolved = fs::canonicalize(macos.join("Run")).expect("canonicalize");
+        let mut running = std::collections::HashMap::new();
+        running.insert(resolved, vec![4242_u32, 4343_u32]);
+
+        let present = ExecutableMetadata {
+            state: StringState::Present,
+            declared_value: Some("Run".into()),
+            path_status: PathStatus::PresentFile,
+        };
+        assert_eq!(
+            running_observation(&bundle, &present, &running),
+            RunningObservation::Running(vec![4242, 4343])
+        );
+
+        let empty: std::collections::HashMap<PathBuf, Vec<u32>> = std::collections::HashMap::new();
+        assert_eq!(
+            running_observation(&bundle, &present, &empty),
+            RunningObservation::NotRunning
+        );
+
+        for (state, declared, status) in [
+            (StringState::Missing, None, PathStatus::NotChecked),
+            (
+                StringState::Present,
+                Some("Run".into()),
+                PathStatus::Missing,
+            ),
+            (
+                StringState::Present,
+                Some("Run".into()),
+                PathStatus::NotFollowedSymlink,
+            ),
+            (StringState::NotString, None, PathStatus::NotChecked),
+        ] {
+            let metadata = ExecutableMetadata {
+                state,
+                declared_value: declared,
+                path_status: status,
+            };
+            assert!(
+                matches!(
+                    running_observation(&bundle, &metadata, &running),
+                    RunningObservation::NotAttributable(_)
+                ),
+                "{state:?}/{status:?} must not be attributable"
+            );
+        }
+
+        let ghost = ExecutableMetadata {
+            state: StringState::Present,
+            declared_value: Some("Ghost".into()),
+            path_status: PathStatus::PresentFile,
+        };
+        assert!(matches!(
+            running_observation(&bundle, &ghost, &running),
+            RunningObservation::NotAttributable(_)
+        ));
+    }
+
+    #[test]
+    fn failed_running_enumeration_marks_every_record_unknown() {
+        // Non-macOS hosts exercise the native-failure fallback directly;
+        // the macOS success path is covered by manual smoke instead.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut apps = vec![unknown_record(
+                PathBuf::from("/nonexistent/Fixture.app"),
+                FileIdentity::Unix {
+                    device: 1,
+                    inode: 1,
+                },
+            )];
+            attribute_running_state(&mut apps);
+            assert_eq!(apps[0].running, RunningObservation::Unknown);
+        }
+    }
+
     fn parse_xml_for_test(xml: &[u8]) -> ParsedPlist {
         parse_xml_for_mode(xml, AppInventoryMetadataReadMode::Baseline)
     }
@@ -2984,6 +3168,7 @@ mod tests {
                 excludes: vec![],
                 limits: AppInventoryLimits::default(),
                 metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
+                running_attribution: false,
             },
             &cancellation,
             Duration::from_millis(1),

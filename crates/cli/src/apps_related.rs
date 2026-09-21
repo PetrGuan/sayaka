@@ -194,6 +194,7 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
                 excludes: vec![],
                 limits: AppInventoryLimits::default(),
                 metadata_read_mode: AppInventoryMetadataReadMode::AppRelated,
+                running_attribution: false,
             },
             &cancellation,
             remaining_for_inventory,
