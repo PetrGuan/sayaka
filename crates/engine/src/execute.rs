@@ -20,6 +20,8 @@ pub struct SelectionIssue {
     pub path: NativePath,
     pub message: String,
     pub os_code: Option<i32>,
+    pub native_phase: Option<&'static str>,
+    pub native_operation: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Serialize)]

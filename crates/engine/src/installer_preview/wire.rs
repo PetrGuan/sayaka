@@ -142,6 +142,8 @@ pub fn selection_json(preview: &InstallerSelectionPreview) -> Value {
         })).collect::<Vec<_>>(),
         "bytes": bytes_json(&preview.bytes),
         "issues": preview.issues.iter().map(|issue| json!({
+            "native_phase": issue.native_phase,
+            "native_operation": issue.native_operation,
             "candidate_id": issue.candidate_id.map(|id| id.to_string()),
             "code": issue.code,
             "message": issue.message,

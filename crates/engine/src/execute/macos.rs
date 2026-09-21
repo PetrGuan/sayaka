@@ -26,15 +26,18 @@ impl Probe for MacPlatform {
                 .revalidate()
                 .map_err(|error| ProbeError::Other(error.to_string()))?;
         } else {
-            match TrashCandidate::capture(scope.root(), path, scope.protected_paths()) {
+            match TrashCandidate::capture_diagnostic(scope.root(), path, scope.protected_paths()) {
                 Ok(candidate) => {
                     self.candidates.insert(path.to_owned(), candidate);
                 }
-                Err(error) => {
+                Err(failure) => {
+                    let error = failure.error;
                     self.issues.push(SelectionIssue {
                         path: NativePath::from_path(path),
                         message: error.to_string(),
                         os_code: error.raw_os_error(),
+                        native_phase: Some(failure.phase),
+                        native_operation: Some(failure.operation),
                     });
                     return Ok(Snapshot {
                         identity: None,

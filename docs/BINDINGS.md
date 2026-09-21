@@ -578,3 +578,16 @@ This additive field preserves native capture and revalidation diagnostics withou
 parsing platform-localized messages. It does not identify which syscall failed,
 prove that a sandbox caused the refusal, or relax whole-batch admission rules.
 The native execution selection issue serializer also retains this optional field.
+
+### Native capture stage context
+
+Installer selection issues additionally carry nullable `native_phase` and
+`native_operation`. Initial native candidate capture records the object role
+(ancestor, target, protection, scope, volume, request or policy) and the operation
+that returned an error, without adding filesystem paths or extra probes. Evidence
+reads distinguish no-follow opening, metadata, physical path and ACL snapshot
+operations. Final revalidation is deliberately reported as a whole-candidate
+operation; errors outside instrumented initial capture have null context.
+These fields describe the attempted operation, not the cause of denial. Original
+OS codes and refusal states remain unchanged, including policy restoration errors.
+The existing capture API extracts the original io::Error from the diagnostic API.

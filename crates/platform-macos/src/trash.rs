@@ -4,6 +4,14 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// Diagnostic context only; the original error retains its kind and OS code.
+#[derive(Debug)]
+pub struct NativeCaptureFailure {
+    pub phase: &'static str,
+    pub operation: &'static str,
+    pub error: io::Error,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeFileInfo {
     pub device: u64,
@@ -127,14 +135,27 @@ impl TrashCandidate {
     /// Supplied protections must resolve to existing inspectable objects.
     /// These exclusions do not establish whether an application has a file open.
     pub fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
+        Self::capture_diagnostic(scope, path, protected).map_err(|failure| failure.error)
+    }
+
+    pub fn capture_diagnostic(
+        scope: &Path,
+        path: &Path,
+        protected: &[PathBuf],
+    ) -> Result<Self, NativeCaptureFailure> {
         #[cfg(target_os = "macos")]
         {
-            native::Candidate::capture(scope, path, protected).map(|native| Self { native })
+            native::Candidate::capture_diagnostic(scope, path, protected)
+                .map(|native| Self { native })
         }
         #[cfg(not(target_os = "macos"))]
         {
             let _ = (scope, path, protected);
-            Err(unsupported())
+            Err(NativeCaptureFailure {
+                phase: "platform",
+                operation: "availability",
+                error: unsupported(),
+            })
         }
     }
 

@@ -27,6 +27,8 @@ pub struct SelectionCheckIssue {
     pub code: &'static str,
     pub message: String,
     pub os_code: Option<i32>,
+    pub native_phase: Option<&'static str>,
+    pub native_operation: Option<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -141,12 +143,14 @@ pub fn preview_selection(
                     .iter()
                     .find(|item| crate::journal::NativePath::from_path(&item.path) == issue.path)
                     .map(|item| item.candidate_id);
-                result.issue_with_os_code(
-                    id,
-                    "native_inspection_failed",
-                    &issue.message,
-                    issue.os_code,
-                );
+                result.issues.push(SelectionCheckIssue {
+                    candidate_id: id,
+                    code: "native_inspection_failed",
+                    message: issue.message.clone(),
+                    os_code: issue.os_code,
+                    native_phase: issue.native_phase,
+                    native_operation: issue.native_operation,
+                });
             }
             for refusal in session.refusals() {
                 let id = result
@@ -224,6 +228,8 @@ impl InstallerSelectionPreview {
             code,
             message: message.into(),
             os_code,
+            native_phase: None,
+            native_operation: None,
         });
     }
 }
@@ -248,9 +254,15 @@ mod diagnostic_tests {
             &error.to_string(),
             error.raw_os_error(),
         );
+        preview.issues[0].native_phase = Some("ancestor");
+        preview.issues[0].native_operation = Some("acl_snapshot");
         preview.issue(None, "native_policy_refused", "protection_unknown");
         let wire = crate::installer_preview::wire::selection_json(&preview);
         assert_eq!(wire["issues"][0]["os_code"], 1);
+        assert_eq!(wire["issues"][0]["native_phase"], "ancestor");
+        assert_eq!(wire["issues"][0]["native_operation"], "acl_snapshot");
+        assert!(wire["issues"][1]["native_phase"].is_null());
+        assert!(wire["issues"][1]["native_operation"].is_null());
         assert!(wire["issues"][1]["os_code"].is_null());
         assert_eq!(wire["status"], "refused");
         assert_eq!(wire["effects_performed"], false);
