@@ -19,6 +19,7 @@ use std::path::PathBuf;
 pub struct SelectionIssue {
     pub path: NativePath,
     pub message: String,
+    pub os_code: Option<i32>,
 }
 
 #[derive(Clone, Debug, Serialize)]

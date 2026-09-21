@@ -145,6 +145,7 @@ pub fn selection_json(preview: &InstallerSelectionPreview) -> Value {
             "candidate_id": issue.candidate_id.map(|id| id.to_string()),
             "code": issue.code,
             "message": issue.message,
+            "os_code": issue.os_code,
         })).collect::<Vec<_>>(),
     })
 }

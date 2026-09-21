@@ -26,6 +26,7 @@ pub struct SelectionCheckIssue {
     pub candidate_id: Option<u64>,
     pub code: &'static str,
     pub message: String,
+    pub os_code: Option<i32>,
 }
 
 #[derive(Clone, Debug)]
@@ -140,7 +141,12 @@ pub fn preview_selection(
                     .iter()
                     .find(|item| crate::journal::NativePath::from_path(&item.path) == issue.path)
                     .map(|item| item.candidate_id);
-                result.issue(id, "native_inspection_failed", &issue.message);
+                result.issue_with_os_code(
+                    id,
+                    "native_inspection_failed",
+                    &issue.message,
+                    issue.os_code,
+                );
             }
             for refusal in session.refusals() {
                 let id = result
@@ -176,7 +182,7 @@ pub fn preview_selection(
                 result.status = SelectionCheckStatus::Failed;
                 "native_check_failed"
             };
-            result.issue(None, code, &error.to_string());
+            result.issue_with_os_code(None, code, &error.to_string(), error.raw_os_error());
         }
     }
     if cancellation.is_cancelled() {
@@ -203,10 +209,51 @@ fn add_bytes(known: &mut u64, unknown: &mut u64, value: Option<u64>) -> Result<(
 
 impl InstallerSelectionPreview {
     fn issue(&mut self, candidate_id: Option<u64>, code: &'static str, message: &str) {
+        self.issue_with_os_code(candidate_id, code, message, None);
+    }
+
+    fn issue_with_os_code(
+        &mut self,
+        candidate_id: Option<u64>,
+        code: &'static str,
+        message: &str,
+        os_code: Option<i32>,
+    ) {
         self.issues.push(SelectionCheckIssue {
             candidate_id,
             code,
             message: message.into(),
+            os_code,
         });
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn selection_wire_preserves_native_code_and_policy_absence() {
+        let mut preview = InstallerSelectionPreview {
+            scan_task_id: "diagnostic-fixture".into(),
+            status: SelectionCheckStatus::Refused,
+            selected: Vec::new(),
+            bytes: InstallerBytes::default(),
+            issues: Vec::new(),
+        };
+        let error = std::io::Error::from_raw_os_error(1);
+        preview.issue_with_os_code(
+            Some(1),
+            "native_inspection_failed",
+            &error.to_string(),
+            error.raw_os_error(),
+        );
+        preview.issue(None, "native_policy_refused", "protection_unknown");
+        let wire = crate::installer_preview::wire::selection_json(&preview);
+        assert_eq!(wire["issues"][0]["os_code"], 1);
+        assert!(wire["issues"][1]["os_code"].is_null());
+        assert_eq!(wire["status"], "refused");
+        assert_eq!(wire["effects_performed"], false);
+        assert_eq!(wire["execution_authority"], false);
     }
 }

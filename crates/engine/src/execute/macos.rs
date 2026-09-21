@@ -34,6 +34,7 @@ impl Probe for MacPlatform {
                     self.issues.push(SelectionIssue {
                         path: NativePath::from_path(path),
                         message: error.to_string(),
+                        os_code: error.raw_os_error(),
                     });
                     return Ok(Snapshot {
                         identity: None,
