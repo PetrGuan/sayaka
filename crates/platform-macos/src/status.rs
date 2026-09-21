@@ -103,7 +103,9 @@ pub enum ThermalState {
 #[cfg(target_os = "macos")]
 mod native;
 #[cfg(target_os = "macos")]
-pub use native::{cpu, disk, memory, network, power, processes, processes_top, sampler, thermal};
+pub use native::{
+    cpu, disk, gpu, memory, network, power, processes, processes_top, sampler, thermal,
+};
 
 #[cfg(not(target_os = "macos"))]
 macro_rules! unsupported {
@@ -128,6 +130,7 @@ unsupported! {
     processes -> u64,
     power -> PowerCounters,
     thermal -> ThermalState,
+    gpu -> f64,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -159,6 +162,7 @@ mod tests {
             processes_top(1, ProcessTopSort::Cpu, 1, 1).unwrap_err(),
             power().unwrap_err(),
             thermal().unwrap_err(),
+            gpu().unwrap_err(),
         ];
         assert!(
             errors

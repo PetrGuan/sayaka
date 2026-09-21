@@ -376,6 +376,7 @@ pub trait Provider {
     ) -> io::Result<ProcessTopSnapshot>;
     fn power(&mut self) -> io::Result<Power>;
     fn thermal(&mut self) -> io::Result<Thermal>;
+    fn gpu(&mut self) -> io::Result<f64>;
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -488,6 +489,7 @@ pub struct Sampler<P, C = LiveClock> {
     processes: Cache<u64>,
     power: Cache<Power>,
     thermal: Cache<Thermal>,
+    gpu: Cache<f64>,
     process_top: Cache<ProcessTop>,
 }
 
@@ -523,6 +525,7 @@ impl<P: Provider, C: Clock> Sampler<P, C> {
             processes: Cache::new(),
             power: Cache::new(),
             thermal: Cache::new(),
+            gpu: Cache::new(),
             process_top: Cache::new(),
         })
     }
@@ -691,6 +694,9 @@ impl<P: Provider, C: Clock> Sampler<P, C> {
             let thermal = self.provider.thermal();
             let now = self.time(cancellation)?;
             self.thermal.update(thermal, now);
+            let gpu = self.provider.gpu().and_then(validate_gpu);
+            let now = self.time(cancellation)?;
+            self.gpu.update(gpu, now);
             self.next_slow = now
                 .elapsed
                 .checked_add(self.config.slow_interval())
@@ -752,9 +758,10 @@ impl<P: Provider, C: Clock> Sampler<P, C> {
                 "no supported collector in this slice",
                 "numeric temperature is not implemented; thermal state is separate",
             ),
-            gpu_utilization_percent: unsupported(
-                "no supported collector in this slice",
-                "GPU utilization is not implemented",
+            gpu_utilization_percent: self.gpu.metric(
+                now,
+                "IOKit PerformanceStatistics Device Utilization %",
+                slow_ttl,
             ),
             process_top: if self.config.process_top.is_some() {
                 self.process_top
@@ -1015,6 +1022,12 @@ fn validate_power(value: Power) -> io::Result<Power> {
     }
     Ok(value)
 }
+fn validate_gpu(value: f64) -> io::Result<f64> {
+    if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        return Err(invalid("invalid GPU utilization percent"));
+    }
+    Ok(value)
+}
 fn valid_window(old: TimePoint, now: TimePoint, interval: Duration) -> Option<u64> {
     let elapsed = now.elapsed.checked_sub(old.elapsed)?;
     if elapsed.is_zero() || elapsed > interval * 3 {
@@ -1152,6 +1165,9 @@ impl Provider for NativeProvider {
         Err(unsupported_platform())
     }
     fn thermal(&mut self) -> io::Result<Thermal> {
+        Err(unsupported_platform())
+    }
+    fn gpu(&mut self) -> io::Result<f64> {
         Err(unsupported_platform())
     }
 }
