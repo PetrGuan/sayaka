@@ -20,6 +20,7 @@ pub mod installer_preview;
 pub mod journal;
 pub mod model;
 pub mod plan;
+pub mod purge_preview;
 mod readonly_task;
 pub mod receipt;
 pub mod rules;

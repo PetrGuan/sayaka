@@ -12,6 +12,7 @@ mod launchers;
 mod lifecycle;
 mod menu;
 mod output;
+mod purge;
 mod rules;
 mod status;
 mod terminal;
@@ -114,6 +115,7 @@ fn command() -> Command {
         .subcommand(scan)
         .subcommand(apps::command())
         .subcommand(apps_related::command())
+        .subcommand(purge::command())
         .subcommand(trash::command())
         .subcommand(trash::receipt_command())
         .subcommand(uninstall::command())
@@ -413,6 +415,7 @@ fn run() -> io::Result<u8> {
         Some(("scan", args)) => run_scan(args, run_start),
         Some(("apps", args)) => apps::run(args),
         Some(("apps-related", args)) => apps_related::run(args),
+        Some(("purge", args)) => purge::run(args),
         Some(("trash", args)) => trash::run(args),
         Some(("receipt", args)) => trash::receipt(args),
         Some(("uninstall", args)) => uninstall::run(args),

@@ -57,6 +57,7 @@ mod tests {
             for name in [
                 "scan",
                 "browse",
+                "purge",
                 "menu",
                 "trash",
                 "receipt",
