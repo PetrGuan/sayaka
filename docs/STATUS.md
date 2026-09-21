@@ -37,7 +37,8 @@ numbers and `coalesced_samples` disclose skipped intermediate delivery.
 | Processes | Bounded visible PID enumeration and optional `PROC_PIDTASKALLINFO` probe | Default is count-only. `--top N` (1..32) opt-in adds PID/name/RSS/CPU rows sorted by `--top-sort cpu|memory` (default cpu); no command lines, env, cwd, path, or UID names |
 | Power | Public IOPowerSources evidence | AC/battery and charge where available; no battery is represented by null, not 0% |
 | Thermal state | Public NSProcessInfo classification | Nominal/fair/serious/critical where available; not numeric temperature |
-| Temperature / GPU | Not implemented in this slice | Explicit unsupported state and null value |
+| GPU utilization | Public IOKit `PerformanceStatistics` from the first `IOAccelerator` service (subclasses included) publishing `Device Utilization %` | Current per-service observation on the slow cadence; absent key/service or invalid values stay unsupported/unavailable, never 0 |
+| Temperature | Not implemented in this slice | Explicit unsupported state and null value |
 
 Per-process top data is disabled by default because process names/PIDs are local
 potentially sensitive data. When enabled with `--top`, JSON/NDJSON populates
@@ -151,8 +152,8 @@ These are local same-scope regression budgets, not a Mole comparison, a claim
 of superiority or complete T11 capability coverage. The original `t11-v1`
 baseline below does not enable process top. The implemented opt-in top path has
 its own [t11-top-v1 budget](../benchmarks/t11-top-v1.json); do not substitute
-base-mode measurements for its cost. Numerical temperatures, GPU utilization,
-Windows and unmeasured host matrices remain explicit gaps. No real-system load
+base-mode measurements for its cost. Numerical temperatures, Windows and
+unmeasured host matrices remain explicit gaps. No real-system load
 or configuration is changed by the runner.
 
 Local baseline on macOS 26.6.2 arm64 (12 snapshots per mode at 1 Hz):

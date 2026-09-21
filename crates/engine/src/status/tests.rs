@@ -187,6 +187,9 @@ impl Provider for Fake {
     fn thermal(&mut self) -> io::Result<Thermal> {
         Ok(Thermal::Nominal)
     }
+    fn gpu(&mut self) -> io::Result<f64> {
+        Ok(42.5)
+    }
 }
 
 fn setup() -> (Sampler<Fake, ManualClock>, ManualClock) {
@@ -329,7 +332,14 @@ fn reader_ages_stalled_snapshots_instead_of_showing_fresh_forever() {
         State::Stale
     );
     assert_eq!(result.disk.state, State::Fresh);
+    // GPU shares the slow cadence/TTL with disk/power/thermal.
+    assert_eq!(result.gpu_utilization_percent.state, State::Fresh);
     assert_eq!(result.alerts[0].state, "unknown");
+    result
+        .age_by(Duration::from_secs(7), &Config::default())
+        .unwrap();
+    assert_eq!(result.disk.state, State::Stale);
+    assert_eq!(result.gpu_utilization_percent.state, State::Stale);
 }
 
 #[test]
@@ -406,6 +416,12 @@ fn invalid_native_values_and_clocks_are_not_success_shaped_defaults() {
     assert!(first.memory.value.is_none());
     assert!(first.temperature_celsius.value.is_none());
     assert_eq!(first.temperature_celsius.state, State::Unsupported);
+    for bad in [f64::NAN, f64::INFINITY, -0.5, 100.5] {
+        assert!(validate_gpu(bad).is_err(), "{bad}");
+    }
+    for good in [0.0, 42.5, 100.0] {
+        assert_eq!(validate_gpu(good).unwrap(), good);
+    }
     clock.advance(1);
     sampler.sample(&Cancellation::default()).unwrap();
     clock.0.set(TimePoint {
@@ -435,8 +451,8 @@ fn json_shapes_have_null_unsupported_values_and_current_threshold_states() {
     let value = serde_json::to_value(snapshot).unwrap();
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["cpu"]["state"], "fresh");
-    assert_eq!(value["gpu_utilization_percent"]["state"], "unsupported");
-    assert!(value["gpu_utilization_percent"]["value"].is_null());
+    assert_eq!(value["gpu_utilization_percent"]["state"], "fresh");
+    assert_eq!(value["gpu_utilization_percent"]["value"], 42.5);
     assert_eq!(value["process_top"]["state"], "unsupported");
     assert!(value["process_top"]["value"].is_null());
     assert!(value["power"]["value"]["battery_percent"].is_null());

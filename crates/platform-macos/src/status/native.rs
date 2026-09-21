@@ -6,7 +6,9 @@ use std::mem::{offset_of, size_of};
 use std::ptr;
 use std::time::Instant;
 
+mod gpu;
 mod power;
+pub use gpu::gpu;
 pub use power::power;
 
 const ROUTE_CAP: usize = 1024 * 1024;

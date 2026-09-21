@@ -112,4 +112,7 @@ impl Provider for NativeProvider {
             native::ThermalState::Critical => Thermal::Critical,
         })
     }
+    fn gpu(&mut self) -> io::Result<f64> {
+        native::gpu()
+    }
 }

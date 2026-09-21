@@ -32,7 +32,7 @@ pub fn command() -> Command {
             .help("Active+wired+physical compressor / RAM threshold; not an OS pressure score"))
         .arg(Arg::new("disk-warn").long("disk-warn").default_value("10").value_parser(value_parser!(f64))
             .help("Read-only startup filesystem available-space threshold, percent or less"))
-        .after_help("One-shot waits for a usable CPU counter window (up to five observations).\nWatch never installs a daemon or changes system state. q/Esc exits a terminal panel;\nCtrl-C/SIGTERM cancels and joins the sampler. Numeric temperature and GPU utilization\nremain unsupported. Process PID/name/RSS/CPU rows are collected only with --top.")
+        .after_help("One-shot waits for a usable CPU counter window (up to five observations).\nWatch never installs a daemon or changes system state. q/Esc exits a terminal panel;\nCtrl-C/SIGTERM cancels and joins the sampler. Numeric temperature remains unsupported.\nProcess PID/name/RSS/CPU rows are collected only with --top.")
 }
 
 struct TimedSnapshot {
@@ -542,7 +542,13 @@ fn lines(snapshot: &Snapshot) -> Vec<String> {
         "Thermal state: {}",
         metric(&snapshot.thermal_state, |state| format!("{state:?}"))
     ));
-    lines.push("Temperature / GPU utilization: unsupported in this slice.".into());
+    lines.push(format!(
+        "GPU utilization: {}",
+        metric(&snapshot.gpu_utilization_percent, |value| format!(
+            "{value:.0}%"
+        ))
+    ));
+    lines.push("Numeric temperature: unsupported in this slice.".into());
     lines.push(format!(
         "Sampler: {}",
         metric(&snapshot.sampler_process, |process| format!(
