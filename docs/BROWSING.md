@@ -4,10 +4,13 @@
 one explicitly selected physical directory. No argument defaults to a home
 directory or current directory. Existing `scan` and its JSON v1 remain unchanged.
 `sayaka menu` is a separate terminal entry point that can launch `browse`,
-`rules preview`, installer discovery, or the existing `clean --execute` /
+`rules preview`, installer discovery, the read-only `apps` inventory and
+`apps-related` association previews, or the existing `clean --execute` /
 `installer --execute` approval flows only after you pick an action and type an
 explicit root. Installer mode defaults to read-only preview; the approval entry
 still prompts for exact candidate selection and confirmation in the child CLI.
+The apps-related entry asks for an explicit app root first and then an explicit
+Library root; no defaults are offered.
 
 ```sh
 sayaka browse .
