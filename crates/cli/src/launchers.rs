@@ -689,10 +689,10 @@ fn remove(args: &ArgMatches) -> io::Result<u8> {
     if !apply {
         return Ok(0);
     }
-    // Re-check the exact inventory and each owned hash immediately before
-    // deletion; refuse to delete anything that changed since the preview.
+    // Re-check the exact inventory immediately before deletion; the ownership
+    // record and every owned hash must still match the previewed manifest.
     match dir_state(&dir)? {
-        DirState::Owned(current) => verify_owned(&dir, &current)?,
+        DirState::Owned(current) if current == manifest => verify_owned(&dir, &current)?,
         _ => {
             return Err(invalid(format!(
                 "{} changed during removal; refusing to touch it",
