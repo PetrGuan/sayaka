@@ -147,6 +147,7 @@ enum ActionKind {
     JavaRule,
     InstallerPreview,
     AppsInventory,
+    AppsRelated,
 }
 
 #[derive(Clone, Debug)]
@@ -179,6 +180,11 @@ enum Screen {
         index: usize,
         input: String,
     },
+    LibraryPathPrompt {
+        index: usize,
+        app_root: PathBuf,
+        input: String,
+    },
     RuleMode {
         index: usize,
         root: PathBuf,
@@ -194,6 +200,65 @@ enum Outcome {
     None,
     Quit,
     Run(DispatchPlan),
+}
+
+enum PathEdit {
+    Back,
+    Stay,
+    Submit(PathBuf),
+}
+
+/// Applies one key to a path prompt, preserving the shared editing contract
+/// (Esc/Left back, Backspace, Ctrl-U, byte budget, no control characters)
+/// for both the action root prompt and the apps-related Library root prompt.
+fn edit_path_input(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    mut input: String,
+) -> (String, PathEdit, Option<String>) {
+    match code {
+        KeyCode::Esc | KeyCode::Left => (input, PathEdit::Back, None),
+        KeyCode::Backspace => {
+            input.pop();
+            (input, PathEdit::Stay, None)
+        }
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+            input.clear();
+            (input, PathEdit::Stay, None)
+        }
+        KeyCode::Enter => match parse_explicit_root(&input) {
+            Ok(root) => (input, PathEdit::Submit(root), None),
+            Err(error) => (
+                input,
+                PathEdit::Stay,
+                Some(format!("Invalid root: {error}")),
+            ),
+        },
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
+            if ch.is_control() {
+                return (
+                    input,
+                    PathEdit::Stay,
+                    Some("Control characters are not accepted in menu path input.".into()),
+                );
+            }
+            let mut append = [0u8; 4];
+            let bytes = ch.encode_utf8(&mut append).as_bytes();
+            if input.len() + bytes.len() > MAX_PATH_INPUT_BYTES {
+                return (
+                    input,
+                    PathEdit::Stay,
+                    Some(format!(
+                        "Path input is limited to {} UTF-8 bytes.",
+                        MAX_PATH_INPUT_BYTES
+                    )),
+                );
+            }
+            input.push(ch);
+            (input, PathEdit::Stay, None)
+        }
+        _ => (input, PathEdit::Stay, None),
+    }
 }
 
 #[derive(Debug)]
@@ -234,6 +299,11 @@ impl App {
             Screen::PathPrompt { index, input } => {
                 self.key_path_prompt(code, modifiers, index, input)
             }
+            Screen::LibraryPathPrompt {
+                index,
+                app_root,
+                input,
+            } => self.key_library_path_prompt(code, modifiers, index, app_root, input),
             Screen::RuleMode {
                 index,
                 root,
@@ -260,7 +330,10 @@ impl App {
                     Outcome::None
                 }
             },
-            Screen::ActionInfo { .. } | Screen::PathPrompt { .. } | Screen::RuleMode { .. } => {
+            Screen::ActionInfo { .. }
+            | Screen::PathPrompt { .. }
+            | Screen::LibraryPathPrompt { .. }
+            | Screen::RuleMode { .. } => {
                 match code {
                     KeyCode::Esc | KeyCode::Left | KeyCode::Backspace => {
                         self.screen = Screen::Root;
@@ -377,33 +450,23 @@ impl App {
         code: KeyCode,
         modifiers: KeyModifiers,
         index: usize,
-        mut input: String,
+        input: String,
     ) -> io::Result<Outcome> {
-        match code {
-            KeyCode::Esc | KeyCode::Left => {
+        let (input, edit, status) = edit_path_input(code, modifiers, input);
+        if let Some(status) = status {
+            self.status = status;
+        }
+        match edit {
+            PathEdit::Back => {
                 self.screen = Screen::ActionInfo { index, scroll: 0 };
                 self.status = "Path entry cancelled.".into();
                 Ok(Outcome::None)
             }
-            KeyCode::Backspace => {
-                input.pop();
+            PathEdit::Stay => {
                 self.screen = Screen::PathPrompt { index, input };
                 Ok(Outcome::None)
             }
-            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
-                input.clear();
-                self.screen = Screen::PathPrompt { index, input };
-                Ok(Outcome::None)
-            }
-            KeyCode::Enter => {
-                let root = match parse_explicit_root(&input) {
-                    Ok(root) => root,
-                    Err(error) => {
-                        self.status = format!("Invalid root: {error}");
-                        self.screen = Screen::PathPrompt { index, input };
-                        return Ok(Outcome::None);
-                    }
-                };
+            PathEdit::Submit(root) => {
                 let action = self
                     .actions
                     .get(index)
@@ -422,6 +485,17 @@ impl App {
                                 .into();
                         Ok(Outcome::None)
                     }
+                    ActionKind::AppsRelated => {
+                        self.screen = Screen::LibraryPathPrompt {
+                            index,
+                            app_root: root,
+                            input: String::new(),
+                        };
+                        self.status =
+                            "Type an explicit Library root and press Enter. Esc re-enters the app root."
+                                .into();
+                        Ok(Outcome::None)
+                    }
                     _ => build_dispatch_plan(
                         action.kind,
                         root,
@@ -432,29 +506,41 @@ impl App {
                     .map(Outcome::Run),
                 }
             }
-            KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                if ch.is_control() {
-                    self.status = "Control characters are not accepted in menu path input.".into();
-                    self.screen = Screen::PathPrompt { index, input };
-                    return Ok(Outcome::None);
-                }
-                let mut append = [0u8; 4];
-                let bytes = ch.encode_utf8(&mut append).as_bytes();
-                if input.len() + bytes.len() > MAX_PATH_INPUT_BYTES {
-                    self.status = format!(
-                        "Path input is limited to {} UTF-8 bytes.",
-                        MAX_PATH_INPUT_BYTES
-                    );
-                    self.screen = Screen::PathPrompt { index, input };
-                    return Ok(Outcome::None);
-                }
-                input.push(ch);
-                self.screen = Screen::PathPrompt { index, input };
+        }
+    }
+
+    fn key_library_path_prompt(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        index: usize,
+        app_root: PathBuf,
+        input: String,
+    ) -> io::Result<Outcome> {
+        let (input, edit, status) = edit_path_input(code, modifiers, input);
+        if let Some(status) = status {
+            self.status = status;
+        }
+        match edit {
+            PathEdit::Back => {
+                self.screen = Screen::PathPrompt {
+                    index,
+                    input: String::new(),
+                };
+                self.status = "Library path cancelled; re-enter the app root.".into();
                 Ok(Outcome::None)
             }
-            _ => {
-                self.screen = Screen::PathPrompt { index, input };
+            PathEdit::Stay => {
+                self.screen = Screen::LibraryPathPrompt {
+                    index,
+                    app_root,
+                    input,
+                };
                 Ok(Outcome::None)
+            }
+            PathEdit::Submit(library_root) => {
+                build_apps_related_plan(app_root, library_root, current_exe_path()?)
+                    .map(Outcome::Run)
             }
         }
     }
@@ -691,6 +777,50 @@ impl App {
                     style: Style::Muted,
                 });
             }
+            Screen::LibraryPathPrompt {
+                index,
+                app_root,
+                input,
+            } => {
+                let title = self
+                    .actions
+                    .get(*index)
+                    .map(|action| action.label)
+                    .unwrap_or("Action");
+                lines.push(Line {
+                    text: format!("{title} / explicit Library root"),
+                    style: Style::Header,
+                });
+                lines.push(Line {
+                    text: clip_display(
+                        &format!("APP ROOT: {}", app_root.display()),
+                        self.last_size.0 as usize,
+                    ),
+                    style: Style::Muted,
+                });
+                lines.push(Line {
+                    text: "Type one UTF-8 Library path. No HOME defaults, no shell expansion, no autoscan."
+                        .into(),
+                    style: Style::Muted,
+                });
+                lines.push(Line {
+                    text: format!(
+                        "LIBRARY ROOT: {}",
+                        clip_display(input, self.last_size.0 as usize)
+                    ),
+                    style: Style::Selected,
+                });
+                lines.push(Line {
+                    text: format!("{} / {} bytes", input.len(), MAX_PATH_INPUT_BYTES),
+                    style: Style::Muted,
+                });
+                lines.push(Line {
+                    text:
+                        "Enter: preview; Ctrl-U: clear; Backspace: delete; Esc: re-enter app root"
+                            .into(),
+                    style: Style::Muted,
+                });
+            }
             Screen::RuleMode { index, choice, .. } => {
                 let approval_enabled = self
                     .actions
@@ -814,7 +944,7 @@ fn trim_frame(mut lines: Vec<Line>, height: usize) -> Vec<Line> {
 
 fn help_lines() -> Vec<String> {
     vec![
-        "Actions: browse, Python/Java rules, installer preview/approval, app inventory.".into(),
+        "Actions: browse, Python/Java rules, installer preview/approval, app inventory, apps-related.".into(),
         "Every action requires a typed root path. Empty/default roots are rejected.".into(),
         "Rule mode separates read-only preview from clean --execute approval flow.".into(),
         "No --yes and no preselected --select targets are passed by menu dispatch.".into(),
@@ -822,8 +952,7 @@ fn help_lines() -> Vec<String> {
         "Paths are UTF-8 only in menu input; for raw non-UTF-8 bytes use direct CLI arguments.".into(),
         "Control characters are rejected in menu path input.".into(),
         "If this terminal is too small (<60x14), dispatch is blocked until resize.".into(),
-        "apps-related remains direct CLI only in this batch:".into(),
-        "  sayaka apps-related --app-root /Applications --library-root \"$HOME/Library\"".into(),
+        "apps-related asks for an explicit app root, then an explicit Library root.".into(),
     ]
 }
 
@@ -963,9 +1092,20 @@ fn action_catalog() -> io::Result<Vec<Action>> {
                 .then_some("Apps inventory acceptance is currently macOS-only."),
             approval_enabled: false,
             approval_disabled_reason: None,
+            details: vec!["Preview-only; no launch/uninstall actions.".into()],
+        },
+        Action {
+            kind: ActionKind::AppsRelated,
+            label: "Apps-related data preview",
+            summary: "Read-only related-data association preview for apps and Library.",
+            enabled: cfg!(target_os = "macos"),
+            disabled_reason: (!cfg!(target_os = "macos"))
+                .then_some("Apps-related preview acceptance is currently macOS-only."),
+            approval_enabled: false,
+            approval_disabled_reason: None,
             details: vec![
-                "Preview-only; no launch/uninstall actions.".into(),
-                "apps-related remains direct CLI in this batch.".into(),
+                "Preview-only association evidence; no uninstall or removal actions.".into(),
+                "Type an explicit app root, then an explicit Library root; no defaults.".into(),
             ],
         },
     ])
@@ -1008,6 +1148,23 @@ fn rule_action(
             format!("Failure: {}", rule.failure),
         ],
     }
+}
+
+fn build_apps_related_plan(
+    app_root: PathBuf,
+    library_root: PathBuf,
+    program: PathBuf,
+) -> io::Result<DispatchPlan> {
+    // Equals form keeps hyphen-leading paths intact for clap flag values.
+    let mut app_arg = OsString::from("--app-root=");
+    app_arg.push(app_root.as_os_str());
+    let mut library_arg = OsString::from("--library-root=");
+    library_arg.push(library_root.as_os_str());
+    Ok(DispatchPlan {
+        label: "apps-related association preview".into(),
+        program,
+        args: vec!["apps-related".into(), app_arg, library_arg],
+    })
 }
 
 fn build_dispatch_plan(
@@ -1053,6 +1210,11 @@ fn build_dispatch_plan(
             args.push("--".into());
             args.push(root.as_os_str().to_os_string());
             "apps inventory preview".into()
+        }
+        ActionKind::AppsRelated => {
+            return Err(io::Error::other(
+                "apps-related dispatch requires both roots; use build_apps_related_plan",
+            ));
         }
         ActionKind::PythonRule | ActionKind::JavaRule => {
             let rule = if matches!(kind, ActionKind::PythonRule) {
@@ -1451,6 +1613,85 @@ mod tests {
         assert!(args.contains(&OsStr::new("--")));
         assert!(!args.contains(&OsStr::new("--yes")));
         assert!(!args.contains(&OsStr::new("--select")));
+    }
+
+    #[test]
+    fn apps_related_menu_collects_two_explicit_roots_before_dispatch() {
+        let actions = action_catalog().unwrap();
+        let index = actions
+            .iter()
+            .position(|action| matches!(action.kind, ActionKind::AppsRelated))
+            .unwrap();
+        let mut app = App::new(actions, None);
+        app.screen = Screen::PathPrompt {
+            index,
+            input: "/Applications".into(),
+        };
+        assert!(matches!(
+            app.on_key(KeyCode::Enter, KeyModifiers::NONE).unwrap(),
+            Outcome::None
+        ));
+        assert!(matches!(app.screen, Screen::LibraryPathPrompt { .. }));
+        for ch in "/Users/u/Library".chars() {
+            assert!(matches!(
+                app.on_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap(),
+                Outcome::None
+            ));
+        }
+        let outcome = app.on_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        let Outcome::Run(plan) = outcome else {
+            panic!("expected dispatch after both roots");
+        };
+        assert_eq!(
+            plan.args,
+            vec![
+                OsString::from("apps-related"),
+                OsString::from("--app-root=/Applications"),
+                OsString::from("--library-root=/Users/u/Library"),
+            ]
+        );
+        assert!(!plan.args.iter().any(|arg| arg == "--execute"));
+    }
+
+    #[test]
+    fn apps_related_library_prompt_escape_returns_to_app_root_prompt() {
+        let actions = action_catalog().unwrap();
+        let index = actions
+            .iter()
+            .position(|action| matches!(action.kind, ActionKind::AppsRelated))
+            .unwrap();
+        let mut app = App::new(actions, None);
+        app.screen = Screen::LibraryPathPrompt {
+            index,
+            app_root: PathBuf::from("/Applications"),
+            input: "partial".into(),
+        };
+        assert!(matches!(
+            app.on_key(KeyCode::Esc, KeyModifiers::NONE).unwrap(),
+            Outcome::None
+        ));
+        assert!(matches!(
+            app.screen,
+            Screen::PathPrompt { index: found, .. } if found == index
+        ));
+    }
+
+    #[test]
+    fn apps_related_dispatch_keeps_hyphen_leading_paths_in_equals_form() {
+        let plan = build_apps_related_plan(
+            PathBuf::from("-apps"),
+            PathBuf::from("-library"),
+            PathBuf::from("/bin/sayaka"),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.args,
+            vec![
+                OsString::from("apps-related"),
+                OsString::from("--app-root=-apps"),
+                OsString::from("--library-root=-library"),
+            ]
+        );
     }
 
     #[test]
