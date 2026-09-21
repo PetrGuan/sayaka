@@ -86,15 +86,26 @@ pub fn command() -> Command {
 }
 
 pub fn run(args: &ArgMatches) -> io::Result<u8> {
-    let result = match args.subcommand() {
-        Some(("print", args)) => print(args),
-        Some(("install", args)) => install(args),
-        Some(("remove", args)) => remove(args),
-        _ => Ok(2),
+    let (result, json_on_error) = match args.subcommand() {
+        Some(("print", args)) => (print(args), false),
+        Some(("install", args)) => (install(args), args.get_flag("json")),
+        Some(("remove", args)) => (remove(args), args.get_flag("json")),
+        _ => (Ok(2), false),
     };
     match result {
         Ok(code) => Ok(code),
         Err(error) => {
+            if json_on_error && error.kind() != io::ErrorKind::BrokenPipe {
+                json(&serde_json::json!({
+                    "schema_version": 1,
+                    "kind": "launchers_result",
+                    "status": "failed",
+                    "error": {
+                        "code": format!("{:?}", error.kind()),
+                        "message": error.to_string(),
+                    },
+                }))?;
+            }
             writeln!(
                 io::stderr().lock(),
                 "launcher operation failed: {:?}",
@@ -272,6 +283,16 @@ impl Manifest {
                 ));
             }
         }
+        let mut unique = std::collections::HashSet::with_capacity(self.files.len());
+        if !self
+            .files
+            .iter()
+            .all(|file| unique.insert(file.name.as_str()))
+        {
+            return Err(invalid(
+                "launcher ownership manifest lists a file more than once",
+            ));
+        }
         Ok(())
     }
 }
@@ -321,6 +342,11 @@ fn command_line(bin: Option<&PathBuf>) -> io::Result<String> {
             "executable path is not valid UTF-8 and cannot be scripted",
         )
     })?;
+    if text.chars().any(char::is_control) {
+        return Err(invalid(
+            "executable path contains control characters and cannot be scripted",
+        ));
+    }
     Ok(format!("{} menu", shell_single_quote(text)))
 }
 
@@ -423,6 +449,12 @@ fn dir_state(dir: &Path) -> io::Result<DirState> {
     if entries.is_empty() {
         return Ok(DirState::Empty);
     }
+    if !entries.iter().any(|name| name == MANIFEST_NAME) {
+        return Err(invalid(format!(
+            "{} contains files not owned by this tool; refusing to touch it",
+            dir.display()
+        )));
+    }
     let manifest = read_manifest(dir)?;
     let mut expected: Vec<&str> = manifest.files.iter().map(|f| f.name.as_str()).collect();
     expected.push(MANIFEST_NAME);
@@ -493,37 +525,45 @@ fn install(args: &ArgMatches) -> io::Result<u8> {
             sha256: &file.sha256,
         })
         .collect();
-    if args.get_flag("json") {
-        json(&serde_json::json!({
-            "schema_version": 1,
-            "kind": "launchers_preview",
-            "action": "install",
-            "effects_performed": false,
-            "dir": dir.display().to_string(),
-            "replacing_owned_installation": replacing,
-            "files": outputs,
-        }))?;
-    } else {
-        let mut out = io::stdout().lock();
-        writeln!(out, "Launchers install preview: {}", dir.display())?;
-        if replacing {
-            writeln!(out, "Replacing the verified owned launcher artifacts.")?;
-        }
-        for file in &outputs {
+    if !apply || !args.get_flag("json") {
+        if args.get_flag("json") {
+            json(&serde_json::json!({
+                "schema_version": 1,
+                "kind": "launchers_preview",
+                "action": "install",
+                "effects_performed": false,
+                "dir": dir.display().to_string(),
+                "replacing_owned_installation": replacing,
+                "files": outputs,
+            }))?;
+        } else {
+            let mut out = io::stdout().lock();
+            writeln!(out, "Launchers install preview: {}", dir.display())?;
+            if replacing {
+                writeln!(out, "Replacing the verified owned launcher artifacts.")?;
+            }
+            for file in &outputs {
+                writeln!(
+                    out,
+                    "Write {} ({} bytes, SHA-256 {})",
+                    file.name, file.bytes, file.sha256
+                )?;
+            }
             writeln!(
                 out,
-                "Write {} ({} bytes, SHA-256 {})",
-                file.name, file.bytes, file.sha256
+                "Preview only without --execute. No Raycast/Alfred configuration, PATH or startup file is changed."
             )?;
+            out.flush()?;
         }
-        writeln!(
-            out,
-            "Preview only without --execute. No Raycast/Alfred configuration, PATH or startup file is changed."
-        )?;
-        out.flush()?;
     }
     if !apply {
         return Ok(0);
+    }
+    // Re-validate the dedicated directory state immediately before effects;
+    // refuse if it changed since the checks above.
+    match dir_state(&dir)? {
+        DirState::Absent | DirState::Empty => {}
+        DirState::Owned(manifest) => verify_owned(&dir, &manifest)?,
     }
     fs::create_dir_all(&dir)?;
     let manifest = Manifest {
@@ -566,18 +606,35 @@ fn install(args: &ArgMatches) -> io::Result<u8> {
 
 fn write_atomic(path: &Path, bytes: &[u8], executable: bool) -> io::Result<()> {
     let tmp = path.with_extension("sayaka-tmp");
-    {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = if executable { 0o755 } else { 0o644 };
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))?;
-    }
-    fs::rename(&tmp, path)
+    let result = (|| -> io::Result<()> {
+        {
+            let mut file = fs::File::create(&tmp)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if executable { 0o755 } else { 0o644 };
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))?;
+        }
+        fs::rename(&tmp, path)
+    })();
+    result.map_err(|error| {
+        let cleaned = fs::remove_file(&tmp).is_ok();
+        io::Error::new(
+            error.kind(),
+            format!(
+                "{error} (temporary file {} {})",
+                tmp.display(),
+                if cleaned {
+                    "cleaned up"
+                } else {
+                    "could not be removed; delete it manually"
+                }
+            ),
+        )
+    })
 }
 
 fn remove(args: &ArgMatches) -> io::Result<u8> {
@@ -585,51 +642,64 @@ fn remove(args: &ArgMatches) -> io::Result<u8> {
         args.get_one::<PathBuf>("dir")
             .ok_or_else(|| invalid("--dir is required"))?,
     )?;
-    let manifest = read_manifest(&dir)?;
+    // The directory inventory must exactly match the verified ownership
+    // manifest; any unknown entry refuses the whole operation.
+    let manifest = match dir_state(&dir)? {
+        DirState::Owned(manifest) => manifest,
+        DirState::Absent => {
+            return Err(invalid(format!("{} does not exist", dir.display())));
+        }
+        DirState::Empty => {
+            return Err(invalid(format!(
+                "{} contains no owned launcher artifacts",
+                dir.display()
+            )));
+        }
+    };
     verify_owned(&dir, &manifest)?;
-    let extras = dir_entries(&dir)?
-        .into_iter()
-        .filter(|name| {
-            name != MANIFEST_NAME && !manifest.files.iter().any(|file| file.name == *name)
-        })
-        .collect::<Vec<_>>();
     let apply = args.get_flag("execute");
     let names: Vec<&str> = manifest
         .files
         .iter()
         .map(|file| file.name.as_str())
         .collect();
-    if args.get_flag("json") {
-        json(&serde_json::json!({
-            "schema_version": 1,
-            "kind": "launchers_preview",
-            "action": "remove",
-            "effects_performed": false,
-            "dir": dir.display().to_string(),
-            "files": names,
-            "unowned_entries_retained": extras,
-        }))?;
-    } else {
-        let mut out = io::stdout().lock();
-        writeln!(out, "Launchers remove preview: {}", dir.display())?;
-        for name in &names {
-            writeln!(out, "Delete owned artifact {name}")?;
+    if !apply || !args.get_flag("json") {
+        if args.get_flag("json") {
+            json(&serde_json::json!({
+                "schema_version": 1,
+                "kind": "launchers_preview",
+                "action": "remove",
+                "effects_performed": false,
+                "dir": dir.display().to_string(),
+                "files": names,
+            }))?;
+        } else {
+            let mut out = io::stdout().lock();
+            writeln!(out, "Launchers remove preview: {}", dir.display())?;
+            for name in &names {
+                writeln!(out, "Delete owned artifact {name}")?;
+            }
+            writeln!(
+                out,
+                "Preview only without --execute. Raycast/Alfred configuration stays untouched."
+            )?;
+            out.flush()?;
         }
-        for extra in &extras {
-            writeln!(out, "Retain unowned entry {extra}")?;
-        }
-        writeln!(
-            out,
-            "Preview only without --execute. Raycast/Alfred configuration stays untouched."
-        )?;
-        out.flush()?;
     }
     if !apply {
         return Ok(0);
     }
-    // Re-verify each file immediately before deletion; refuse to delete
-    // anything whose bytes changed since the preview above.
-    verify_owned(&dir, &manifest)?;
+    // Re-check the exact inventory and each owned hash immediately before
+    // deletion; refuse to delete anything that changed since the preview.
+    match dir_state(&dir)? {
+        DirState::Owned(current) => verify_owned(&dir, &current)?,
+        _ => {
+            return Err(invalid(format!(
+                "{} changed during removal; refusing to touch it",
+                dir.display()
+            )));
+        }
+    }
     for name in &names {
         fs::remove_file(dir.join(name))?;
     }
@@ -651,7 +721,7 @@ fn remove(args: &ArgMatches) -> io::Result<u8> {
         if !dir_removed {
             writeln!(
                 out,
-                "Directory retained because unowned entries remain; remove them manually."
+                "Directory could not be removed; inspect and remove it manually."
             )?;
         }
         out.flush()?;
@@ -746,6 +816,9 @@ mod tests {
         let mut bad = manifest.clone();
         bad.files[0].name = "../escape".into();
         assert!(bad.validate().is_err());
+        let mut duplicate = manifest.clone();
+        duplicate.files.push(duplicate.files[0].clone());
+        assert!(duplicate.validate().is_err());
         let mut wrong_kind = manifest;
         wrong_kind.kind = "other".into();
         assert!(wrong_kind.validate().is_err());
@@ -804,6 +877,31 @@ mod tests {
     }
 
     #[test]
+    fn remove_refuses_owned_directory_with_extra_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("launchers");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("sayaka-raycast.sh"), b"original").unwrap();
+        let manifest = Manifest {
+            schema_version: 1,
+            kind: "sayaka_launchers".into(),
+            files: vec![OwnedFile {
+                name: "sayaka-raycast.sh".into(),
+                bytes: 8,
+                sha256: sha256_hex(b"original"),
+            }],
+        };
+        fs::write(
+            dir.join(MANIFEST_NAME),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(dir_state(&dir), Ok(DirState::Owned(_))));
+        fs::write(dir.join("user-note.txt"), b"mine").unwrap();
+        assert!(matches!(dir_state(&dir), Err(e) if e.kind() == io::ErrorKind::InvalidInput));
+    }
+
+    #[test]
     fn remove_refuses_modified_owned_file() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("launchers");
@@ -832,5 +930,16 @@ mod tests {
     fn non_utf8_or_missing_bin_is_refused() {
         assert!(command_line(Some(&PathBuf::from("/definitely/not/here"))).is_err());
         assert!(command_line(Some(&PathBuf::from("../relative"))).is_err());
+    }
+
+    #[test]
+    fn control_characters_in_bin_path_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let newline = root.path().join("line\nbreak");
+        fs::write(&newline, b"x").unwrap();
+        assert!(matches!(
+            command_line(Some(&newline)),
+            Err(e) if e.kind() == io::ErrorKind::InvalidInput
+        ));
     }
 }

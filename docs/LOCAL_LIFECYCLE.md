@@ -80,9 +80,9 @@ operation. Installation writes one Raycast script-command script and one
 Alfred Run Script script plus a `.sayaka-launchers.json` SHA-256 ownership
 manifest into a dedicated directory that must be absent, empty, or already
 owned by this tool. Removal deletes exactly the manifest-listed files whose
-bytes still match their recorded hash, retains unowned entries, and removes
-the directory only when left empty. Unknown, modified or missing owned files
-cause refusal in both directions.
+bytes still match their recorded hash and removes the emptied directory.
+Unknown, modified or missing entries cause refusal in both directions, and
+the exact inventory is re-checked immediately before any effect.
 
 Each script asks the chosen terminal to open a window running
 `<sayaka executable> menu` through `/usr/bin/osascript`. Supported terminal
