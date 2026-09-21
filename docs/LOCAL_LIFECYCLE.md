@@ -2,7 +2,7 @@
 
 The implemented T12 local lifecycle makes the CLI easier to use without introducing
 downloads, online updates, signing claims, authentication changes or a daemon.
-Local installation is initially macOS-only. Windows installation, launchers,
+Local installation is initially macOS-only. Windows installation,
 stable/nightly distribution and Touch ID remain separate work.
 The current local surface is `install` / `update` / `recover` / `remove`,
 plus history and completions. `recover` handles installation/update state; it
@@ -64,6 +64,37 @@ procedure when saving or sourcing a generated script.
 
 Completion support does not imply that every native command is implemented on
 every shell's host operating system.
+
+## Terminal launchers (Raycast/Alfred)
+
+```sh
+sayaka launchers print raycast > sayaka-raycast.sh
+sayaka launchers install --dir ~/.local/share/sayaka-launchers
+sayaka launchers install --dir ~/.local/share/sayaka-launchers --execute
+sayaka launchers remove --dir ~/.local/share/sayaka-launchers --execute
+```
+
+`print` writes one launcher script to stdout only, like `completions`.
+`install` and `remove` default to a preview; `--execute` applies the owned
+operation. Installation writes one Raycast script-command script and one
+Alfred Run Script script plus a `.sayaka-launchers.json` SHA-256 ownership
+manifest into a dedicated directory that must be absent, empty, or already
+owned by this tool. Removal deletes exactly the manifest-listed files whose
+bytes still match their recorded hash, retains unowned entries, and removes
+the directory only when left empty. Unknown, modified or missing owned files
+cause refusal in both directions.
+
+Each script asks the chosen terminal to open a window running
+`<sayaka executable> menu` through `/usr/bin/osascript`. Supported terminal
+choices are `terminal-app` (default) and `iterm2`; `--bin PATH` overrides
+which executable is launched (default: the running executable). The scripts
+do not sign in, mount, or grant anything; they only open a terminal.
+
+No Raycast or Alfred configuration is read or written: after installing,
+point Raycast's Script Commands settings or an Alfred workflow Run Script
+action at the directory manually. No `defaults write`, shell startup file,
+or PATH change is performed. Launching the menu still requires the terminal's
+own interactivity; nothing runs as a daemon or on a schedule.
 
 ## Dedicated prefix
 
@@ -179,7 +210,9 @@ They cover copy/hash/identity integrity, non-overwrite conflicts, modified and
 unowned entries, symlinks/hardlinks/permissions, cancellation/partial failure,
 history preservation and execution of the installed fixture binary.
 History cases cover pending precedence, corruption outside filters, time bounds
-and pagination; completion cases check the actual command tree.
+and pagination; completion cases check the actual command tree. Launcher cases
+cover both quoting layers, manifest roundtrip and tamper refusal, dedicated-dir
+discipline, unknown entries and install/remove round trips in temporary dirs.
 
 No online release, signature, authentication change or real-user installation
 is performed as part of these default checks.
