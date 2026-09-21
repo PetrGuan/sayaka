@@ -569,3 +569,12 @@ approval, recovery, directory action, rule management or status sampler is
 exported by these read-only scan/browsing/installer-check slices.
 An additional macOS x86_64 Rust type check passes; it is not Intel runtime or
 minimum-OS acceptance. The local C/Swift host runs were on Apple silicon.
+
+### Installer selection diagnostic OS codes
+
+Each selection issue includes nullable `os_code`: the original native OS error
+code when available, otherwise null for policy refusals and errors without one.
+This additive field preserves native capture and revalidation diagnostics without
+parsing platform-localized messages. It does not identify which syscall failed,
+prove that a sandbox caused the refusal, or relax whole-batch admission rules.
+The native execution selection issue serializer also retains this optional field.
