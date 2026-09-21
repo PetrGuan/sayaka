@@ -38,7 +38,17 @@ numbers and `coalesced_samples` disclose skipped intermediate delivery.
 | Power | Public IOPowerSources evidence | AC/battery and charge where available; no battery is represented by null, not 0% |
 | Thermal state | Public NSProcessInfo classification | Nominal/fair/serious/critical where available; not numeric temperature |
 | GPU utilization | Public IOKit `PerformanceStatistics` from the first `IOAccelerator` service (subclasses included) publishing `Device Utilization %` | Current per-service observation on the slow cadence; absent key/service or invalid values stay unsupported/unavailable, never 0 |
-| Temperature | Not implemented in this slice | Explicit unsupported state and null value |
+| Temperature | Not implemented (decision recorded below) | Explicit unsupported state and null value |
+
+Numeric temperature decision (2026-09-21, PetrGuan/SayakaCleaner#31): the gap
+is deliberate. Apple Silicon exposes no public, unprivileged numeric
+temperature source; `powermetrics` requires elevated privileges and private
+IOHID sensor APIs conflict with the public-API/App Store posture. An
+Intel-only SMC reader would have no validation host (current evidence is
+arm64-only), and shipping unverifiable native code violates the
+real-platform-evidence rule. The metric therefore stays `unsupported` with a
+null value rather than an inferred or privileged reading; revisit only if a
+public unprivileged source or a real Intel validation host appears.
 
 Per-process top data is disabled by default because process names/PIDs are local
 potentially sensitive data. When enabled with `--top`, JSON/NDJSON populates
