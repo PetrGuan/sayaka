@@ -318,6 +318,8 @@ operations require new action-specific design gates after M3. They are not
 authorized by the initial ordinary-file trash contract. "Optimize" must name the
 actual operation and evidence, not promise generic speedups or RAM boosting.
 Never make permanent deletion a fallback after a failed trash operation.
+The T10 operation/threat/recovery contract is drafted in
+[MAINTENANCE.md](MAINTENANCE.md); it authorizes nothing by itself.
 
 ## C0: build the benchmark before claiming a win
 

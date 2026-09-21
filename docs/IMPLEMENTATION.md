@@ -27,7 +27,7 @@ This document describes public technical responsibilities, not staffing or dates
 | T7: interactive CLI | `crates/cli/`, terminal event/rendering and process fixtures | Implemented macOS menu/browser and ordinary-file approval entries; full UX/platform acceptance remains | T2; T3 for actions |
 | T8: full cleanup workflows | Rules, installer discovery/selection and CLI flows | Two-rule clean and narrow installer workflow implemented; directory assessment is ModelOnly, not purge execution | T5 and T7; new contracts for directory actions |
 | T9: app management | App discovery/association and CLI flows | Implemented read-only `apps` and `apps-related`; no uninstall/delete authorization | T5 and T7; new action/ownership contracts |
-| T10: specific system maintenance | Future bounded native operations and CLI flows | No maintenance actions implemented; explicit preconditions, privilege boundaries and native outcomes required | T3 and T7 |
+| T10: specific system maintenance | Future bounded native operations and CLI flows | No maintenance actions implemented; operation/threat/recovery contract drafted in [MAINTENANCE.md](MAINTENANCE.md) pending confirmation; explicit preconditions, privilege boundaries and native outcomes required | T3 and T7 |
 | T11: status monitoring | Engine/native status modules and CLI rendering/streaming | macOS status/watch/process top implemented; numeric temperature, GPU and Windows remain gaps | T2 |
 | T12: CLI lifecycle and convenience | History, local installation lifecycle and completions | Local install/update/recover/remove implemented; distribution/authentication/launchers and Windows installation remain | T3; T10 boundary for authentication setup |
 
