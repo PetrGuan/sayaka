@@ -122,6 +122,12 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
     })();
 
     if let Some(error) = progress_error {
+        if json {
+            write_fatal_json(
+                &mut io::stdout().lock(),
+                ScanError::new(ScanCode::Io, format!("progress output failed: {error}")),
+            )?;
+        }
         return Err(error);
     }
     match result {
@@ -140,7 +146,7 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
         }
         Err(error) => {
             if json {
-                output::fatal(&mut io::stdout().lock(), &error)?;
+                write_fatal_json(&mut io::stdout().lock(), error.clone())?;
             } else {
                 human::fatal(&mut io::stderr().lock(), &error, style)?;
             }
@@ -153,6 +159,39 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
             )
         }
     }
+}
+
+fn write_fatal_json(out: &mut impl Write, error: ScanError) -> io::Result<()> {
+    let value = serde_json::json!({
+        "schema_version": purge_preview::PURGE_SCHEMA_VERSION,
+        "kind": purge_preview::PURGE_KIND,
+        "platform": if cfg!(target_os = "macos") { "macos" } else { "unsupported" },
+        "status": "failed",
+        "complete": false,
+        "effects_performed": false,
+        "roots": [],
+        "stale_days": serde_json::Value::Null,
+        "projects": [],
+        "counts": {
+            "projects": 0,
+            "artifacts": 0,
+            "stale_artifacts": 0,
+            "excluded": 0,
+        },
+        "issues": [{
+            "code": error.code.as_str(),
+            "message": error.message,
+            "os_code": error.os_code,
+        }],
+    });
+    serde_json::to_writer(&mut *out, &value).map_err(|error| {
+        io::Error::new(
+            error.io_error_kind().unwrap_or(io::ErrorKind::InvalidData),
+            error,
+        )
+    })?;
+    out.write_all(b"\n")?;
+    out.flush()
 }
 
 fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
@@ -185,6 +224,13 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
             "stale_artifacts": preview.counts.stale_artifacts,
             "excluded": preview.counts.excluded,
         },
+        "scan_issues": preview.scan_issues.iter().map(|issue| serde_json::json!({
+            "path": issue.path.as_deref().map(crate::apps::write_native_path),
+            "code": issue.code.as_str(),
+            "message": issue.message,
+            "os_code": issue.os_code,
+        })).collect::<Vec<_>>(),
+        "scan_issues_omitted": preview.scan_issues_omitted,
     });
     serde_json::to_writer(&mut *out, &value).map_err(|error| {
         io::Error::new(
@@ -283,5 +329,23 @@ mod tests {
         assert_eq!(value["projects"][0]["artifacts"][0]["name"], "target");
         assert_eq!(value["projects"][0]["artifacts"][0]["stale"], false);
         assert!(value["projects"][0]["artifacts"][0]["logical_bytes"].is_u64());
+    }
+
+    #[test]
+    fn fatal_json_keeps_the_purge_envelope_shape() {
+        let mut out = Vec::new();
+        write_fatal_json(
+            &mut out,
+            ScanError::new(ScanCode::InvalidRoot, "test refusal"),
+        )
+        .expect("fatal json");
+        let value: serde_json::Value = serde_json::from_slice(&out).expect("parse");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["kind"], purge_preview::PURGE_KIND);
+        assert_eq!(value["status"], "failed");
+        assert_eq!(value["effects_performed"], false);
+        assert!(value["projects"].as_array().expect("projects").is_empty());
+        assert_eq!(value["issues"][0]["code"], "invalid_root");
+        assert_eq!(value["issues"][0]["message"], "test refusal");
     }
 }

@@ -163,6 +163,10 @@ pub struct PurgePreview {
     pub stale_days: u32,
     pub projects: Vec<PurgeProject>,
     pub counts: PurgeCounts,
+    /// Scan-side issues (denied subtrees, budget limits) explaining partial
+    /// or failed coverage; never filtered away.
+    pub scan_issues: Vec<crate::scan::ScanIssue>,
+    pub scan_issues_omitted: usize,
 }
 
 /// Builds the read-only purge preview from one finished scan index.
@@ -333,6 +337,8 @@ pub fn purge_preview(
         stale_days: options.stale_days,
         projects: output,
         counts,
+        scan_issues: report.issues.clone(),
+        scan_issues_omitted: report.issues_omitted,
     })
 }
 
