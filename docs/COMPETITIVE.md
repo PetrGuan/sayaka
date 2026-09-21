@@ -298,6 +298,21 @@ rename counterexample shows why a stable root inode is not an exact member-set
 guarantee. This is preparation for a separately approved contract, not directory
 purge, application uninstall or additional parity coverage.
 
+Recent slices narrow four ledger rows without closing them. The terminal menu
+now launches the read-only `apps-related` association preview after two
+explicit root prompts (browse/rules/installer/apps entries already existed);
+full task-family and human UX acceptance remain open. `status` reports native
+GPU utilization from the first public IOKit `IOAccelerator` subclass
+publishing `Device Utilization %`, with freshness/validation discipline;
+numeric temperature stays an explicit gap. `apps --running` adds opt-in
+read-only running-process attribution by exact resolved executable path —
+observational evidence, not uninstall authorization. Raycast/Alfred terminal
+launchers are delivered as documented script generation plus preview-first
+owned-artifact install/remove under a SHA-256 manifest (Terminal.app/iTerm2
+choices); by design no launcher configuration is written on the user's
+behalf. None of these are new benchmark results, complete task-family
+coverage, or distribution evidence.
+
 Potentially irreversible maintenance, directory actions, and privileged
 operations require new action-specific design gates after M3. They are not
 authorized by the initial ordinary-file trash contract. "Optimize" must name the
