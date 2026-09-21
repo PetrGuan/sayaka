@@ -86,6 +86,9 @@ static void run(const uint8_t *root, size_t length, uint32_t encoding) {
     require(sayaka_scan_poll_v1(handle, &wrong) == SAYAKA_INVALID_HANDLE, "wrong-kind handle accepted");
     SayakaPageRequestV1 page = {1, sizeof(page), 0, 1, SAYAKA_SORT_NAME};
     size_t needed = 0;
+    SayakaIssuePageRequestV1 issues = {1, sizeof(issues), 0, 1, 0};
+    require(sayaka_scan_issues_v1(handle, &issues, NULL, 0, &needed) == SAYAKA_INVALID_HANDLE &&
+            needed == 0, "diagnostics accepted an installer handle");
     require(sayaka_installer_candidates_v1(handle, &page, NULL, 0, &needed) ==
             SAYAKA_BUFFER_TOO_SMALL, "candidate length");
     require(needed > 0 && needed <= SAYAKA_MAX_QUERY_BYTES_V1, "candidate bound");

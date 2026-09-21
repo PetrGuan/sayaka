@@ -8,6 +8,8 @@
 
 mod browse;
 pub use browse::*;
+mod diagnostics;
+pub use diagnostics::*;
 mod installer;
 pub use installer::*;
 

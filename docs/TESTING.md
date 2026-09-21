@@ -76,6 +76,19 @@ cargo build -p sayaka-bindings --locked
 python3 scripts/check_bindings_host.py
 ```
 
+Diagnostic paging coverage adds argument/layout and exact payload-cap boundary
+checks, fatal/shared-wire equivalence, native 128-retained/12-omitted pagination,
+partial/cancelled/failed envelopes, no tree/full-JSON cache side effects, full
+result failure independence, BUSY and stale/wrong-kind refusal. C and Swift
+hosts exercise the additive symbol and the existing fixtures/ownership checks.
+Focused shared-wire cases preserve JSON shape and non-UTF-8/unpaired-UTF-16
+representations on their relevant targets:
+
+```sh
+cargo test -p sayaka-bindings --locked diagnostics::
+cargo test -p sayaka-engine --locked --lib scan::wire::tests
+```
+
 These fixtures cover recognised/corrupt candidates, paging, mixed task capacity,
 source/selection lifetimes, changed target/root/ancestor evidence, whole-batch
 refusal, cancellation and preservation of source files/state. They do not

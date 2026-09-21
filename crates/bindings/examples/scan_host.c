@@ -16,6 +16,8 @@ _Static_assert(offsetof(SayakaScanSnapshotV1, progress_sequence) == 24, "snapsho
 _Static_assert(sizeof(SayakaNodeRefV1) == 16, "node reference ABI size");
 _Static_assert(sizeof(SayakaPageRequestV1) == 24, "page request ABI size");
 _Static_assert(offsetof(SayakaPageRequestV1, offset) == 8, "page offset ABI offset");
+_Static_assert(sizeof(SayakaIssuePageRequestV1) == 24, "issue page ABI size");
+_Static_assert(offsetof(SayakaIssuePageRequestV1, reserved) == 20, "issue reserved ABI offset");
 
 static void require(int condition, const char *message) {
     if (!condition) {
@@ -81,6 +83,10 @@ static void *concurrent_calls(void *context) {
         require(status == SAYAKA_BUFFER_TOO_SMALL || status == SAYAKA_BUSY ||
                 status == SAYAKA_INVALID_HANDLE || status == SAYAKA_QUERY_UNAVAILABLE,
                 "concurrent roots query");
+        SayakaIssuePageRequestV1 issues = {1, sizeof(issues), 0, 1, 0};
+        status = sayaka_scan_issues_v1(handle, &issues, NULL, 0, &needed);
+        require(status == SAYAKA_BUFFER_TOO_SMALL || status == SAYAKA_BUSY ||
+                status == SAYAKA_INVALID_HANDLE, "concurrent diagnostic query");
     }
     return NULL;
 }
@@ -121,6 +127,28 @@ static void run(const uint8_t *root, size_t length, uint32_t encoding, int expec
     }
     require(snapshot.state == (expected_failure ? SAYAKA_SCAN_FAILED : SAYAKA_SCAN_COMPLETE),
             "unexpected terminal scan status");
+    SayakaIssuePageRequestV1 issues = {1, sizeof(issues), 0, 1, 0};
+    size_t issue_length = 0, issue_again = 0;
+    require(sayaka_scan_issues_v1(handles[0], &issues, NULL, 0, &issue_length) ==
+            SAYAKA_BUFFER_TOO_SMALL, "diagnostic length query");
+    require(issue_length > 0 && issue_length <= SAYAKA_MAX_QUERY_BYTES_V1, "diagnostic bound");
+    uint8_t issue_guard[3] = {0xA1, 0xB2, 0xC3};
+    require(sayaka_scan_issues_v1(handles[0], &issues, &issue_guard[1], 1, &issue_again) ==
+            SAYAKA_BUFFER_TOO_SMALL, "undersized diagnostic buffer accepted");
+    require(issue_again == issue_length && issue_guard[0] == 0xA1 &&
+            issue_guard[1] == 0xB2 && issue_guard[2] == 0xC3, "diagnostic guard overwritten");
+    uint8_t *issue_json = malloc(issue_length + 1);
+    require(issue_json != NULL, "diagnostic allocation");
+    issue_json[issue_length] = 0xA1;
+    check(sayaka_scan_issues_v1(handles[0], &issues, issue_json, issue_length, &issue_again));
+    require(issue_again == issue_length && issue_json[issue_length] == 0xA1,
+            "diagnostic length or terminator contract changed");
+    issue_json[issue_length] = 0;
+    require(strstr((const char *)issue_json, expected_failure
+                   ? "\"scan_status\":\"failed\"" : "\"scan_status\":\"complete\"") != NULL,
+            "diagnostic scan state changed");
+    require(strstr((const char *)issue_json, "\"issues\":[") != NULL, "diagnostic issues missing");
+    free(issue_json);
     size_t required = 0;
     require(sayaka_scan_result_v1(handles[0], NULL, 0, &required) == SAYAKA_BUFFER_TOO_SMALL,
             "result length query");
@@ -178,6 +206,8 @@ static void run(const uint8_t *root, size_t length, uint32_t encoding, int expec
     require(sayaka_scan_release_v1(handles[0]) == SAYAKA_INVALID_HANDLE, "double release accepted");
     require(sayaka_scan_roots_v1(handles[0], &page, NULL, 0, &again) == SAYAKA_INVALID_HANDLE,
             "query accepted a released task");
+    require(sayaka_scan_issues_v1(handles[0], &issues, NULL, 0, &again) == SAYAKA_INVALID_HANDLE &&
+            again == 0, "diagnostics accepted a released task");
 }
 
 #ifdef _WIN32

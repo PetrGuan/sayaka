@@ -56,7 +56,23 @@ struct Query<T: Decodable>: Decodable {
     let scanTaskId: String
     let scanStatus: String
     let scanComplete: Bool
+    let observedIssues: Int
+    let issuesOmitted: Int
     let data: T
+}
+
+struct DiagnosticIssue: Decodable, Equatable {
+    let path: NativePath?
+    let code: String
+    let message: String
+    let osCode: Int?
+}
+
+struct IssuePage: Decodable {
+    let offset: UInt64
+    let total: Int
+    let nextOffset: UInt64?
+    let issues: [DiagnosticIssue]
 }
 
 func query<T: Decodable>(
@@ -115,6 +131,30 @@ while true {
     Thread.sleep(forTimeInterval: 0.001)
 }
 precondition(snapshot.state == SAYAKA_SCAN_COMPLETE.rawValue, "Expected complete owned fixture")
+precondition(MemoryLayout<SayakaIssuePageRequestV1>.size == 24)
+var issueOffset: UInt64 = 0
+var issuePages: [DiagnosticIssue] = []
+var issueMetadata: Query<IssuePage>?
+repeat {
+    var request = SayakaIssuePageRequestV1(
+        abi_version: 1, struct_size: UInt32(MemoryLayout<SayakaIssuePageRequestV1>.size),
+        offset: issueOffset, limit: 17, reserved: 0
+    )
+    let page: Query<IssuePage> = try query { sayaka_scan_issues_v1(handle, &request, $0, $1, $2) }
+    precondition(page.taskHandle == String(handle) && page.data.offset == issueOffset)
+    precondition(page.data.total == page.observedIssues && page.data.issues.count <= 17)
+    if let first = issueMetadata {
+        precondition(page.scanTaskId == first.scanTaskId && page.observedIssues == first.observedIssues
+                     && page.issuesOmitted == first.issuesOmitted)
+    } else {
+        issueMetadata = page
+    }
+    issuePages.append(contentsOf: page.data.issues)
+    guard let next = page.data.nextOffset else { break }
+    precondition(next == issueOffset + UInt64(page.data.issues.count) && next > issueOffset)
+    issueOffset = next
+} while true
+precondition(issuePages.count == issueMetadata?.observedIssues)
 var required = 0
 precondition(sayaka_scan_result_v1(handle, nil, 0, &required) == Int32(SAYAKA_BUFFER_TOO_SMALL.rawValue))
 precondition(required > 0 && required <= Int(SAYAKA_MAX_RESULT_BYTES_V1))
@@ -125,6 +165,14 @@ data.withUnsafeMutableBytes { bytes in
 }
 let result = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 precondition(result["status"] as? String == "complete")
+let issueDecoder = JSONDecoder()
+issueDecoder.keyDecodingStrategy = .convertFromSnakeCase
+let reportIssues = try issueDecoder.decode(
+    [DiagnosticIssue].self, from: JSONSerialization.data(withJSONObject: result["issues"]!)
+)
+precondition(issuePages == reportIssues)
+precondition(issueMetadata?.scanTaskId == result["task_id"] as? String)
+precondition(issueMetadata?.issuesOmitted == result["issues_omitted"] as? Int)
 var rootsRequest = pageRequest(offset: 0, sort: SAYAKA_SORT_NAME)
 let roots: Query<Page> = try query {
     sayaka_scan_roots_v1(handle, &rootsRequest, $0, $1, $2)
@@ -199,4 +247,10 @@ check(sayaka_scan_release_v1(handle))
 precondition(sayaka_scan_poll_v1(handle, &snapshot) == Int32(SAYAKA_INVALID_HANDLE.rawValue))
 var staleRoot = rootNode.reference.native
 precondition(sayaka_scan_node_v1(handle, &staleRoot, nil, 0, &required) == Int32(SAYAKA_INVALID_HANDLE.rawValue))
+var staleIssues = SayakaIssuePageRequestV1(
+    abi_version: 1, struct_size: UInt32(MemoryLayout<SayakaIssuePageRequestV1>.size),
+    offset: 0, limit: 1, reserved: 0
+)
+precondition(sayaka_scan_issues_v1(handle, &staleIssues, nil, 0, &required) ==
+             Int32(SAYAKA_INVALID_HANDLE.rawValue) && required == 0)
 try FileHandle.standardOutput.write(contentsOf: data)

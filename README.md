@@ -26,7 +26,7 @@ not full Mole parity or support on every target platform.
 | System status | CPU/memory/network/disk/power/thermal state, optional process top, JSON/watch panel | No numeric temperature/GPU metrics, Windows sampler or system-maintenance actions |
 | Local CLI lifecycle | Dedicated-prefix install/update/recover/remove and shell completion | Local executable input only; no online updater or authenticated release channel |
 | Directory-action foundation | Task-bound engine-only observations, blockers and unresolved native gates | Always ModelOnly; no directory action, executable plan or new CLI |
-| Native-client bindings | C ABI for scans/directory queries plus installer discovery, candidate pages and explicit read-only selection checks; local C/Swift consumers | Installer checks are macOS-only; Windows cross-check is not native host acceptance; no effects/status bindings |
+| Native-client bindings | C ABI for scans/directory queries, bounded diagnostic pages, installer discovery, candidate pages and explicit read-only selection checks; local C/Swift consumers | Installer checks are macOS-only; Windows cross-check is not native host acceptance; no effects/status bindings |
 
 Controlled native evidence includes an
 [installer CLI single-file and two-file round trip](docs/INSTALLER_PREVIEW.md#recorded-native-acceptance).
@@ -121,7 +121,7 @@ should require AI or an online account.
 | --- | --- |
 | `sayaka-engine` | Planning/approval, scanning/indexes, rules/previews, execution/journal and lifecycle/status logic |
 | `sayaka-cli` | Command-line entry point, installed as `sayaka` |
-| `sayaka-bindings` | Versioned read-only C scan/directory/installer ABI and C/Swift host examples |
+| `sayaka-bindings` | Versioned read-only C scan/directory/diagnostic/installer ABI and C/Swift host examples |
 | `sayaka-platform-macos` | Audited I/O policy, metadata, native Trash and read-only status boundary |
 | `sayaka-platform-windows` | Read-only NT handle, volume, identity and directory enumeration boundary |
 
