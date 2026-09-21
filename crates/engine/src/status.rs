@@ -424,6 +424,7 @@ impl Snapshot {
         self.visible_processes.age_by(elapsed);
         self.power.age_by(elapsed);
         self.thermal_state.age_by(elapsed);
+        self.gpu_utilization_percent.age_by(elapsed);
         self.process_top.age_by(elapsed);
         self.age_network_rates();
         self.alerts = alerts(self, config);

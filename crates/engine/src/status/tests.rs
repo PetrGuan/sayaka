@@ -332,7 +332,14 @@ fn reader_ages_stalled_snapshots_instead_of_showing_fresh_forever() {
         State::Stale
     );
     assert_eq!(result.disk.state, State::Fresh);
+    // GPU shares the slow cadence/TTL with disk/power/thermal.
+    assert_eq!(result.gpu_utilization_percent.state, State::Fresh);
     assert_eq!(result.alerts[0].state, "unknown");
+    result
+        .age_by(Duration::from_secs(7), &Config::default())
+        .unwrap();
+    assert_eq!(result.disk.state, State::Stale);
+    assert_eq!(result.gpu_utilization_percent.state, State::Stale);
 }
 
 #[test]
