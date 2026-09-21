@@ -752,20 +752,24 @@ fn inventory_apps_with_now(
     inventory
 }
 
+/// Enumerates visible running processes as canonical executable path -> PIDs.
+/// Errors (including truncated enumeration) are never evidence of absence.
+pub fn running_process_paths() -> std::io::Result<std::collections::HashMap<PathBuf, Vec<u32>>> {
+    let mut by_path: std::collections::HashMap<PathBuf, Vec<u32>> =
+        std::collections::HashMap::new();
+    for (pid, path) in native_running_paths()? {
+        by_path.entry(path).or_default().push(pid);
+    }
+    Ok(by_path)
+}
+
 /// Resolves the declared executable of each record to a canonical path and
 /// matches it against the visible running processes exactly once. A failed
 /// or incomplete enumeration marks every record Unknown rather than
 /// reporting "not running" from incomplete evidence.
 fn attribute_running_state(apps: &mut [AppRecord]) {
-    let running = match native_running_paths() {
-        Ok(paths) => {
-            let mut by_path: std::collections::HashMap<PathBuf, Vec<u32>> =
-                std::collections::HashMap::new();
-            for (pid, path) in paths {
-                by_path.entry(path).or_default().push(pid);
-            }
-            by_path
-        }
+    let running = match running_process_paths() {
+        Ok(paths) => paths,
         Err(_) => {
             for app in apps.iter_mut() {
                 app.running = RunningObservation::Unknown;

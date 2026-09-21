@@ -16,6 +16,7 @@ mod rules;
 mod status;
 mod terminal;
 mod trash;
+mod uninstall;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use sayaka_engine::model::Cancellation;
@@ -115,6 +116,7 @@ fn command() -> Command {
         .subcommand(apps_related::command())
         .subcommand(trash::command())
         .subcommand(trash::receipt_command())
+        .subcommand(uninstall::command())
         .subcommand(browser::command())
         .subcommand(status::command())
         .subcommand(history::command())
@@ -413,6 +415,7 @@ fn run() -> io::Result<u8> {
         Some(("apps-related", args)) => apps_related::run(args),
         Some(("trash", args)) => trash::run(args),
         Some(("receipt", args)) => trash::receipt(args),
+        Some(("uninstall", args)) => uninstall::run(args),
         Some(("browse" | "analyze", args)) => browser::run(args),
         Some(("status", args)) => status::run(args),
         Some(("history", args)) => history::run(args),

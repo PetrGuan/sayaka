@@ -60,6 +60,7 @@ mod tests {
                 "menu",
                 "trash",
                 "receipt",
+                "uninstall",
                 "status",
                 "history",
                 "rules",
