@@ -146,6 +146,9 @@ pub fn preview_bundle_uninstall(bundle: &Path) -> UninstallPreview {
             UninstallRefusalCode::SystemLocation,
             "system locations are never uninstall targets",
         ));
+        // /System is a closed refusal boundary: no metadata, volume,
+        // plist, executable or running inspection happens beneath it.
+        return preview;
     }
     let metadata = match std::fs::symlink_metadata(&absolute) {
         Ok(metadata) => metadata,
@@ -251,10 +254,31 @@ fn observe_running(preview: &mut UninstallPreview, bundle: &Path) {
         }
     };
     let mut executables = Vec::new();
-    for entry in entries.flatten() {
-        let file_type = entry.file_type();
-        if matches!(file_type, Ok(kind) if kind.is_file()) {
-            executables.push(entry.path());
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                preview.running = RunningObservation::Unknown;
+                preview.refusals.push(UninstallRefusal::os(
+                    UninstallRefusalCode::Internal,
+                    format!("cannot read a Contents/MacOS entry: {error}"),
+                    &error,
+                ));
+                return;
+            }
+        };
+        match entry.file_type() {
+            Ok(kind) if kind.is_file() => executables.push(entry.path()),
+            Ok(_) => {}
+            Err(error) => {
+                preview.running = RunningObservation::Unknown;
+                preview.refusals.push(UninstallRefusal::os(
+                    UninstallRefusalCode::Internal,
+                    format!("cannot inspect a Contents/MacOS entry: {error}"),
+                    &error,
+                ));
+                return;
+            }
         }
     }
     preview.executables_observed = Some(executables.len());
@@ -269,12 +293,22 @@ fn observe_running(preview: &mut UninstallPreview, bundle: &Path) {
             return;
         }
     };
-    let mut pids = Vec::new();
+    // Every observed executable must resolve before "not running" can be
+    // claimed; an unresolvable one makes the bundle not attributable.
+    let mut resolved = Vec::with_capacity(executables.len());
     for executable in &executables {
-        let Ok(resolved) = std::fs::canonicalize(executable) else {
-            continue;
-        };
-        if let Some(found) = running.get(&resolved) {
+        match std::fs::canonicalize(executable) {
+            Ok(path) => resolved.push(path),
+            Err(_) => {
+                preview.running =
+                    RunningObservation::NotAttributable("executable path cannot be resolved");
+                return;
+            }
+        }
+    }
+    let mut pids = Vec::new();
+    for executable in &resolved {
+        if let Some(found) = running.get(executable) {
             pids.extend(found.iter().copied());
         }
     }
@@ -406,6 +440,10 @@ mod tests {
                 .iter()
                 .any(|r| r.code == UninstallRefusalCode::SystemLocation)
         );
+        // The refusal is a closed boundary: nothing beneath /System is probed.
+        assert!(preview.identity.is_none());
+        assert!(preview.executables_observed.is_none());
+        assert_eq!(preview.running, RunningObservation::NotChecked);
     }
 
     #[cfg(target_os = "macos")]
