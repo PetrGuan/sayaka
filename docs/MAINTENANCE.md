@@ -66,7 +66,7 @@ Proposed effect classes and sequencing. Status today: **all 21 `gap`**.
 | --- | --- | --- |
 | `disk_verify` | `diskutil verifyVolume` | Read-only verification; any repair stays a separately confirmed privileged operation |
 | `login_items_audit` | `sfltool dumpbtm` (audit only) | Reports broken entries; removal is a Class B/C effect, not part of the audit |
-| Spotlight status check (part of `system_maintenance`) | `mdutil -s` | Observation only; the DNS flush in the same Mole task is Class D |
+| `system_maintenance` (diagnostic part only) | `mdutil -s` Spotlight status observation | Observation only; the same Mole task's DNS flush (`dscacheutil` + `mDNSResponder` HUP) is Class D and stays blocked |
 
 ### Class B — user-domain reversible file effects (ordinary authority)
 
