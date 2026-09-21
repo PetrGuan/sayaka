@@ -31,11 +31,10 @@ impl Probe for MacPlatform {
                     self.candidates.insert(path.to_owned(), candidate);
                 }
                 Err(failure) => {
-                    let error = failure.error;
                     self.issues.push(SelectionIssue {
                         path: NativePath::from_path(path),
-                        message: error.to_string(),
-                        os_code: error.raw_os_error(),
+                        message: failure.to_string(),
+                        os_code: failure.error.raw_os_error(),
                         native_phase: Some(failure.phase),
                         native_operation: Some(failure.operation),
                     });

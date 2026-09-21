@@ -590,4 +590,8 @@ operations. Final revalidation is deliberately reported as a whole-candidate
 operation; errors outside instrumented initial capture have null context.
 These fields describe the attempted operation, not the cause of denial. Original
 OS codes and refusal states remain unchanged, including policy restoration errors.
-The existing capture API extracts the original io::Error from the diagnostic API.
+On a simultaneous capture and policy-restoration failure, the diagnostic API
+keeps both original errors separately; selection reports retain the capture OS
+code/context and include the restoration failure in the message. The existing
+capture API preserves its prior combined-error behavior in this dual-failure
+case, and otherwise returns the original io::Error.

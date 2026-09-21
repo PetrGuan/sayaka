@@ -10,6 +10,36 @@ pub struct NativeCaptureFailure {
     pub phase: &'static str,
     pub operation: &'static str,
     pub error: io::Error,
+    pub restoration_error: Option<io::Error>,
+}
+
+impl NativeCaptureFailure {
+    /// Preserve the pre-existing capture API's combined-error behavior.
+    fn into_legacy_error(self) -> io::Error {
+        match self.restoration_error {
+            Some(restore) => io::Error::other(format!(
+                "{}; restoring thread policy failed: {restore}",
+                self.error
+            )),
+            None => self.error,
+        }
+    }
+}
+
+impl std::fmt::Display for NativeCaptureFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.error)?;
+        if let Some(restore) = &self.restoration_error {
+            write!(formatter, "; restoring thread policy failed: {restore}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for NativeCaptureFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,7 +165,8 @@ impl TrashCandidate {
     /// Supplied protections must resolve to existing inspectable objects.
     /// These exclusions do not establish whether an application has a file open.
     pub fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
-        Self::capture_diagnostic(scope, path, protected).map_err(|failure| failure.error)
+        Self::capture_diagnostic(scope, path, protected)
+            .map_err(NativeCaptureFailure::into_legacy_error)
     }
 
     pub fn capture_diagnostic(
@@ -155,6 +186,7 @@ impl TrashCandidate {
                 phase: "platform",
                 operation: "availability",
                 error: unsupported(),
+                restoration_error: None,
             })
         }
     }
@@ -316,3 +348,28 @@ fn unsupported() -> io::Error {
 #[cfg(target_os = "macos")]
 #[path = "trash/native.rs"]
 mod native;
+
+#[cfg(test)]
+mod diagnostic_error_tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_dual_failure_keeps_errors_and_legacy_conversion() {
+        let failure = NativeCaptureFailure {
+            phase: "ancestor",
+            operation: "acl_snapshot",
+            error: io::Error::from_raw_os_error(1),
+            restoration_error: Some(io::Error::from_raw_os_error(5)),
+        };
+        assert_eq!(failure.error.raw_os_error(), Some(1));
+        assert_eq!(
+            failure.restoration_error.as_ref().unwrap().raw_os_error(),
+            Some(5)
+        );
+        let description = failure.to_string();
+        assert!(description.contains("restoring thread policy failed"));
+        let legacy = failure.into_legacy_error();
+        assert_eq!(legacy.kind(), io::ErrorKind::Other);
+        assert_eq!(legacy.to_string(), description);
+    }
+}

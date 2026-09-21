@@ -574,6 +574,7 @@ impl Candidate {
             phase: "policy",
             operation: "enter",
             error,
+            restoration_error: None,
         })?;
         let mut phase = "request";
         let mut operation = "validation";
@@ -592,18 +593,19 @@ impl Candidate {
                 phase,
                 operation,
                 error,
+                restoration_error: None,
             }),
             (Ok(_), Err(error)) => Err(NativeCaptureFailure {
                 phase: "policy",
                 operation: "restore",
                 error,
+                restoration_error: None,
             }),
             (Err(first), Err(second)) => Err(NativeCaptureFailure {
-                phase: "policy",
-                operation: "restore_after_capture_failure",
-                error: io::Error::other(format!(
-                    "{first}; restoring thread policy failed: {second}"
-                )),
+                phase,
+                operation,
+                error: first,
+                restoration_error: Some(second),
             }),
         }
     }
