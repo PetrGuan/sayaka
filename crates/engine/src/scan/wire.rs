@@ -121,11 +121,34 @@ impl Serialize for Entries<'_> {
 }
 
 #[derive(Serialize)]
-struct Issue<'a> {
+/// Shared diagnostic representation for full reports and bounded native pages.
+pub struct Issue<'a> {
     path: Option<NativePath<'a>>,
     code: &'static str,
     message: &'a str,
     os_code: Option<i32>,
+}
+
+impl<'a> From<&'a ScanIssue> for Issue<'a> {
+    fn from(issue: &'a ScanIssue) -> Self {
+        Self {
+            path: issue.path.as_deref().map(NativePath),
+            code: issue.code.as_str(),
+            message: &issue.message,
+            os_code: issue.os_code,
+        }
+    }
+}
+
+impl<'a> From<&'a ScanError> for Issue<'a> {
+    fn from(error: &'a ScanError) -> Self {
+        Self {
+            path: None,
+            code: error.code.as_str(),
+            message: &error.message,
+            os_code: error.os_code,
+        }
+    }
 }
 
 struct Issues<'a>(&'a [ScanIssue]);
@@ -134,12 +157,7 @@ impl Serialize for Issues<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
         for issue in self.0 {
-            sequence.serialize_element(&Issue {
-                path: issue.path.as_deref().map(NativePath),
-                code: issue.code.as_str(),
-                message: &issue.message,
-                os_code: issue.os_code,
-            })?;
+            sequence.serialize_element(&Issue::from(issue))?;
         }
         sequence.end()
     }
@@ -279,12 +297,7 @@ pub fn fatal(writer: &mut impl Write, error: &ScanError) -> io::Result<()> {
             complete: false,
             roots: [],
             entries: [],
-            issues: [Issue {
-                path: None,
-                code: error.code.as_str(),
-                message: &error.message,
-                os_code: error.os_code,
-            }],
+            issues: [Issue::from(error)],
             issues_omitted: 0,
             totals: None,
             metrics: None,
@@ -327,6 +340,31 @@ mod tests {
 
     struct BrokenWriter;
 
+    #[test]
+    fn shared_issue_serialization_preserves_existing_scan_and_fatal_bytes() {
+        let error = ScanError {
+            code: ScanCode::PermissionDenied,
+            message: "denied".into(),
+            os_code: Some(13),
+        };
+        let issue = ScanIssue {
+            path: None,
+            code: error.code,
+            message: error.message.clone(),
+            os_code: error.os_code,
+        };
+        let expected =
+            r#"{"path":null,"code":"permission_denied","message":"denied","os_code":13}"#;
+        assert_eq!(
+            serde_json::to_string(&Issue::from(&error)).unwrap(),
+            expected
+        );
+        assert_eq!(
+            serde_json::to_string(&Issue::from(&issue)).unwrap(),
+            expected
+        );
+    }
+
     impl Write for BrokenWriter {
         fn write(&mut self, _: &[u8]) -> io::Result<usize> {
             Err(io::ErrorKind::BrokenPipe.into())
@@ -356,6 +394,14 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&bytes).expect("path JSON");
         assert_eq!(value["encoding"], "unix_bytes_hex");
         assert_eq!(value["raw"], "2f73796e7468657469632fff0a1b");
+        let issue = ScanIssue {
+            path: Some(path),
+            code: ScanCode::Io,
+            message: "observed".into(),
+            os_code: Some(5),
+        };
+        let diagnostic = serde_json::to_value(Issue::from(&issue)).unwrap();
+        assert_eq!(diagnostic["path"], value);
         assert!(
             !value["display"]
                 .as_str()
@@ -397,5 +443,13 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["encoding"], "windows_utf16_hex");
         assert_eq!(value["raw"], "0043003a005cd800");
+        let issue = ScanIssue {
+            path: Some(path),
+            code: ScanCode::Io,
+            message: "observed".into(),
+            os_code: Some(5),
+        };
+        let diagnostic = serde_json::to_value(Issue::from(&issue)).unwrap();
+        assert_eq!(diagnostic["path"], value);
     }
 }

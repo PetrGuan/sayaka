@@ -20,6 +20,7 @@ extern "C" {
 #define SAYAKA_MAX_RESULT_BYTES_V1 67108864u
 #define SAYAKA_MAX_QUERY_BYTES_V1 1048576u
 #define SAYAKA_MAX_PAGE_NODES_V1 256u
+#define SAYAKA_MAX_PAGE_ISSUES_V1 128u
 #define SAYAKA_MAX_INSTALLER_CANDIDATES_V1 512u
 #define SAYAKA_MAX_INSTALLER_SELECTIONS_V1 32u
 #define SAYAKA_PATH_UNIX_BYTES_V1 1u
@@ -98,6 +99,14 @@ typedef struct SayakaPageRequestV1 {
     uint32_t sort;
 } SayakaPageRequestV1;
 
+typedef struct SayakaIssuePageRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t offset;
+    uint32_t limit; /* 1..SAYAKA_MAX_PAGE_ISSUES_V1, in recorded order. */
+    uint32_t reserved; /* Must be zero. */
+} SayakaIssuePageRequestV1;
+
 typedef struct SayakaInstallerRequestV1 {
     uint32_t abi_version;
     uint32_t struct_size;
@@ -170,6 +179,16 @@ SAYAKA_API int32_t sayaka_scan_node_v1(uint64_t handle, const SayakaNodeRefV1 *n
 SAYAKA_API int32_t sayaka_scan_children_v1(uint64_t handle, const SayakaNodeRefV1 *parent,
                                         const SayakaPageRequestV1 *request,
                                         uint8_t *buffer, size_t capacity, size_t *required);
+/* Terminal diagnostic pages, including failed/fatal scans. Same 1 MiB bounded
+ * query buffer protocol; offset==total is empty, offset>total is invalid.
+ * Does not build a ScanTree or serialize/cache the full report. Data contains
+ * {offset,total,next_offset,issues}; envelope scan_task_id is null for a fatal
+ * outcome. Paths/reasons/OS codes reuse the full report's lossless wire schema.
+ * Keep handle/status/counts fixed across pages. Running tasks return NOT_READY.
+ * Additive symbol: hosts must link a matching library/header, not just check
+ * ABI version 1. BUSY/release and no-partial-write semantics remain unchanged. */
+SAYAKA_API int32_t sayaka_scan_issues_v1(uint64_t handle, const SayakaIssuePageRequestV1 *request,
+                                      uint8_t *buffer, size_t capacity, size_t *required);
 /* BUSY retains ownership. If the worker is active, release requests cancellation;
  * a concurrent operation holding the handle can also return BUSY before that.
  * Retry until OK. Poll/cancel/result/queries return BUSY on concurrent handle use.

@@ -189,7 +189,7 @@ def main():
         root.rmdir()
         passed = True
         print("C and Swift hosts passed: 64 unique files, 2 aliases, 4 directories; "
-              "exact bytes/identities/native paths, roots/detail/paging and both size sorts; "
+              "exact bytes/identities/native paths, roots/detail/paging, diagnostic pages and both size sorts; "
               "installer DMG/PKG/corrupt discovery and read-only explicit-selection checks; "
               "error/shared-capacity/stale-task/cancel/release controls; owned fixtures cleaned.")
     finally:

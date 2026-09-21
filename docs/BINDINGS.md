@@ -23,7 +23,7 @@ is `target/debug/libsayaka_bindings.dylib`; Windows builds produce the platform'
 DLL/import-library artifacts when built with a suitable native linker/toolchain.
 The checked-in [C header](../crates/bindings/include/sayaka.h) is the v1 layout.
 Versioned symbol names permit later ABI versions without changing v1 structures.
-The directory-query and installer symbols are additive: existing v1 layouts and scan
+The directory-query, diagnostic-page and installer symbols are additive: existing v1 layouts and scan
 JSON have not changed. A host using queries must ship/load a library build
 exporting those symbols; the original scan-only library also reports version 1.
 Use the normal C calling convention (C# callers would specify Cdecl).
@@ -44,7 +44,10 @@ an empty directory and four directories in total. The C host exercises root
 pages and cross-task node rejection; the Swift host recursively pages every
 directory, checks individual details against page entries and the full report,
 and checks name/logical-size/allocated-size orders over multiple pages.
-The C host also races per-handle poll/cancel/result/root-query calls with release.
+The C host also races per-handle poll/cancel/result/root/diagnostic queries with
+release, reads diagnostics from both successful and fatal tasks, and checks
+diagnostic caller-buffer bounds. The Swift host reads diagnostic pages before
+the full report and checks their findings against the shared report encoding.
 The additional [installer C host](../crates/bindings/examples/installer_host.c)
 and [installer Swift host](../crates/bindings/examples/installer_host.swift) use
 synthetic UDIF DMG, flat-PKG XAR and corrupt-PKG files plus a non-target sentinel.
@@ -65,8 +68,9 @@ real Trash, mount, package execution or permission expansion occurs.
    progress. No foreign callbacks or process-global signal handlers are installed.
 4. Request cancellation with `sayaka_scan_cancel_v1` if needed. It is cooperative;
    an already complete result stays complete rather than being rewritten.
-5. Once terminal, browse via root/node/children queries or optionally copy the
-   full JSON with `sayaka_scan_result_v1`, on a host worker queue. Inspect
+5. Once terminal, browse via root/node/children queries, read diagnostic pages
+   with `sayaka_scan_issues_v1`, or optionally copy the full JSON with
+   `sayaka_scan_result_v1`, on a host worker queue. Inspect
    status/complete/issues; copy success is not scan success.
 6. Call `sayaka_scan_release_v1`. If the worker is still active, it requests
    cancellation and returns BUSY without invalidating the handle. Retry later.
@@ -144,6 +148,67 @@ serialization failure returns an error, never truncated JSON. Snapshot state
 describes the scan itself, so a complete scan can still fail result transfer;
 the host must handle that error and release the task.
 
+## Diagnostic pages
+
+`sayaka_scan_issues_v1(handle, request, buffer, capacity, required)` returns only
+retained scan diagnostics in their recorded order. Initialize the independent
+24-byte `SayakaIssuePageRequestV1` with version 1, exact structure size,
+zero-based `offset`, `limit` in 1..128 and `reserved=0`. There is no sort field:
+recorded order is stable within one terminal task, not promised across scans.
+Offset equal to total returns an empty terminal page; greater offsets fail.
+
+The response reuses the query envelope below, except that `scan_task_id` is
+nullable for a fatal error that has no engine report ID. `task_handle` still
+identifies the owned native job. Complete, partial, cancelled and failed reports
+retain their real status/coverage; a fatal result is failed/incomplete, with its
+one diagnostic and zero omitted findings. Successful transfer is not scan success.
+
+```json
+{
+  "schema_version": 1,
+  "task_handle": "7",
+  "scan_task_id": null,
+  "scan_status": "failed",
+  "scan_complete": false,
+  "observed_issues": 1,
+  "issues_omitted": 0,
+  "data": {
+    "offset": 0,
+    "total": 1,
+    "next_offset": null,
+    "issues": [
+      {"path": null, "code": "permission_denied", "message": "Denied", "os_code": 13}
+    ]
+  }
+}
+```
+
+Each issue uses the exact shared full-report path/code/message/optional OS-code
+serializer. `observed_issues` and `data.total` are the retained count, not
+retained plus omitted. The existing default scan profile retains at most 128
+issues. A nonempty continuation is the next offset, strictly greater than the
+requested offset; it is null at the end. Hosts must validate handle, task ID,
+status/coverage and retained/omitted counts across pages before publishing them.
+
+Diagnostics borrow the terminal report/error directly. They do not build a
+`ScanTree`, clone all entries, parse/cache full JSON, or touch the filesystem.
+They remain available if optional full-result serialization has failed. Queries
+still run on the calling thread under the existing per-handle nonblocking lock:
+use a worker queue, retain ownership on BUSY, and join host readers before release.
+
+The caller-buffer/required protocol is identical to directory queries, including
+the **1 MiB payload and caller capacity cap**, no newline/NUL, no partial writes,
+zero required on errors other than BUFFER_TOO_SMALL, and immutable length/copy
+results. Reduce the page limit after LIMIT_EXCEEDED; an individually oversized
+issue still fails explicitly and is never shortened into a success-shaped page.
+NOT_READY means the task has not become terminal. Invalid/versioned/reserved
+arguments, wrong-kind/released handles and lock contention keep their existing
+status codes. The cap bounds output, not whole-process RSS or syscall latency.
+
+The new symbol requires a matching newer header/library, although the numeric
+ABI version and every pre-existing structure, symbol and full-report JSON remain
+unchanged. No new effect, platform backend or capability to act on a path exists.
+
 ## Directory queries
 
 | Function | Data returned |
@@ -191,8 +256,8 @@ the bytes stable unless a concurrent caller releases the handle.
 Every query has `schema_version: 1`, `task_handle` (decimal string),
 `scan_task_id` (the original report ID), `scan_status`, `scan_complete`,
 `observed_issues` (retained issue count), `issues_omitted`, and `data`.
-Use the optional full scan result for individual diagnostic code/message/path
-details; no full report transfer is needed for ordinary directory navigation.
+Use the bounded diagnostic query above for individual code/message/path
+details; neither diagnostics nor ordinary navigation needs a full report copy.
 
 For roots/children, `data` is:
 
