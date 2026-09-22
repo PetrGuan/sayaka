@@ -763,6 +763,57 @@ pub fn running_process_paths() -> std::io::Result<std::collections::HashMap<Path
     Ok(by_path)
 }
 
+/// Single-file parse budget for `read_bundle_identifier`.
+const SINGLE_PLIST_SECONDS: u64 = 5;
+
+/// Honest outcome of the single-bundle identifier observation.
+#[derive(Clone, Debug)]
+pub enum BundleIdentifierRead {
+    /// The plist was read and parsed; the field carries the parser's own
+    /// verdict (present, missing, not_string, duplicate, too_long).
+    Parsed(StringField),
+    /// The plist could not be inspected, read or parsed; no identifier is
+    /// invented from partial evidence.
+    Unreadable(&'static str),
+}
+
+/// Reads only `CFBundleIdentifier` from one explicit bundle directory,
+/// reusing the inventory plist parser under a single-file budget.
+/// Read-only; used by the T9 copy-evidence slice to name the previewed
+/// bundle without a full inventory of its parent.
+pub fn read_bundle_identifier(bundle: &Path) -> BundleIdentifierRead {
+    let plist = bundle.join("Contents").join("Info.plist");
+    let limits = AppInventoryLimits::default();
+    let metadata = match std::fs::symlink_metadata(&plist) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) => return BundleIdentifierRead::Unreadable("Info.plist is not a regular file"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return BundleIdentifierRead::Unreadable("Info.plist is missing");
+        }
+        Err(_) => return BundleIdentifierRead::Unreadable("Info.plist cannot be inspected"),
+    };
+    if metadata.len() > limits.max_info_plist_bytes {
+        return BundleIdentifierRead::Unreadable("Info.plist exceeds the single-file budget");
+    }
+    let bytes = match std::fs::read(&plist) {
+        Ok(bytes) => bytes,
+        Err(_) => return BundleIdentifierRead::Unreadable("Info.plist cannot be read"),
+    };
+    let cancellation = Cancellation::default();
+    let context = ProbeContext {
+        cancellation: &cancellation,
+        deadline: wall_clock_now() + Duration::from_secs(SINGLE_PLIST_SECONDS),
+        limits,
+        metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
+        now: wall_clock_now,
+    };
+    let mut budget = ProbeBudget::default();
+    match parse_info_plist(&bytes, context, &mut budget) {
+        Ok(parsed) => BundleIdentifierRead::Parsed(parsed.bundle_id),
+        Err(_) => BundleIdentifierRead::Unreadable("Info.plist cannot be parsed"),
+    }
+}
+
 /// Resolves the declared executable of each record to a canonical path and
 /// matches it against the visible running processes exactly once. A failed
 /// or incomplete enumeration marks every record Unknown rather than
@@ -2874,6 +2925,33 @@ mod tests {
         assert!(!valid_single_component_executable("../run"));
         assert!(!valid_single_component_executable("foo/bar"));
         assert!(!valid_single_component_executable(""));
+    }
+
+    #[test]
+    fn single_bundle_identifier_read_is_honest() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = root.path().join("Demo.app");
+        let macos = bundle.join("Contents").join("MacOS");
+        std::fs::create_dir_all(&macos).expect("tree");
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.example.demo</string>
+</dict></plist>"#;
+        std::fs::write(bundle.join("Contents").join("Info.plist"), xml).expect("plist");
+        match read_bundle_identifier(&bundle) {
+            BundleIdentifierRead::Parsed(field) => {
+                assert_eq!(field.state, StringState::Present);
+                assert_eq!(field.value.as_deref(), Some("com.example.demo"));
+            }
+            BundleIdentifierRead::Unreadable(reason) => panic!("expected a parsed field: {reason}"),
+        }
+        // A missing plist is an explicit unreadable state, never a guess.
+        let bare = root.path().join("Bare.app");
+        std::fs::create_dir_all(bare.join("Contents")).expect("tree");
+        assert!(matches!(
+            read_bundle_identifier(&bare),
+            BundleIdentifierRead::Unreadable(_)
+        ));
     }
 
     #[test]
