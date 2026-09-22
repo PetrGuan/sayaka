@@ -358,6 +358,12 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
     }
 
     #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn for_revalidated_bundle_trash(mut self) -> Self {
+        self.contract = ExecutionContract::RevalidatedBundleTrashV1;
+        self
+    }
+
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn stop_reason(
         &mut self,
         plan: &Plan,
@@ -448,7 +454,14 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             Boundary::Unknown => return Some(ReasonCode::BoundaryUnverified),
             Boundary::Verified => {}
         }
-        if snapshot.kind != ResourceKind::File {
+        let kind_accepted = match self.contract {
+            // Only a sealed bundle candidate from the uninstall session may
+            // execute against a directory; everything else keeps the
+            // ordinary-file requirement.
+            ExecutionContract::RevalidatedBundleTrashV1 => snapshot.kind == ResourceKind::Directory,
+            _ => snapshot.kind == ResourceKind::File,
+        };
+        if !kind_accepted {
             return Some(ReasonCode::UnsupportedResource);
         }
         if !snapshot.complete || snapshot.modified_at.is_none() {

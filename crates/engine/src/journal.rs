@@ -21,6 +21,12 @@ const CLEAN_SCHEMA_VERSION: u32 = 3;
 const CLEAN_PLAN_SCHEMA_VERSION: u32 = 3;
 const CLEAN_ENGINE_VERSION: u32 = 2;
 const CLEAN_RULES_VERSION: u32 = 2;
+/// Bundle-trash records hold directory items under contract
+/// `revalidated_bundle_trash_v1`; see docs/UNINSTALL_EXECUTION.md.
+pub const BUNDLE_SCHEMA_VERSION: u32 = 4;
+const BUNDLE_PLAN_SCHEMA_VERSION: u32 = 4;
+const BUNDLE_ENGINE_VERSION: u32 = 2;
+const BUNDLE_RULES_VERSION: u32 = 1;
 const SF_DATALESS: u32 = 0x40000000;
 const SF_RESTRICTED: u32 = 0x00080000;
 const SF_NOUNLINK: u32 = 0x00100000;
@@ -279,8 +285,14 @@ impl Record {
             && self.plan_schema_version == CLEAN_PLAN_SCHEMA_VERSION
             && self.engine_version == CLEAN_ENGINE_VERSION
             && self.rules_version == CLEAN_RULES_VERSION;
-        if !(legacy || rule_bound || clean)
-            || self.contract != "revalidated_trash_v1"
+        let bundle = self.schema_version == BUNDLE_SCHEMA_VERSION
+            && self.plan_schema_version == BUNDLE_PLAN_SCHEMA_VERSION
+            && self.engine_version == BUNDLE_ENGINE_VERSION
+            && self.rules_version == BUNDLE_RULES_VERSION
+            && self.contract == "revalidated_bundle_trash_v1";
+        if !(legacy || rule_bound || clean || bundle)
+            || !(self.contract == "revalidated_trash_v1"
+                || self.contract == "revalidated_bundle_trash_v1")
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
             || self.items.len() > MAX_ITEMS

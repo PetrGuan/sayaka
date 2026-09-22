@@ -41,13 +41,19 @@ Exit codes: **0 complete, 3 partial, 130 cancelled, 1 runtime failure, 2 invalid
 ```sh
 sayaka uninstall --bundle ./Fixture.app
 sayaka uninstall --bundle ./Fixture.app --json
+sayaka uninstall --bundle ./Fixture.app --execute
 ```
 
-This is the read-only preview of the T9 uninstall contract for one explicit
-`.app` bundle. **It performs no effects**: no Trash, deletion, signals or
-approval surface, and `can_execute` is always `false`. Execution is deferred
-to a separately reviewed execution/recovery contract; a clean preview is not
-approval. Exit codes: **0 no refusals, 3 refusals present, 2 invalid arguments**.
+The T9 uninstall contract for one explicit `.app` bundle. Default is a
+read-only preview (evidence, protections, refusals); `--execute` moves exactly
+the named bundle to the user Trash after typed exact-name confirmation under
+`revalidated_bundle_trash_v1` (see
+[UNINSTALL_EXECUTION.md](UNINSTALL_EXECUTION.md)). Execution requires an
+interactive terminal; piped approval is refused. Recovery is Finder 'Put Back'
+from Trash with its documented limits; there is no programmatic restore and no
+permanent-delete fallback. Related data, preferences, caches and other copies
+are never touched. A running bundle is refused at preview, at approval, and
+again immediately before the native call.
 
 The preview publishes the bundle identity (nofollow), the count of regular
 executables directly under `Contents/MacOS`, a running-process observation
@@ -59,9 +65,11 @@ never `not_running`), explicit refusals (`not_found`, `not_directory`,
 preferences, caches, credentials and other copies untouched; running bundles
 refused, never signaled; no permanent-delete fallback; `/System` refused) and
 the recovery note (future execution targets the user Trash with Finder
-'Put Back'; no programmatic restore). The execution/recovery contract itself
-is drafted in [UNINSTALL_EXECUTION.md](UNINSTALL_EXECUTION.md) pending
-confirmation; it authorizes nothing by itself.
+'Put Back'; no programmatic restore). Exit codes: **0 clean / succeeded,
+3 refusals or partial, 130 cancelled, 1 runtime failure, 2 invalid arguments**.
+Journaled intent/outcome follows the M3 schema (directory item under the
+bundle contract); interrupted durable `started` records reconcile to
+`unknown`, never `succeeded`.
 
 ## Related-data preview contract
 

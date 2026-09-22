@@ -231,6 +231,62 @@ pub fn preview_bundle_uninstall(bundle: &Path) -> UninstallPreview {
     preview
 }
 
+/// Public running observation for one bundle directory, reused by the
+/// execution session's plan and last-native-guard checks. Fails closed:
+/// anything but a proven absence yields Running, Unknown or
+/// NotAttributable, never NotRunning.
+pub fn bundle_running(bundle: &Path) -> RunningObservation {
+    let macos_dir = bundle.join("Contents").join("MacOS");
+    let entries = match std::fs::read_dir(&macos_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return RunningObservation::NotAttributable("no Contents/MacOS directory");
+        }
+        Err(_) => return RunningObservation::Unknown,
+    };
+    let mut executables = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return RunningObservation::Unknown;
+        };
+        match entry.file_type() {
+            Ok(kind) if kind.is_file() => executables.push(entry.path()),
+            Ok(_) => {}
+            Err(_) => return RunningObservation::Unknown,
+        }
+    }
+    if executables.is_empty() {
+        return RunningObservation::NotAttributable("no regular executable observed");
+    }
+    let running = match running_process_paths() {
+        Ok(running) => running,
+        Err(_) => return RunningObservation::Unknown,
+    };
+    // Every observed executable must resolve before "not running" holds.
+    let mut resolved = Vec::with_capacity(executables.len());
+    for executable in &executables {
+        match std::fs::canonicalize(executable) {
+            Ok(path) => resolved.push(path),
+            Err(_) => {
+                return RunningObservation::NotAttributable("executable path cannot be resolved");
+            }
+        }
+    }
+    let mut pids = Vec::new();
+    for executable in &resolved {
+        if let Some(found) = running.get(executable) {
+            pids.extend(found.iter().copied());
+        }
+    }
+    pids.sort_unstable();
+    pids.dedup();
+    if pids.is_empty() {
+        RunningObservation::NotRunning
+    } else {
+        RunningObservation::Running(pids)
+    }
+}
+
 /// Matches every regular file directly under `Contents/MacOS` against the
 /// visible running processes. Any match refuses uninstall; an enumeration
 /// failure is explicit Unknown, never "not running".

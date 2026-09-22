@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::app_inventory::RunningObservation;
+use crate::app_uninstall;
 use crate::clean_policy::{self, ConfigPath, PolicyFileState, PolicyGuardStatus, PolicySnapshot};
 use crate::journal::{CleanPolicyContextRecord, CleanPolicyIdentityRecord, CleanPolicyPathRecord};
 use crate::rules;
 use sayaka_platform_macos::{
-    NativeFileInfo, NativeLastGuard, NativeRuleBindingWitness, NativeTargetMarker,
-    NativeTrashOutcome, NativeWitnessInfo, TrashCandidate,
+    BundleTrashCandidate, NativeFileInfo, NativeLastGuard, NativeRuleBindingWitness,
+    NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo, TrashCandidate,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -479,6 +481,234 @@ impl TrashSession {
             store,
             Some(clean_policy),
             Some(guard),
+        )
+    }
+}
+
+/// Single sealed `.app` bundle Trash session (T9); the plan runs under
+/// ExecutionContract::RevalidatedBundleTrashV1. See docs/UNINSTALL_EXECUTION.md.
+pub struct BundleUninstallSession {
+    inner: Session<BundlePlatform>,
+    bundle: PathBuf,
+}
+
+struct BundlePlatform {
+    candidates: HashMap<PathBuf, BundleTrashCandidate>,
+    issues: Vec<SelectionIssue>,
+}
+
+impl BundlePlatform {
+    /// The planner fails closed on owner state: anything but a proven
+    /// absence of running bundle executables refuses the item.
+    fn owner_state(bundle: &Path) -> OwnerState {
+        match app_uninstall::bundle_running(bundle) {
+            RunningObservation::Running(_) => OwnerState::Running,
+            RunningObservation::NotRunning => OwnerState::Stopped,
+            RunningObservation::NotAttributable(_) | RunningObservation::Unknown => {
+                OwnerState::Unknown
+            }
+            RunningObservation::NotChecked => OwnerState::Unknown,
+        }
+    }
+}
+
+impl Probe for BundlePlatform {
+    fn inspect(&mut self, scope: &Scope, path: &Path) -> Result<Snapshot, ProbeError> {
+        if let Some(candidate) = self.candidates.get(path) {
+            candidate
+                .revalidate()
+                .map_err(|error| ProbeError::Other(error.to_string()))?;
+        } else {
+            match BundleTrashCandidate::capture(scope.root(), path, scope.protected_paths()) {
+                Ok(candidate) => {
+                    self.candidates.insert(path.to_owned(), candidate);
+                }
+                Err(error) => {
+                    self.issues.push(SelectionIssue {
+                        path: NativePath::from_path(path),
+                        message: error.to_string(),
+                        os_code: error.raw_os_error(),
+                        native_phase: None,
+                        native_operation: None,
+                    });
+                    return Ok(Snapshot {
+                        identity: None,
+                        kind: ResourceKind::Other,
+                        logical_bytes: None,
+                        modified_at: None,
+                        complete: false,
+                        boundary: Boundary::Unknown,
+                        protection: Protection::Unknown,
+                        trash: Capability::Unsupported,
+                        owner: OwnerState::Unknown,
+                    });
+                }
+            }
+        }
+        let info = self
+            .candidates
+            .get(path)
+            .ok_or_else(|| ProbeError::Other("native candidate was not retained".into()))?
+            .info();
+        Ok(Snapshot {
+            identity: Some(FileIdentity::Unix {
+                device: info.device,
+                inode: info.inode,
+            }),
+            kind: ResourceKind::Directory,
+            // The directory's own inode bytes, not a subtree total.
+            logical_bytes: Some(info.logical_bytes),
+            modified_at: Some(info.modified_at),
+            complete: true,
+            boundary: Boundary::Verified,
+            protection: Protection::Clear,
+            trash: Capability::Available,
+            owner: Self::owner_state(path),
+        })
+    }
+}
+
+impl Platform for BundlePlatform {
+    fn effect(
+        &mut self,
+        path: &Path,
+        stop: &mut dyn FnMut() -> bool,
+        guard: &mut dyn FnMut() -> GuardDecision,
+    ) -> Effect {
+        let Some(candidate) = self.candidates.get(path) else {
+            return Effect::Refused("native bundle candidate unavailable".into());
+        };
+        match candidate.move_to_trash_with_last_guard(stop, || match guard() {
+            GuardDecision::Proceed => NativeLastGuard::Proceed,
+            GuardDecision::Refused(reason) => NativeLastGuard::PolicyRefused(reason),
+        }) {
+            NativeTrashOutcome::Moved { destination } => Effect::Moved(destination),
+            NativeTrashOutcome::Refused(message) => Effect::Refused(message),
+            NativeTrashOutcome::Failed(message) => Effect::Failed(message),
+            NativeTrashOutcome::Unknown { message, evidence } => Effect::Unknown {
+                message,
+                evidence: Some(Box::new(journal::RecoveryEvidence {
+                    approved: file_evidence(&evidence.approved),
+                    returned_destination: evidence
+                        .returned_destination
+                        .as_deref()
+                        .map(NativePath::from_path),
+                    held_source: evidence.held_source.as_ref().map(file_evidence),
+                    held_source_path: evidence
+                        .held_source_path
+                        .as_deref()
+                        .map(NativePath::from_path),
+                    observation_errors: evidence.observation_errors,
+                })),
+            },
+        }
+    }
+}
+
+impl BundleUninstallSession {
+    /// Prepares a sealed plan for exactly one explicit `.app` bundle. The
+    /// scope must be the bundle's parent directory; exclusions are the
+    /// preview contract's refusal surface, not plan exclusions.
+    pub fn prepare(scope: Scope, bundle: &Path, cancellation: &Cancellation) -> io::Result<Self> {
+        let mut planner = Planner::new(
+            scope,
+            Versions {
+                engine: 2,
+                rules: 1,
+            },
+        )
+        .map_err(model_error)?
+        .for_revalidated_bundle_trash();
+        let mut platform = BundlePlatform {
+            candidates: HashMap::new(),
+            issues: Vec::new(),
+        };
+        if cancellation.is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "cancelled during preview",
+            ));
+        }
+        let finding = planner
+            .discover(bundle, &mut platform)
+            .map_err(model_error)?;
+        let id = finding.observation().id();
+        let preview = planner
+            .prepare(&[id], &[], Duration::from_secs(120))
+            .map_err(model_error)?;
+        Ok(Self {
+            inner: Session {
+                planner,
+                platform,
+                preview,
+            },
+            bundle: bundle.to_path_buf(),
+        })
+    }
+
+    pub fn preview(&self) -> &Plan {
+        &self.inner.preview
+    }
+
+    pub fn issues(&self) -> &[SelectionIssue] {
+        &self.inner.platform.issues
+    }
+
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        self.inner
+            .preview
+            .rejected()
+            .iter()
+            .map(|item| SelectionRefusal {
+                path: NativePath::from_path(&self.bundle),
+                reason: item.code.as_str().into(),
+            })
+            .collect()
+    }
+
+    /// Approval re-observes the running state per the execution contract;
+    /// anything but a proven clear state refuses approval.
+    pub fn approve(&mut self, preview: &Plan) -> Result<Approval, Error> {
+        match app_uninstall::bundle_running(&self.bundle) {
+            RunningObservation::NotRunning => {}
+            RunningObservation::Running(_) => return Err(Error::new(ReasonCode::OwnerRunning)),
+            _ => return Err(Error::new(ReasonCode::OwnerUnknown)),
+        }
+        self.inner.planner.approve(preview)
+    }
+
+    pub fn execute(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+    ) -> io::Result<ExecutionReport> {
+        let bundle = self.bundle.clone();
+        let mut guard = move |point: GuardPoint, _: &Path| -> io::Result<GuardDecision> {
+            // Last native guard: re-observe running immediately before the
+            // sole Foundation call; fail closed on any unclear state.
+            if matches!(point, GuardPoint::LastNative) {
+                return Ok(match app_uninstall::bundle_running(&bundle) {
+                    RunningObservation::NotRunning => GuardDecision::Proceed,
+                    RunningObservation::Running(pids) => GuardDecision::Refused(format!(
+                        "bundle executables are running (pids: {pids:?}); refused, never signaled"
+                    )),
+                    other => GuardDecision::Refused(format!(
+                        "running state is not proven clear ({}); refused",
+                        other.as_str()
+                    )),
+                });
+            }
+            Ok(GuardDecision::Proceed)
+        };
+        self.inner.execute_with_clean_policy(
+            preview,
+            approval,
+            cancellation,
+            store,
+            None,
+            Some(&mut guard),
         )
     }
 }

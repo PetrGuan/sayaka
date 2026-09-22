@@ -265,6 +265,8 @@ pub enum Action {
 pub enum ExecutionContract {
     ModelOnly,
     RevalidatedTrashV1,
+    /// Single sealed `.app` bundle directory to the user Trash (T9).
+    RevalidatedBundleTrashV1,
 }
 
 impl ExecutionContract {
@@ -272,6 +274,7 @@ impl ExecutionContract {
         match self {
             Self::ModelOnly => "model_only",
             Self::RevalidatedTrashV1 => "revalidated_trash_v1",
+            Self::RevalidatedBundleTrashV1 => "revalidated_bundle_trash_v1",
         }
     }
 
@@ -280,6 +283,9 @@ impl ExecutionContract {
             Self::ModelOnly => "Read-only model; no native execution is authorized.",
             Self::RevalidatedTrashV1 => {
                 "A file or ancestor replaced after the last check could cause a different file to be moved. Trash does not free space or guarantee restoration."
+            }
+            Self::RevalidatedBundleTrashV1 => {
+                "A bundle or ancestor replaced after the last check could cause a different directory to be moved. Trash does not free space or guarantee restoration; related data is never touched."
             }
         }
     }
@@ -455,7 +461,9 @@ impl Finding {
     pub fn action(&self) -> Option<Action> {
         self.refusal.is_none().then_some(match self.contract {
             ExecutionContract::ModelOnly => Action::MoveToTrash,
-            ExecutionContract::RevalidatedTrashV1 => Action::RevalidatedMoveToTrash,
+            ExecutionContract::RevalidatedTrashV1 | ExecutionContract::RevalidatedBundleTrashV1 => {
+                Action::RevalidatedMoveToTrash
+            }
         })
     }
 }
@@ -490,7 +498,9 @@ impl PlanItem {
     pub fn action(&self) -> Action {
         match self.contract {
             ExecutionContract::ModelOnly => Action::MoveToTrash,
-            ExecutionContract::RevalidatedTrashV1 => Action::RevalidatedMoveToTrash,
+            ExecutionContract::RevalidatedTrashV1 | ExecutionContract::RevalidatedBundleTrashV1 => {
+                Action::RevalidatedMoveToTrash
+            }
         }
     }
     pub fn reason(&self) -> FindingReason {
@@ -632,6 +642,7 @@ impl Plan {
     pub fn schema_version(&self) -> u32 {
         match self.contract {
             ExecutionContract::ModelOnly => 1,
+            ExecutionContract::RevalidatedBundleTrashV1 => 4,
             ExecutionContract::RevalidatedTrashV1 => {
                 if self.items.iter().any(|item| item.rule_binding.is_some()) {
                     3
