@@ -167,7 +167,11 @@ is explicitly out of scope for this slice.
   `unknown`), not from the cancellation request.
 - Quit/close during confirmation abandons the approval; nothing moves.
 
-## Required native evidence (acceptance gate, still open)
+## Required native evidence (acceptance gate, partially recorded)
+
+Most cases are recorded as of 2026-09-22 — see *Recorded native acceptance*
+below. Still open: the dataless placeholder, a fully unavailable Trash, and
+a separately staged final-native-guard race window.
 
 All in disposable, owned fixtures — never on real project checkouts the
 operator cares about:
@@ -215,3 +219,29 @@ never "reclaimed space" (the PURGE.md rule), and no comparison may present
 them as freed bytes. The slice is not full Mole `purge` parity: custom
 root sets, staleness-based filtering UX and grouped-project reporting
 remain ledger gaps tracked by the C0 `purge` row.
+
+## Recorded native acceptance (2026-09-22)
+
+A separately authorized run on the owner's macOS 27.0 (26A428) arm64 host
+exercised the debug CLI built from `80e4e16be2` plus a one-line footer fix
+(`6f779da`). Fixtures lived under an owned `~/sayaka-acceptance-fixtures`
+tree; every Trash move targeted only registered fixture directories, each
+restored afterwards. Typed confirmations ran through a real PTY.
+
+| Contract case | Result |
+| --- | --- |
+| 1. Single artifact move | Passed: preview → typed `purge 1 artifacts` → `succeeded`; journal `revalidated_purge_trash_v1` (5,5), recorded destination, marker untouched |
+| 2. Multi-item independence | Passed: 3-item run with a forced read-only parent — two `succeeded`, one honest per-item `failed` (NSError 513 evidence); a second run with the failing item **first** still moved the later item |
+| 3. Marker removed mid-confirmation | Passed: approval refused `resource_changed`, nothing moved |
+| 4. Artifact replaced mid-confirmation | Passed: refused `resource_changed`; the replacement object was never followed (staged at the approval boundary; the final native-guard window is covered by the candidate's internal revalidation, not separately staged) |
+| 5. Excluded shapes | Nested artifact: excluded at preview (`excluded: 1`). Artifact inside an `.app`: never qualifies, `--only` naming it is refused (exit 2). Dataless placeholder: **not staged** (requires a cloud fixture) |
+| 6. Destination-name conflict | Passed: two `target` directories moved to `~/.Trash/target` and `~/.Trash/target 20-55-20-739`, both journaled |
+| 7. SIGINT during confirmation | Passed with a documented nuance: SIGINT sets the cancellation flag; the prompt still reads one line (the scan-phase handler stays installed), then the flow exits **130** "Cancelled; nothing moved" — fixture intact, no Trash entry |
+| 8. Operator 'Put Back' | Passed: `mv` back from the recorded destination; content byte-identical |
+| 9. Partial/unknown coverage | Passed: a permission-denied subdirectory yields `status: partial`, artifact `complete: false`, known-only byte totals and a retained `permission_denied` issue; `--execute` requires a complete preview |
+| 10. Trash environment failure | Partially staged: the read-only-parent case produced the honest `failed` outcome with preserved evidence, no retry and no delete fallback; a fully unavailable Trash was **not staged** |
+
+The displayed sizes (14–46 B fixture bytes) are handled fixture bytes, not
+freed space. The real Trash was never enumerated beyond the recorded
+destinations; all fixture items were restored and no fixture process was
+left running.

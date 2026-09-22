@@ -163,7 +163,7 @@ unsupported/authorization-required states each keep recorded evidence.
 
 | Task | Class | Status |
 | --- | --- | --- |
-| system_maintenance | D (DNS flush) | gap (privilege design pending); diagnostic `mdutil -s` part: partial (read-only CLI slice, isolated-host acceptance pending) |
+| system_maintenance | D (DNS flush) | gap (privilege design pending); diagnostic `mdutil -s` part: partial (read-only CLI slice, real-host observation recorded 2026-09-22) |
 | cache_refresh | B | gap (mechanism contract pending) |
 | saved_state_cleanup | B | contract drafted ([SAVED_STATE_CLEANUP.md](SAVED_STATE_CLEANUP.md)); implementation and native evidence pending |
 | fix_broken_configs | B | gap |
@@ -178,8 +178,8 @@ unsupported/authorization-required states each keep recorded evidence.
 | spotlight_orphan_rules_cleanup | B | gap |
 | periodic_maintenance | D | gap (privilege design pending) |
 | shared_file_list_repair | B | gap |
-| disk_verify | A | partial (read-only CLI slice; isolated-host acceptance pending) |
-| login_items_audit | A | partial (read-only CLI slice; isolated-host acceptance pending) |
+| disk_verify | A | partial (read-only CLI slice; real-host observation recorded 2026-09-22) |
+| login_items_audit | A | partial (read-only CLI slice; real-host observation recorded 2026-09-22) |
 | quarantine_cleanup | B | gap |
 | launch_agents_cleanup | B | gap |
 | notification_cleanup | B | gap |
@@ -187,6 +187,20 @@ unsupported/authorization-required states each keep recorded evidence.
 
 The pinned equivalence rule applies: no optimize comparison claim is valid
 without equal catalog task coverage and isolated-host proof.
+
+## Recorded Class A native acceptance (2026-09-22)
+
+The three read-only diagnostics were run against the owner's macOS 27.0
+(26A428) arm64 host (debug CLI from `80e4e16be2` + one-line footer fix):
+`diagnose disk --volume /` verified the boot volume OK in 7 s with exit 0;
+`diagnose login-items` captured 46,488 bytes of `sfltool dumpbtm` output
+with declared limits and exit 0; `diagnose spotlight` observed
+`indexing: enabled` with the raw `mdutil -s` output retained and exit 0.
+All three reports carried `effects_performed: false`; the tools are
+read-only by design, so the developer host was sufficient evidence for the
+observation paths. Timeout/cancellation paths are covered by the bounded
+runner's review and the effect-slice acceptance records; no repair,
+removal or privilege path was exercised.
 
 ## Non-goals
 

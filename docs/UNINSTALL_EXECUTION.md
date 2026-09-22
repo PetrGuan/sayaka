@@ -111,7 +111,10 @@ minimum deltas:
   `unknown`), not from the cancellation request.
 - Quit/close during confirmation abandons the approval; nothing moves.
 
-## Required native evidence (acceptance gate, still open)
+## Required native evidence (acceptance gate, partially recorded)
+
+Cases 1–6 are recorded as of 2026-09-22 — see *Recorded native acceptance*
+below. Still open: non-local volume and dataless placeholder shapes.
 
 All in disposable, owned fixtures — never on real installed applications:
 
@@ -135,3 +138,19 @@ fixture), include the confirmation and journal work in Sayaka timings, and
 must not substitute skipped protections for speed. The slice is not Mole
 `uninstall` parity: multi-copy handling, related-data selection and official
 uninstaller flows remain ledger gaps.
+
+## Recorded native acceptance (2026-09-22)
+
+Same authorized run, host and discipline as the purge record above. The
+fixture `.app` bundles carried a self-built sleeping executable under an
+owned fixture tree; every Trash move targeted only registered fixture
+bundles, each restored afterwards.
+
+| Contract case | Result |
+| --- | --- |
+| 1. Fixture bundle move | Passed: preview → typed `uninstall Fixture.app` → `succeeded`; journal `revalidated_bundle_trash_v1` (4,4), recorded destination, `Info.plist`/executable verified at the destination |
+| 2. Running refusal | Passed: with the fixture executable running, preview reports `running` with the exact PID and refuses — the process was never signaled (verified still alive afterwards). The approval and last-native-guard re-observations share the same code path and were not separately staged |
+| 3. Refused shapes | Symlinked bundle path and missing `Info.plist` refused with exact codes; non-local volume and dataless placeholder **not staged** |
+| 4. Operator 'Put Back' | Passed: bundle restored intact and again preview-clean |
+| 5. Destination-name conflict | Passed: two `Fixture.app` bundles from different parents moved to distinct destinations (`Fixture.app`, `Fixture 21-06-21-180.app`), both journaled |
+| 6. SIGINT during confirmation | Passed: no handler is installed at confirmation time, so SIGINT terminates the process by signal; nothing moved, no approval persisted |
