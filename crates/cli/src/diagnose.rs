@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 const DISKUTIL: &str = "/usr/sbin/diskutil";
 const SFLTOOL: &str = "/usr/bin/sfltool";
+const MDUTIL: &str = "/usr/bin/mdutil";
 const DEFAULT_TIMEOUT_SEC: u64 = 300;
 const MAX_TIMEOUT_SEC: u64 = 3600;
 const MAX_STDOUT_BYTES: usize = 256 * 1024;
@@ -73,12 +74,29 @@ pub fn command() -> Command {
                 "Audit only; entries are captured as-is and no item is judged, added, removed\nor modified. Ctrl-C stops the tool (INT, then TERM/KILL after a grace period).\nOutput is bounded and truncation is marked.",
             ),
         )
+        .subcommand(
+            bounded_tool_args(
+                Command::new("spotlight")
+                    .about("Observe Spotlight indexing state with mdutil -s (read-only)")
+                    .arg(
+                        Arg::new("volume")
+                            .long("volume")
+                            .value_name("PATH")
+                            .help("Volume to observe [default: /]")
+                            .value_parser(value_parser!(PathBuf)),
+                    ),
+            )
+            .after_help(
+                "Observation only; indexing is not enabled, disabled or rebuilt, and a captured\nstate is not a statement about index health. Ctrl-C stops the tool (INT, then\nTERM/KILL after a grace period). Output is bounded and truncation is marked.\nRelative --volume paths are resolved against the current directory.",
+            ),
+        )
 }
 
 pub fn run(args: &ArgMatches) -> io::Result<u8> {
     let result = match args.subcommand() {
         Some(("disk", args)) => run_disk(args),
         Some(("login-items", args)) => run_login_items(args),
+        Some(("spotlight", args)) => run_spotlight(args),
         _ => Ok(2),
     };
     match result {
@@ -137,6 +155,24 @@ struct LoginItemsReport {
     schema_version: u32,
     kind: &'static str,
     scope: &'static str,
+    argv: Vec<String>,
+    effects_performed: bool,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    timed_out: bool,
+    cancelled: bool,
+    duration_ms: u64,
+    stdout: BoundedOutput,
+    stderr: BoundedOutput,
+    limits: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct SpotlightReport {
+    schema_version: u32,
+    kind: &'static str,
+    volume: serde_json::Value,
+    indexing: &'static str,
     argv: Vec<String>,
     effects_performed: bool,
     exit_code: Option<i32>,
@@ -435,10 +471,9 @@ fn request_stop(child: &mut OwnedChild, interrupt: bool) -> io::Result<ExitStatu
     }
 }
 
-fn run_disk(args: &ArgMatches) -> io::Result<u8> {
-    let volume = args
-        .get_one::<PathBuf>("volume")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "--volume is required"))?;
+/// Validates a `--volume` path: no `..` traversal, resolved against the
+/// current directory, must name an existing directory.
+fn resolve_volume(volume: &Path) -> io::Result<PathBuf> {
     if volume
         .components()
         .any(|part| matches!(part, std::path::Component::ParentDir))
@@ -455,6 +490,14 @@ fn run_disk(args: &ArgMatches) -> io::Result<u8> {
             "--volume must name an existing directory",
         ));
     }
+    Ok(volume)
+}
+
+fn run_disk(args: &ArgMatches) -> io::Result<u8> {
+    let volume = args
+        .get_one::<PathBuf>("volume")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "--volume is required"))?;
+    let volume = resolve_volume(volume)?;
     let timeout = timeout_from(args)?;
     let volume_arg = volume.display().to_string();
     let run = run_tool(
@@ -576,6 +619,88 @@ fn print_login_items_human(run: &ToolRun) -> io::Result<()> {
     out.flush()
 }
 
+fn run_spotlight(args: &ArgMatches) -> io::Result<u8> {
+    let default_volume = PathBuf::from("/");
+    let volume = args.get_one::<PathBuf>("volume").unwrap_or(&default_volume);
+    let volume = resolve_volume(volume)?;
+    let timeout = timeout_from(args)?;
+    let volume_arg = volume.display().to_string();
+    let run = run_tool(MDUTIL, &[OsStr::new("-s"), volume.as_os_str()], timeout)?;
+    let indexing = indexing_observation(&run.stdout.text);
+    let exit_code = exit_code_for(run.cancelled, run.timed_out, run.status.code());
+    if args.get_flag("json") {
+        let report = SpotlightReport {
+            schema_version: 1,
+            kind: "sayaka.diagnose_spotlight",
+            volume: crate::apps::write_native_path(&volume),
+            indexing,
+            argv: vec![MDUTIL.to_string(), "-s".to_string(), volume_arg],
+            effects_performed: false,
+            exit_code: run.status.code(),
+            signal: signal_of(&run.status),
+            timed_out: run.timed_out,
+            cancelled: run.cancelled,
+            duration_ms: run.duration_ms,
+            stdout: run.stdout,
+            stderr: run.stderr,
+            limits: limits_json(timeout),
+        };
+        write_json(&report)?;
+    } else {
+        print_spotlight_human(&volume, indexing, &run)?;
+    }
+    Ok(exit_code)
+}
+
+/// Best-effort observation parsed from mdutil's own words; the retained raw
+/// output stays authoritative in the report.
+fn indexing_observation(output: &str) -> &'static str {
+    let lower = output.to_lowercase();
+    if lower.contains("disabled") {
+        "disabled"
+    } else if lower.contains("enabled") {
+        "enabled"
+    } else {
+        "unknown"
+    }
+}
+
+fn print_spotlight_human(volume: &Path, indexing: &str, run: &ToolRun) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    writeln!(out, "kind: sayaka.diagnose_spotlight")?;
+    writeln!(out, "volume: {}", sayaka_engine::scan::display_path(volume))?;
+    writeln!(out, "effects_performed: false")?;
+    writeln!(out, "indexing: {indexing}")?;
+    let verdict: Cow<'static, str> = if run.cancelled {
+        Cow::Borrowed("cancelled (tool stopped; observation incomplete)")
+    } else if run.timed_out {
+        Cow::Borrowed("timed out (tool stopped; observation incomplete)")
+    } else {
+        match run.status.code() {
+            Some(0) => match indexing {
+                "enabled" | "disabled" => {
+                    Cow::Owned(format!("indexing state observed: {indexing}"))
+                }
+                _ => Cow::Borrowed(
+                    "observation captured; indexing state not recognized in the tool output",
+                ),
+            },
+            Some(code) => Cow::Owned(format!("tool error (exit {code}); read the output")),
+            None => match signal_of(&run.status) {
+                Some(signal) => Cow::Owned(format!("tool stopped by signal {signal}")),
+                None => Cow::Borrowed("tool outcome unknown"),
+            },
+        }
+    };
+    writeln!(out, "verdict: {verdict}")?;
+    write_run_output(&mut out, run)?;
+    writeln!(
+        out,
+        "Read-only observation by /usr/bin/mdutil -s; indexing was not enabled, disabled or\nrebuilt, and an observed state is not a statement about index health."
+    )?;
+    out.flush()
+}
+
 fn write_run_output(out: &mut impl Write, run: &ToolRun) -> io::Result<()> {
     writeln!(out, "duration_ms: {}", run.duration_ms)?;
     writeln!(out, "tool output ({} bytes):", run.stdout.bytes)?;
@@ -675,6 +800,54 @@ mod tests {
         assert_eq!(value["argv"][0], SFLTOOL);
         assert_eq!(value["argv"][1], "dumpbtm");
         assert!(value.get("volume").is_none());
+    }
+
+    #[test]
+    fn indexing_observation_reads_the_tools_own_words() {
+        assert_eq!(indexing_observation("/:\n\tIndexing enabled."), "enabled");
+        assert_eq!(indexing_observation("/:\n\tIndexing disabled."), "disabled");
+        assert_eq!(
+            indexing_observation("/:\n\tIndexing and searching disabled."),
+            "disabled"
+        );
+        assert_eq!(indexing_observation("Error: unknown volume"), "unknown");
+        assert_eq!(indexing_observation(""), "unknown");
+    }
+
+    #[test]
+    fn spotlight_json_report_keeps_observation_honest() {
+        let report = SpotlightReport {
+            schema_version: 1,
+            kind: "sayaka.diagnose_spotlight",
+            volume: crate::apps::write_native_path(Path::new("/")),
+            indexing: "disabled",
+            argv: vec![MDUTIL.into(), "-s".into(), "/".into()],
+            effects_performed: false,
+            exit_code: Some(0),
+            signal: None,
+            timed_out: false,
+            cancelled: false,
+            duration_ms: 9,
+            stdout: bounded("/:\n\tIndexing disabled."),
+            stderr: bounded(""),
+            limits: serde_json::json!({"timeout_sec": 300}),
+        };
+        let mut out = Vec::new();
+        serde_json::to_writer(&mut out, &report).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["kind"], "sayaka.diagnose_spotlight");
+        assert_eq!(value["indexing"], "disabled");
+        // A zero exit with "disabled" text is an observation, not a problem
+        // report: effects stay false and the raw output is retained.
+        assert_eq!(value["effects_performed"], false);
+        assert_eq!(value["exit_code"], 0);
+        assert!(
+            value["stdout"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("disabled")
+        );
     }
 
     #[test]
