@@ -719,7 +719,7 @@ mod tests {
             &preview,
             &roots,
             &Cancellation::default(),
-            Duration::from_secs(30),
+            Duration::from_secs(60),
         );
         assert_eq!(evidence.status, CopiesStatus::Complete);
         assert_eq!(
@@ -729,13 +729,32 @@ mod tests {
         // The published budgets are the effective ones: the scan keeps the
         // engine's 30-second cooperative cap, the inventory gets the call.
         assert_eq!(evidence.scan_budget_sec, Some(30));
-        assert_eq!(evidence.inventory_budget_sec, Some(30));
+        assert_eq!(evidence.inventory_budget_sec, Some(60));
         assert_eq!(evidence.requested_roots, roots);
         // Exactly the other same-ID bundle: the target is excluded by
         // device/inode identity and the different-ID bundle by comparison.
         assert_eq!(evidence.copies.len(), 1, "{:?}", evidence.copies);
         assert_eq!(evidence.copies[0].bundle_path, copy);
         assert_eq!(evidence.note, COPIES_NOTE);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn failed_copies_scan_publishes_only_the_scan_budget() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let target = fixture_bundle_with_id(root.path(), "Demo.app", "com.example.demo");
+        let preview = preview_bundle_uninstall(&target);
+        let missing_root = root.path().join("no-such-root");
+        let evidence = observe_copies(
+            &preview,
+            &[missing_root],
+            &Cancellation::default(),
+            Duration::from_secs(60),
+        );
+        assert_eq!(evidence.status, CopiesStatus::Failed);
+        assert_eq!(evidence.scan_budget_sec, Some(30));
+        assert!(evidence.inventory_budget_sec.is_none());
+        assert!(evidence.copies.is_empty());
     }
 
     #[cfg(target_os = "macos")]
