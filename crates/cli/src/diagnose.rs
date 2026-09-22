@@ -2,25 +2,46 @@
 
 //! Bounded read-only system diagnostics via fixed official tools (T10 Class A).
 //!
-//! Only verification is offered; no repair, no privilege escalation, no
-//! arbitrary shell. The tool argv is fixed, the environment is reset, and
+//! Only observation is offered; no repair, no privilege escalation, no
+//! arbitrary shell. Each tool argv is fixed, the environment is reset, and
 //! output, runtime and cancellation are bounded.
 
 use crate::terminal::Signals;
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use serde::Serialize;
 use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 const DISKUTIL: &str = "/usr/sbin/diskutil";
+const SFLTOOL: &str = "/usr/bin/sfltool";
 const DEFAULT_TIMEOUT_SEC: u64 = 300;
 const MAX_TIMEOUT_SEC: u64 = 3600;
 const MAX_STDOUT_BYTES: usize = 256 * 1024;
 const MAX_STDERR_BYTES: usize = 64 * 1024;
 const CANCEL_GRACE: Duration = Duration::from_secs(2);
+
+fn bounded_tool_args(command: Command) -> Command {
+    command
+        .arg(
+            Arg::new("timeout-sec")
+                .long("timeout-sec")
+                .value_name("SECONDS")
+                .help(format!(
+                    "Tool time budget [default: {DEFAULT_TIMEOUT_SEC}, max: {MAX_TIMEOUT_SEC}]"
+                ))
+                .value_parser(value_parser!(u64)),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .action(ArgAction::SetTrue)
+                .help("Write one versioned JSON report to stdout"),
+        )
+}
 
 pub fn command() -> Command {
     Command::new("diagnose")
@@ -28,39 +49,36 @@ pub fn command() -> Command {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
-            Command::new("disk")
-                .about("Verify a volume's filesystem with diskutil verifyVolume (read-only)")
-                .arg(
-                    Arg::new("volume")
-                        .long("volume")
-                        .value_name("PATH")
-                        .required(true)
-                        .value_parser(value_parser!(PathBuf)),
-                )
-                .arg(
-                    Arg::new("timeout-sec")
-                        .long("timeout-sec")
-                        .value_name("SECONDS")
-                        .help(format!(
-                            "Tool time budget [default: {DEFAULT_TIMEOUT_SEC}, max: {MAX_TIMEOUT_SEC}]"
-                        ))
-                        .value_parser(value_parser!(u64)),
-                )
-                .arg(
-                    Arg::new("json")
-                        .long("json")
-                        .action(ArgAction::SetTrue)
-                        .help("Write one versioned JSON report to stdout"),
-                )
-                .after_help(
-                    "Verification only; no repair is performed or authorized. Ctrl-C stops the tool\n(INT, then TERM/KILL after a grace period). Output is bounded and truncation is marked.\nRelative --volume paths are resolved against the current directory.",
-                ),
+            bounded_tool_args(
+                Command::new("disk")
+                    .about("Verify a volume's filesystem with diskutil verifyVolume (read-only)")
+                    .arg(
+                        Arg::new("volume")
+                            .long("volume")
+                            .value_name("PATH")
+                            .required(true)
+                            .value_parser(value_parser!(PathBuf)),
+                    ),
+            )
+            .after_help(
+                "Verification only; no repair is performed or authorized. Ctrl-C stops the tool\n(INT, then TERM/KILL after a grace period). Output is bounded and truncation is marked.\nRelative --volume paths are resolved against the current directory.",
+            ),
+        )
+        .subcommand(
+            bounded_tool_args(
+                Command::new("login-items")
+                    .about("Audit login and background items with sfltool dumpbtm (read-only)"),
+            )
+            .after_help(
+                "Audit only; entries are captured as-is and no item is judged, added, removed\nor modified. Ctrl-C stops the tool (INT, then TERM/KILL after a grace period).\nOutput is bounded and truncation is marked.",
+            ),
         )
 }
 
 pub fn run(args: &ArgMatches) -> io::Result<u8> {
     let result = match args.subcommand() {
         Some(("disk", args)) => run_disk(args),
+        Some(("login-items", args)) => run_login_items(args),
         _ => Ok(2),
     };
     match result {
@@ -87,6 +105,16 @@ struct BoundedOutput {
     truncated: bool,
 }
 
+/// The shared honest outcome of one bounded tool run.
+struct ToolRun {
+    status: ExitStatus,
+    timed_out: bool,
+    cancelled: bool,
+    duration_ms: u64,
+    stdout: BoundedOutput,
+    stderr: BoundedOutput,
+}
+
 #[derive(Serialize)]
 struct DiskReport {
     schema_version: u32,
@@ -102,6 +130,31 @@ struct DiskReport {
     stdout: BoundedOutput,
     stderr: BoundedOutput,
     limits: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct LoginItemsReport {
+    schema_version: u32,
+    kind: &'static str,
+    scope: &'static str,
+    argv: Vec<String>,
+    effects_performed: bool,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    timed_out: bool,
+    cancelled: bool,
+    duration_ms: u64,
+    stdout: BoundedOutput,
+    stderr: BoundedOutput,
+    limits: serde_json::Value,
+}
+
+fn limits_json(timeout: Duration) -> serde_json::Value {
+    serde_json::json!({
+        "timeout_sec": timeout.as_secs(),
+        "max_stdout_bytes": MAX_STDOUT_BYTES,
+        "max_stderr_bytes": MAX_STDERR_BYTES,
+    })
 }
 
 /// Reads a pipe to its end, retaining at most `cap` bytes and draining the
@@ -126,26 +179,7 @@ fn read_bounded(mut pipe: impl Read, cap: usize) -> io::Result<BoundedOutput> {
     })
 }
 
-fn run_disk(args: &ArgMatches) -> io::Result<u8> {
-    let volume = args
-        .get_one::<PathBuf>("volume")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "--volume is required"))?;
-    if volume
-        .components()
-        .any(|part| matches!(part, std::path::Component::ParentDir))
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "'..' volume traversal is not accepted",
-        ));
-    }
-    let volume = std::path::absolute(volume)?;
-    if !volume.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "--volume must name an existing directory",
-        ));
-    }
+fn timeout_from(args: &ArgMatches) -> io::Result<Duration> {
     let timeout = args
         .get_one::<u64>("timeout-sec")
         .copied()
@@ -156,32 +190,30 @@ fn run_disk(args: &ArgMatches) -> io::Result<u8> {
             format!("--timeout-sec must be in 1..={MAX_TIMEOUT_SEC}"),
         ));
     }
-    let report = run_verify(&volume, Duration::from_secs(timeout))?;
-    if args.get_flag("json") {
-        let mut out = io::stdout().lock();
-        serde_json::to_writer(&mut out, &report).map_err(|error| {
-            io::Error::new(
-                error.io_error_kind().unwrap_or(io::ErrorKind::InvalidData),
-                error,
-            )
-        })?;
-        out.write_all(b"\n")?;
-        out.flush()?;
-    } else {
-        print_disk_human(&report)?;
-    }
-    Ok(exit_code_for(&report))
+    Ok(Duration::from_secs(timeout))
 }
 
-/// Maps the honest report outcome to the CLI exit code: 0 verified OK,
+fn write_json(report: &impl Serialize) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    serde_json::to_writer(&mut out, report).map_err(|error| {
+        io::Error::new(
+            error.io_error_kind().unwrap_or(io::ErrorKind::InvalidData),
+            error,
+        )
+    })?;
+    out.write_all(b"\n")?;
+    out.flush()
+}
+
+/// Maps the honest run outcome to the CLI exit code: 0 tool success,
 /// 3 tool-reported problems or timeout, 130 cancelled, 1 unknown outcome.
-fn exit_code_for(report: &DiskReport) -> u8 {
-    if report.cancelled {
+fn exit_code_for(cancelled: bool, timed_out: bool, exit_code: Option<i32>) -> u8 {
+    if cancelled {
         130
-    } else if report.timed_out {
+    } else if timed_out {
         3
     } else {
-        match report.exit_code {
+        match exit_code {
             Some(0) => 0,
             Some(_) => 3,
             None => 1,
@@ -197,10 +229,9 @@ struct OwnedChild {
 }
 
 impl OwnedChild {
-    fn spawn(volume: &Path) -> io::Result<Self> {
-        let child = ProcessCommand::new(DISKUTIL)
-            .args(["verifyVolume"])
-            .arg(volume)
+    fn spawn(program: &str, args: &[&OsStr]) -> io::Result<Self> {
+        let child = ProcessCommand::new(program)
+            .args(args)
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .stdin(Stdio::null())
@@ -242,9 +273,7 @@ impl OwnedChild {
             Err(errno) => Err(io::Error::from_raw_os_error(errno.raw_os_error())),
         }
     }
-}
 
-impl OwnedChild {
     /// Best-effort stop: SIGKILL (ignored when the tool already exited),
     /// then reap. The readers can only end once the tool is gone, so this
     /// must never skip the wait on paths that join them afterwards.
@@ -280,15 +309,13 @@ impl Drop for OwnedChild {
     }
 }
 
-fn run_verify(volume: &Path, timeout: Duration) -> io::Result<DiskReport> {
-    let argv = vec![
-        DISKUTIL.to_string(),
-        "verifyVolume".to_string(),
-        volume.display().to_string(),
-    ];
+/// Runs one fixed-argv official tool under the shared bounds: reset
+/// environment, closed stdin, bounded drained output, time budget and
+/// Ctrl-C cancellation with an always-reaped child.
+fn run_tool(program: &str, tool_args: &[&OsStr], timeout: Duration) -> io::Result<ToolRun> {
     let signals = Signals::new()?;
     let started = Instant::now();
-    let mut child = OwnedChild::spawn(volume)?;
+    let mut child = OwnedChild::spawn(program, tool_args)?;
     let mut stdout_pipe = child
         .child
         .stdout
@@ -328,26 +355,13 @@ fn run_verify(volume: &Path, timeout: Duration) -> io::Result<DiskReport> {
         .join()
         .map_err(|_| io::Error::other("stderr reader panicked"));
     let (status, cancelled, timed_out) = wait_result?;
-    let stdout = stdout??;
-    let stderr = stderr??;
-    Ok(DiskReport {
-        schema_version: 1,
-        kind: "sayaka.diagnose_disk",
-        volume: crate::apps::write_native_path(volume),
-        argv,
-        effects_performed: false,
-        exit_code: status.code(),
-        signal: signal_of(&status),
+    Ok(ToolRun {
+        status,
         timed_out,
         cancelled,
         duration_ms: started.elapsed().as_millis() as u64,
-        stdout,
-        stderr,
-        limits: serde_json::json!({
-            "timeout_sec": timeout.as_secs(),
-            "max_stdout_bytes": MAX_STDOUT_BYTES,
-            "max_stderr_bytes": MAX_STDERR_BYTES,
-        }),
+        stdout: stdout??,
+        stderr: stderr??,
     })
 }
 
@@ -421,45 +435,80 @@ fn request_stop(child: &mut OwnedChild, interrupt: bool) -> io::Result<ExitStatu
     }
 }
 
-fn print_disk_human(report: &DiskReport) -> io::Result<()> {
-    let mut out = io::stdout().lock();
-    writeln!(out, "kind: {}", report.kind)?;
-    writeln!(
-        out,
-        "volume: {}",
-        report.volume["display"].as_str().unwrap_or("?")
+fn run_disk(args: &ArgMatches) -> io::Result<u8> {
+    let volume = args
+        .get_one::<PathBuf>("volume")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "--volume is required"))?;
+    if volume
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "'..' volume traversal is not accepted",
+        ));
+    }
+    let volume = std::path::absolute(volume)?;
+    if !volume.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--volume must name an existing directory",
+        ));
+    }
+    let timeout = timeout_from(args)?;
+    let volume_arg = volume.display().to_string();
+    let run = run_tool(
+        DISKUTIL,
+        &[OsStr::new("verifyVolume"), volume.as_os_str()],
+        timeout,
     )?;
+    let exit_code = exit_code_for(run.cancelled, run.timed_out, run.status.code());
+    if args.get_flag("json") {
+        let report = DiskReport {
+            schema_version: 1,
+            kind: "sayaka.diagnose_disk",
+            volume: crate::apps::write_native_path(&volume),
+            argv: vec![DISKUTIL.to_string(), "verifyVolume".to_string(), volume_arg],
+            effects_performed: false,
+            exit_code: run.status.code(),
+            signal: signal_of(&run.status),
+            timed_out: run.timed_out,
+            cancelled: run.cancelled,
+            duration_ms: run.duration_ms,
+            stdout: run.stdout,
+            stderr: run.stderr,
+            limits: limits_json(timeout),
+        };
+        write_json(&report)?;
+    } else {
+        print_disk_human(&volume, &run)?;
+    }
+    Ok(exit_code)
+}
+
+fn print_disk_human(volume: &Path, run: &ToolRun) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    writeln!(out, "kind: sayaka.diagnose_disk")?;
+    writeln!(out, "volume: {}", sayaka_engine::scan::display_path(volume))?;
     writeln!(out, "effects_performed: false")?;
-    let verdict: Cow<'static, str> = if report.cancelled {
+    let verdict: Cow<'static, str> = if run.cancelled {
         Cow::Borrowed("cancelled (tool stopped; verification incomplete)")
-    } else if report.timed_out {
+    } else if run.timed_out {
         Cow::Borrowed("timed out (tool stopped; verification incomplete)")
     } else {
-        match report.exit_code {
+        match run.status.code() {
             Some(0) => Cow::Borrowed("verified: the volume appears to be OK"),
             Some(code) => Cow::Owned(format!(
                 "problems reported or tool error (exit {code}); read the output"
             )),
-            None => match report.signal {
+            None => match signal_of(&run.status) {
                 Some(signal) => Cow::Owned(format!("tool stopped by signal {signal}")),
                 None => Cow::Borrowed("tool outcome unknown"),
             },
         }
     };
     writeln!(out, "verdict: {verdict}")?;
-    writeln!(out, "duration_ms: {}", report.duration_ms)?;
-    writeln!(out, "tool output ({} bytes):", report.stdout.bytes)?;
-    write!(out, "{}", report.stdout.text)?;
-    if report.stdout.truncated {
-        writeln!(out, "[output truncated at {} bytes]", MAX_STDOUT_BYTES)?;
-    }
-    if !report.stderr.text.is_empty() {
-        writeln!(out, "tool stderr ({} bytes):", report.stderr.bytes)?;
-        write!(out, "{}", report.stderr.text)?;
-        if report.stderr.truncated {
-            writeln!(out, "[stderr truncated at {} bytes]", MAX_STDERR_BYTES)?;
-        }
-    }
+    write_run_output(&mut out, run)?;
     writeln!(
         out,
         "Read-only verification by /usr/sbin/diskutil; no repair was performed or authorized."
@@ -467,11 +516,96 @@ fn print_disk_human(report: &DiskReport) -> io::Result<()> {
     out.flush()
 }
 
+fn run_login_items(args: &ArgMatches) -> io::Result<u8> {
+    let timeout = timeout_from(args)?;
+    let run = run_tool(SFLTOOL, &[OsStr::new("dumpbtm")], timeout)?;
+    let exit_code = exit_code_for(run.cancelled, run.timed_out, run.status.code());
+    if args.get_flag("json") {
+        let report = LoginItemsReport {
+            schema_version: 1,
+            kind: "sayaka.diagnose_login_items",
+            scope: "login and background items visible to the current user",
+            argv: vec![SFLTOOL.to_string(), "dumpbtm".to_string()],
+            effects_performed: false,
+            exit_code: run.status.code(),
+            signal: signal_of(&run.status),
+            timed_out: run.timed_out,
+            cancelled: run.cancelled,
+            duration_ms: run.duration_ms,
+            stdout: run.stdout,
+            stderr: run.stderr,
+            limits: limits_json(timeout),
+        };
+        write_json(&report)?;
+    } else {
+        print_login_items_human(&run)?;
+    }
+    Ok(exit_code)
+}
+
+fn print_login_items_human(run: &ToolRun) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    writeln!(out, "kind: sayaka.diagnose_login_items")?;
+    writeln!(
+        out,
+        "scope: login and background items visible to the current user"
+    )?;
+    writeln!(out, "effects_performed: false")?;
+    let verdict: Cow<'static, str> = if run.cancelled {
+        Cow::Borrowed("cancelled (tool stopped; audit incomplete)")
+    } else if run.timed_out {
+        Cow::Borrowed("timed out (tool stopped; audit incomplete)")
+    } else {
+        match run.status.code() {
+            Some(0) => Cow::Borrowed(
+                "audit captured; review the entries (this report does not judge items)",
+            ),
+            Some(code) => Cow::Owned(format!("tool error (exit {code}); read the output")),
+            None => match signal_of(&run.status) {
+                Some(signal) => Cow::Owned(format!("tool stopped by signal {signal}")),
+                None => Cow::Borrowed("tool outcome unknown"),
+            },
+        }
+    };
+    writeln!(out, "verdict: {verdict}")?;
+    write_run_output(&mut out, run)?;
+    writeln!(
+        out,
+        "Read-only audit by /usr/bin/sfltool dumpbtm; entries are captured as-is and no item\nwas judged broken, added, removed or modified. Broken-entry removal is a separate,\nexplicitly confirmed operation and is not part of this audit."
+    )?;
+    out.flush()
+}
+
+fn write_run_output(out: &mut impl Write, run: &ToolRun) -> io::Result<()> {
+    writeln!(out, "duration_ms: {}", run.duration_ms)?;
+    writeln!(out, "tool output ({} bytes):", run.stdout.bytes)?;
+    write!(out, "{}", run.stdout.text)?;
+    if run.stdout.truncated {
+        writeln!(out, "[output truncated at {} bytes]", MAX_STDOUT_BYTES)?;
+    }
+    if !run.stderr.text.is_empty() {
+        writeln!(out, "tool stderr ({} bytes):", run.stderr.bytes)?;
+        write!(out, "{}", run.stderr.text)?;
+        if run.stderr.truncated {
+            writeln!(out, "[stderr truncated at {} bytes]", MAX_STDERR_BYTES)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn report(exit_code: Option<i32>, timed_out: bool, cancelled: bool) -> DiskReport {
+    fn bounded(text: &str) -> BoundedOutput {
+        BoundedOutput {
+            text: text.into(),
+            bytes: text.len(),
+            truncated: false,
+        }
+    }
+
+    fn disk_report(exit_code: Option<i32>, timed_out: bool, cancelled: bool) -> DiskReport {
         DiskReport {
             schema_version: 1,
             kind: "sayaka.diagnose_disk",
@@ -483,16 +617,8 @@ mod tests {
             timed_out,
             cancelled,
             duration_ms: 42,
-            stdout: BoundedOutput {
-                text: "ok".into(),
-                bytes: 2,
-                truncated: false,
-            },
-            stderr: BoundedOutput {
-                text: String::new(),
-                bytes: 0,
-                truncated: false,
-            },
+            stdout: bounded("ok"),
+            stderr: bounded(""),
             limits: serde_json::json!({"timeout_sec": 300}),
         }
     }
@@ -510,8 +636,8 @@ mod tests {
     }
 
     #[test]
-    fn json_report_has_explicit_outcome_states() {
-        let report = report(Some(0), false, false);
+    fn disk_json_report_has_explicit_outcome_states() {
+        let report = disk_report(Some(0), false, false);
         let mut out = Vec::new();
         serde_json::to_writer(&mut out, &report).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -524,14 +650,51 @@ mod tests {
     }
 
     #[test]
+    fn login_items_json_report_is_audit_only() {
+        let report = LoginItemsReport {
+            schema_version: 1,
+            kind: "sayaka.diagnose_login_items",
+            scope: "login and background items visible to the current user",
+            argv: vec![SFLTOOL.into(), "dumpbtm".into()],
+            effects_performed: false,
+            exit_code: Some(0),
+            signal: None,
+            timed_out: false,
+            cancelled: false,
+            duration_ms: 7,
+            stdout: bounded("items"),
+            stderr: bounded(""),
+            limits: serde_json::json!({"timeout_sec": 300}),
+        };
+        let mut out = Vec::new();
+        serde_json::to_writer(&mut out, &report).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["kind"], "sayaka.diagnose_login_items");
+        assert_eq!(value["effects_performed"], false);
+        assert_eq!(value["argv"][0], SFLTOOL);
+        assert_eq!(value["argv"][1], "dumpbtm");
+        assert!(value.get("volume").is_none());
+    }
+
+    #[test]
     fn exit_code_distinguishes_outcomes() {
-        assert_eq!(exit_code_for(&report(Some(0), false, false)), 0);
-        assert_eq!(exit_code_for(&report(Some(1), false, false)), 3);
-        assert_eq!(exit_code_for(&report(None, true, false)), 3);
-        assert_eq!(exit_code_for(&report(None, false, true)), 130);
+        assert_eq!(exit_code_for(false, false, Some(0)), 0);
+        assert_eq!(exit_code_for(false, false, Some(1)), 3);
+        assert_eq!(exit_code_for(false, true, None), 3);
+        assert_eq!(exit_code_for(true, false, None), 130);
         // Cancellation wins even when the tool status was observed first
         // (Ctrl-C is delivered to the whole foreground process group).
-        assert_eq!(exit_code_for(&report(Some(0), false, true)), 130);
-        assert_eq!(exit_code_for(&report(None, false, false)), 1);
+        assert_eq!(exit_code_for(true, false, Some(0)), 130);
+        assert_eq!(exit_code_for(false, false, None), 1);
+    }
+
+    #[test]
+    fn disk_report_exit_code_uses_shared_mapping() {
+        let report = disk_report(Some(0), false, false);
+        assert_eq!(
+            exit_code_for(report.cancelled, report.timed_out, report.exit_code),
+            0
+        );
     }
 }

@@ -58,7 +58,11 @@ Every operation slice MUST define, before implementation:
 
 ## Catalog triage (21 pinned tasks)
 
-Proposed effect classes and sequencing. Status today: **all 21 `gap`**.
+Proposed effect classes and sequencing. Status today: `disk_verify` and
+`login_items_audit` have read-only CLI diagnostic slices
+(`sayaka diagnose disk` / `sayaka diagnose login-items`); their
+isolated-host native acceptance is still pending, and the other 19 tasks
+remain `gap`.
 
 ### Class A — read-only diagnostics (first candidates, no effects)
 
@@ -173,8 +177,8 @@ unsupported/authorization-required states each keep recorded evidence.
 | spotlight_orphan_rules_cleanup | B | gap |
 | periodic_maintenance | D | gap (privilege design pending) |
 | shared_file_list_repair | B | gap |
-| disk_verify | A | gap (first candidate) |
-| login_items_audit | A | gap (first candidate) |
+| disk_verify | A | partial (read-only CLI slice; isolated-host acceptance pending) |
+| login_items_audit | A | partial (read-only CLI slice; isolated-host acceptance pending) |
 | quarantine_cleanup | B | gap |
 | launch_agents_cleanup | B | gap |
 | notification_cleanup | B | gap |
