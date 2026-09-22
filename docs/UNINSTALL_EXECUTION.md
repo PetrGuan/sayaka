@@ -111,7 +111,7 @@ minimum deltas:
   `unknown`), not from the cancellation request.
 - Quit/close during confirmation abandons the approval; nothing moves.
 
-## Required native evidence (before the slice merges)
+## Required native evidence (acceptance gate, still open)
 
 All in disposable, owned fixtures — never on real installed applications:
 
