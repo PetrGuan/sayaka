@@ -1,2 +1,11 @@
 /target/
 .DS_Store
+
+# Disposable native test fixtures left behind by interrupted runs
+# (matches at any depth, e.g. crates/engine/sayaka-installation-fixture-*).
+sayaka-menu-pty-*/
+sayaka-installation-fixture-*/
+native-trash-fixture-*/
+
+# Local workflow tracker output, not project source.
+.copilot-workflow/
