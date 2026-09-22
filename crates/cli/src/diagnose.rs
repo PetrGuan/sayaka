@@ -9,9 +9,10 @@
 use crate::terminal::Signals;
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use serde::Serialize;
+use std::borrow::Cow;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
+use std::process::{Child, Command as ProcessCommand, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 const DISKUTIL: &str = "/usr/sbin/diskutil";
@@ -52,7 +53,7 @@ pub fn command() -> Command {
                         .help("Write one versioned JSON report to stdout"),
                 )
                 .after_help(
-                    "Verification only; no repair is performed or authorized. Ctrl-C stops the tool\n(INT, then TERM/KILL after a grace period). Output is bounded and truncation is marked.",
+                    "Verification only; no repair is performed or authorized. Ctrl-C stops the tool\n(INT, then TERM/KILL after a grace period). Output is bounded and truncation is marked.\nRelative --volume paths are resolved against the current directory.",
                 ),
         )
 }
@@ -139,10 +140,10 @@ fn run_disk(args: &ArgMatches) -> io::Result<u8> {
         ));
     }
     let volume = std::path::absolute(volume)?;
-    if !volume.is_absolute() || !volume.is_dir() {
+    if !volume.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "--volume must be an existing absolute directory",
+            "--volume must name an existing directory",
         ));
     }
     let timeout = args
@@ -169,7 +170,13 @@ fn run_disk(args: &ArgMatches) -> io::Result<u8> {
     } else {
         print_disk_human(&report)?;
     }
-    Ok(if report.cancelled {
+    Ok(exit_code_for(&report))
+}
+
+/// Maps the honest report outcome to the CLI exit code: 0 verified OK,
+/// 3 tool-reported problems or timeout, 130 cancelled, 1 unknown outcome.
+fn exit_code_for(report: &DiskReport) -> u8 {
+    if report.cancelled {
         130
     } else if report.timed_out {
         3
@@ -179,7 +186,86 @@ fn run_disk(args: &ArgMatches) -> io::Result<u8> {
             Some(_) => 3,
             None => 1,
         }
-    })
+    }
+}
+
+/// Owns a spawned tool child so setup failures can never leak a running,
+/// unreaped process; mirrors the OwnedChild shape used by the menu module.
+struct OwnedChild {
+    child: Child,
+    reaped: bool,
+}
+
+impl OwnedChild {
+    fn spawn(volume: &Path) -> io::Result<Self> {
+        let child = ProcessCommand::new(DISKUTIL)
+            .args(["verifyVolume"])
+            .arg(volume)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        Ok(Self {
+            child,
+            reaped: false,
+        })
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let result = self.child.try_wait()?;
+        if result.is_some() {
+            self.reaped = true;
+        }
+        Ok(result)
+    }
+
+    fn wait(&mut self) -> io::Result<ExitStatus> {
+        let status = self.child.wait()?;
+        self.reaped = true;
+        Ok(status)
+    }
+
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    #[cfg(unix)]
+    fn send_signal(&self, signal: rustix::process::Signal) -> io::Result<()> {
+        use rustix::process::{Pid, kill_process};
+        let pid = Pid::from_raw(self.id() as i32)
+            .ok_or_else(|| io::Error::other("child PID does not fit platform PID type"))?;
+        match kill_process(pid, signal) {
+            Ok(()) => Ok(()),
+            Err(errno) if errno == rustix::io::Errno::SRCH => Ok(()),
+            Err(errno) => Err(io::Error::from_raw_os_error(errno.raw_os_error())),
+        }
+    }
+}
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if self.reaped {
+            return;
+        }
+        match self.child.try_wait() {
+            Ok(Some(_)) => self.reaped = true,
+            Ok(None) => {
+                if let Err(error) = self.child.kill() {
+                    eprintln!("could not request tool stop {}: {error}", self.child.id());
+                }
+                if let Err(error) = self.child.wait() {
+                    eprintln!("could not reap tool child {}: {error}", self.child.id());
+                }
+                self.reaped = true;
+            }
+            Err(error) => eprintln!(
+                "could not poll tool child {}; status unknown: {error}",
+                self.child.id()
+            ),
+        }
+    }
 }
 
 fn run_verify(volume: &Path, timeout: Duration) -> io::Result<DiskReport> {
@@ -190,63 +276,68 @@ fn run_verify(volume: &Path, timeout: Duration) -> io::Result<DiskReport> {
     ];
     let signals = Signals::new()?;
     let started = Instant::now();
-    let mut child = ProcessCommand::new(DISKUTIL)
-        .args(["verifyVolume"])
-        .arg(volume)
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = OwnedChild::spawn(volume)?;
     let mut stdout_pipe = child
+        .child
         .stdout
         .take()
         .ok_or_else(|| io::Error::other("child stdout pipe missing"))?;
     let mut stderr_pipe = child
+        .child
         .stderr
         .take()
         .ok_or_else(|| io::Error::other("child stderr pipe missing"))?;
     let stdout_reader = std::thread::Builder::new()
         .name("sayaka-diagnose-stdout".into())
         .spawn(move || read_bounded(&mut stdout_pipe, MAX_STDOUT_BYTES))?;
-    let stderr_reader = std::thread::Builder::new()
+    let stderr_reader = match std::thread::Builder::new()
         .name("sayaka-diagnose-stderr".into())
-        .spawn(move || read_bounded(&mut stderr_pipe, MAX_STDERR_BYTES))?;
+        .spawn(move || read_bounded(&mut stderr_pipe, MAX_STDERR_BYTES))
+    {
+        Ok(reader) => reader,
+        Err(error) => {
+            // The OwnedChild drop stops the tool, which closes the stdout
+            // pipe; join the first reader so no thread is left detached.
+            drop(child);
+            let _ = stdout_reader.join();
+            return Err(error);
+        }
+    };
     let mut cancelled = false;
     let mut timed_out = false;
     let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break Some(status);
-        }
         let cancel = signals.interrupted() || signals.terminated();
         let expired = started.elapsed() > timeout;
         if cancel || expired {
             cancelled = cancel;
             timed_out = !cancel;
-            request_stop(&mut child, cancel)?;
-            break None;
+            break request_stop(&mut child, cancel)?;
+        }
+        if let Some(status) = child.try_wait()? {
+            break status;
         }
         std::thread::sleep(Duration::from_millis(10));
     };
+    // Ctrl-C signals the whole foreground process group, so the tool can
+    // exit from the shared SIGINT before this loop observes the request.
+    // The user's cancellation is still what happened; report it honestly.
+    if !cancelled && !timed_out && (signals.interrupted() || signals.terminated()) {
+        cancelled = true;
+    }
     let stdout = stdout_reader
         .join()
         .map_err(|_| io::Error::other("stdout reader panicked"))??;
     let stderr = stderr_reader
         .join()
         .map_err(|_| io::Error::other("stderr reader panicked"))??;
-    let (exit_code, signal) = match status {
-        Some(status) => (status.code(), signal_of(&status)),
-        None => (None, None),
-    };
     Ok(DiskReport {
         schema_version: 1,
         kind: "sayaka.diagnose_disk",
         volume: crate::apps::write_native_path(volume),
         argv,
         effects_performed: false,
-        exit_code,
-        signal,
+        exit_code: status.code(),
+        signal: signal_of(&status),
         timed_out,
         cancelled,
         duration_ms: started.elapsed().as_millis() as u64,
@@ -261,42 +352,41 @@ fn run_verify(volume: &Path, timeout: Duration) -> io::Result<DiskReport> {
 }
 
 #[cfg(unix)]
-fn signal_of(status: &std::process::ExitStatus) -> Option<i32> {
+fn signal_of(status: &ExitStatus) -> Option<i32> {
     use std::os::unix::process::ExitStatusExt;
     status.signal()
 }
 
 #[cfg(not(unix))]
-fn signal_of(_: &std::process::ExitStatus) -> Option<i32> {
+fn signal_of(_: &ExitStatus) -> Option<i32> {
     None
 }
 
-/// Interrupt first (so the tool can stop cleanly), then TERM and KILL after a
-/// grace window. The child is always reaped.
-fn request_stop(child: &mut std::process::Child, interrupt: bool) -> io::Result<()> {
-    use rustix::process::{Pid, Signal, kill_process};
-    let pid = Pid::from_raw(child.id() as i32)
-        .ok_or_else(|| io::Error::other("child PID does not fit platform PID type"))?;
-    let send = |signal| match kill_process(pid, signal) {
-        Ok(()) => Ok(()),
-        Err(errno) if errno == rustix::io::Errno::SRCH => Ok(()),
-        Err(errno) => Err(io::Error::from_raw_os_error(errno.raw_os_error())),
-    };
-    send(if interrupt { Signal::INT } else { Signal::TERM })?;
+/// Interrupt first (so the tool can stop cleanly), then KILL after a grace
+/// window. Returns the tool's real exit status; the child is always reaped.
+fn request_stop(child: &mut OwnedChild, interrupt: bool) -> io::Result<ExitStatus> {
+    #[cfg(unix)]
+    child.send_signal(if interrupt {
+        rustix::process::Signal::INT
+    } else {
+        rustix::process::Signal::TERM
+    })?;
     let deadline = Instant::now() + CANCEL_GRACE;
     loop {
         if let Some(status) = child.try_wait()? {
-            let _ = status;
-            return Ok(());
+            return Ok(status);
         }
         if Instant::now() >= deadline {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    send(Signal::KILL)?;
-    child.wait()?;
-    Ok(())
+    match child.child.kill() {
+        Ok(()) => child.wait(),
+        // The tool exited between the last poll and the kill request.
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => child.wait(),
+        Err(error) => Err(error),
+    }
 }
 
 fn print_disk_human(report: &DiskReport) -> io::Result<()> {
@@ -308,17 +398,20 @@ fn print_disk_human(report: &DiskReport) -> io::Result<()> {
         report.volume["display"].as_str().unwrap_or("?")
     )?;
     writeln!(out, "effects_performed: false")?;
-    let verdict = if report.cancelled {
-        "cancelled (tool stopped; verification incomplete)"
+    let verdict: Cow<'static, str> = if report.cancelled {
+        Cow::Borrowed("cancelled (tool stopped; verification incomplete)")
     } else if report.timed_out {
-        "timed out (tool stopped; verification incomplete)"
+        Cow::Borrowed("timed out (tool stopped; verification incomplete)")
     } else {
         match report.exit_code {
-            Some(0) => "verified: the volume appears to be OK",
-            Some(code) => {
-                &format!("problems reported or tool error (exit {code}); read the output")
-            }
-            None => "tool outcome unknown",
+            Some(0) => Cow::Borrowed("verified: the volume appears to be OK"),
+            Some(code) => Cow::Owned(format!(
+                "problems reported or tool error (exit {code}); read the output"
+            )),
+            None => match report.signal {
+                Some(signal) => Cow::Owned(format!("tool stopped by signal {signal}")),
+                None => Cow::Borrowed("tool outcome unknown"),
+            },
         }
     };
     writeln!(out, "verdict: {verdict}")?;
@@ -331,6 +424,9 @@ fn print_disk_human(report: &DiskReport) -> io::Result<()> {
     if !report.stderr.text.is_empty() {
         writeln!(out, "tool stderr ({} bytes):", report.stderr.bytes)?;
         write!(out, "{}", report.stderr.text)?;
+        if report.stderr.truncated {
+            writeln!(out, "[stderr truncated at {} bytes]", MAX_STDERR_BYTES)?;
+        }
     }
     writeln!(
         out,
@@ -342,6 +438,32 @@ fn print_disk_human(report: &DiskReport) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn report(exit_code: Option<i32>, timed_out: bool, cancelled: bool) -> DiskReport {
+        DiskReport {
+            schema_version: 1,
+            kind: "sayaka.diagnose_disk",
+            volume: crate::apps::write_native_path(Path::new("/")),
+            argv: vec![DISKUTIL.into(), "verifyVolume".into(), "/".into()],
+            effects_performed: false,
+            exit_code,
+            signal: None,
+            timed_out,
+            cancelled,
+            duration_ms: 42,
+            stdout: BoundedOutput {
+                text: "ok".into(),
+                bytes: 2,
+                truncated: false,
+            },
+            stderr: BoundedOutput {
+                text: String::new(),
+                bytes: 0,
+                truncated: false,
+            },
+            limits: serde_json::json!({"timeout_sec": 300}),
+        }
+    }
 
     #[test]
     fn bounded_output_keeps_cap_and_marks_truncation() {
@@ -357,29 +479,7 @@ mod tests {
 
     #[test]
     fn json_report_has_explicit_outcome_states() {
-        let report = DiskReport {
-            schema_version: 1,
-            kind: "sayaka.diagnose_disk",
-            volume: crate::apps::write_native_path(Path::new("/")),
-            argv: vec![DISKUTIL.into(), "verifyVolume".into(), "/".into()],
-            effects_performed: false,
-            exit_code: Some(0),
-            signal: None,
-            timed_out: false,
-            cancelled: false,
-            duration_ms: 42,
-            stdout: BoundedOutput {
-                text: "ok".into(),
-                bytes: 2,
-                truncated: false,
-            },
-            stderr: BoundedOutput {
-                text: String::new(),
-                bytes: 0,
-                truncated: false,
-            },
-            limits: serde_json::json!({"timeout_sec": 300}),
-        };
+        let report = report(Some(0), false, false);
         let mut out = Vec::new();
         serde_json::to_writer(&mut out, &report).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
@@ -389,5 +489,17 @@ mod tests {
         assert_eq!(value["argv"][1], "verifyVolume");
         assert_eq!(value["timed_out"], false);
         assert_eq!(value["cancelled"], false);
+    }
+
+    #[test]
+    fn exit_code_distinguishes_outcomes() {
+        assert_eq!(exit_code_for(&report(Some(0), false, false)), 0);
+        assert_eq!(exit_code_for(&report(Some(1), false, false)), 3);
+        assert_eq!(exit_code_for(&report(None, true, false)), 3);
+        assert_eq!(exit_code_for(&report(None, false, true)), 130);
+        // Cancellation wins even when the tool status was observed first
+        // (Ctrl-C is delivered to the whole foreground process group).
+        assert_eq!(exit_code_for(&report(Some(0), false, true)), 130);
+        assert_eq!(exit_code_for(&report(None, false, false)), 1);
     }
 }
