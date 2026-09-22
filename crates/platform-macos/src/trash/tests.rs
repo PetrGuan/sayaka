@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::{TrashCandidate, full_sync, has_extended_acl};
+use crate::{BundleTrashCandidate, TrashCandidate, full_sync, has_extended_acl};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt, symlink};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1642,5 +1642,78 @@ fn real_foundation_trash_owned_fixture_round_trip() {
     drop(recovery);
     drop(candidate);
     fixture.preserve = false;
+    fixture.finish();
+}
+
+#[test]
+fn bundle_capture_accepts_owned_app_directory_and_cancel_has_no_effect() {
+    let mut fixture = Fixture::new();
+    let app = fixture.directory("Fixture.app");
+    fixture.directory("Fixture.app/Contents");
+    fixture.directory("Fixture.app/Contents/MacOS");
+    fixture.file("Fixture.app/Contents/Info.plist", b"synthetic plist");
+    let candidate = BundleTrashCandidate::capture(&fixture.root, &app, &[]).unwrap();
+    assert_eq!(candidate.path(), app);
+    candidate.revalidate().unwrap();
+    let mut called = false;
+    let result = candidate.move_to_trash_with_last_guard(
+        || {
+            called = true;
+            true
+        },
+        || NativeLastGuard::Proceed,
+    );
+    assert!(called);
+    assert!(matches!(result, NativeTrashOutcome::Refused(reason) if reason == "cancelled"));
+    assert_eq!(
+        fs::read(app.join("Contents/Info.plist")).unwrap(),
+        b"synthetic plist"
+    );
+    assert!(matches!(
+        candidate.move_to_trash_with_last_guard(
+            || panic!("a consumed candidate must never retry"),
+            || NativeLastGuard::Proceed,
+        ),
+        NativeTrashOutcome::Refused(_)
+    ));
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
+fn bundle_capture_rejects_files_unsuffixed_dirs_and_missing_manifests() {
+    let mut fixture = Fixture::new();
+    let file = fixture.file("ordinary.txt", b"x");
+    assert!(BundleTrashCandidate::capture(&fixture.root, &file, &[]).is_err());
+    let plain = fixture.directory("plain");
+    assert!(BundleTrashCandidate::capture(&fixture.root, &plain, &[]).is_err());
+    let no_manifest = fixture.directory("NoManifest.app");
+    assert!(BundleTrashCandidate::capture(&fixture.root, &no_manifest, &[]).is_err());
+    fixture.finish();
+}
+
+#[test]
+fn bundle_manifest_identity_change_after_capture_is_refused() {
+    let mut fixture = Fixture::new();
+    let app = fixture.directory("Fixture.app");
+    fixture.directory("Fixture.app/Contents");
+    fixture.directory("Fixture.app/Contents/MacOS");
+    fixture.file("Fixture.app/Contents/Info.plist", b"one");
+    let candidate = BundleTrashCandidate::capture(&fixture.root, &app, &[]).unwrap();
+    // Same-path content swap keeps the inode here; replace with a rename to
+    // force an identity change.
+    let swapped = app.join("Contents/Info.plist.tmp");
+    fs::write(&swapped, b"two").unwrap();
+    fs::rename(&swapped, app.join("Contents/Info.plist")).unwrap();
+    assert!(candidate.revalidate().is_err());
+    // Re-register the swapped identity so verified fixture cleanup accepts it.
+    let plist = app.join("Contents/Info.plist");
+    let identity = Stamp::read(&fs::symlink_metadata(&plist).unwrap()).identity();
+    for object in fixture.objects.iter_mut() {
+        if object.0 == plist {
+            object.1 = identity;
+        }
+    }
+    drop(candidate);
     fixture.finish();
 }

@@ -549,6 +549,23 @@ pub(super) fn post_move_capture_anchor_probe_for_test() -> io::Result<()> {
     verify_post_move_consistency(&expected, &held, &result, true)
 }
 
+/// Mutable capture progress labels, grouped to keep capture_inner's
+/// signature within the arity budget.
+#[derive(Default)]
+struct CaptureStage {
+    phase: &'static str,
+    operation: &'static str,
+}
+
+impl CaptureStage {
+    fn new() -> Self {
+        Self {
+            phase: "request",
+            operation: "validation",
+        }
+    }
+}
+
 pub(super) struct Candidate {
     pub(super) info: NativeFileInfo,
     pub(super) path: PathBuf,
@@ -560,6 +577,12 @@ pub(super) struct Candidate {
     target_marker: Option<NativeTargetMarker>,
     protections: Vec<Evidence>,
     volume: VolumeInfo,
+    /// The target is a sealed `.app` bundle directory (T9 uninstall); all
+    /// file-only admission/destination checks take their directory variants.
+    bundle: bool,
+    /// Captured Contents/Info.plist identity (device, inode), revalidated
+    /// with the bundle and verified again at the destination.
+    bundle_manifest: Option<(u64, u64)>,
     attempted: AtomicBool,
     rule_binding_witness: Option<NativeRuleBindingWitness>,
 }
@@ -570,28 +593,38 @@ impl Candidate {
         path: &Path,
         protected: &[PathBuf],
     ) -> Result<Self, NativeCaptureFailure> {
+        Self::capture_diagnostic_mode(scope, path, protected, false)
+    }
+
+    /// Bundle-directory capture (T9 uninstall): the target is a sealed `.app`
+    /// directory; ancestors, protections and volume rules are unchanged.
+    pub(super) fn capture_bundle_diagnostic(
+        scope: &Path,
+        path: &Path,
+        protected: &[PathBuf],
+    ) -> Result<Self, NativeCaptureFailure> {
+        Self::capture_diagnostic_mode(scope, path, protected, true)
+    }
+
+    fn capture_diagnostic_mode(
+        scope: &Path,
+        path: &Path,
+        protected: &[PathBuf],
+        bundle: bool,
+    ) -> Result<Self, NativeCaptureFailure> {
         let policy = ReadOnlyPolicy::enter().map_err(|error| NativeCaptureFailure {
             phase: "policy",
             operation: "enter",
             error,
             restoration_error: None,
         })?;
-        let mut phase = "request";
-        let mut operation = "validation";
-        let result = Self::capture_inner(
-            scope,
-            path,
-            None,
-            None,
-            protected,
-            &mut phase,
-            &mut operation,
-        );
+        let mut stage = CaptureStage::new();
+        let result = Self::capture_inner(scope, path, None, None, protected, bundle, &mut stage);
         match (result, policy.restore()) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(error), Ok(())) => Err(NativeCaptureFailure {
-                phase,
-                operation,
+                phase: stage.phase,
+                operation: stage.operation,
                 error,
                 restoration_error: None,
             }),
@@ -602,8 +635,8 @@ impl Candidate {
                 restoration_error: None,
             }),
             (Err(first), Err(second)) => Err(NativeCaptureFailure {
-                phase,
-                operation,
+                phase: stage.phase,
+                operation: stage.operation,
                 error: first,
                 restoration_error: Some(second),
             }),
@@ -624,8 +657,8 @@ impl Candidate {
                 Some(source),
                 marker,
                 protected,
-                &mut "request",
-                &mut "validation",
+                false,
+                &mut CaptureStage::new(),
             )
         })
     }
@@ -636,12 +669,12 @@ impl Candidate {
         source_path: Option<&Path>,
         marker: Option<NativeTargetMarker>,
         protected: &[PathBuf],
-        phase: &mut &'static str,
-        operation: &mut &'static str,
+        bundle: bool,
+        stage: &mut CaptureStage,
     ) -> io::Result<Self> {
-        *operation = "ordinary_authority";
+        stage.operation = "ordinary_authority";
         let uid = ordinary_authority()?;
-        *operation = "scope_validation";
+        stage.operation = "scope_validation";
         valid_path(scope)?;
         valid_path(path)?;
         if path == scope || !path.starts_with(scope) {
@@ -655,22 +688,33 @@ impl Candidate {
         }
         let mut ancestors = Vec::with_capacity(parents.len());
         for parent in parents.into_iter().rev() {
-            *phase = "ancestor";
-            let evidence = Evidence::open_observed(parent, Binding::Safety, operation)?;
-            *operation = "ancestor_admission";
+            stage.phase = "ancestor";
+            let evidence = Evidence::open_observed(parent, Binding::Safety, &mut stage.operation)?;
+            stage.operation = "ancestor_admission";
             admissible_ancestor(&evidence.stamp, uid)?;
-            *operation = "package_classification";
+            stage.operation = "package_classification";
             reject_package(&evidence)?;
             ancestors.push(evidence);
         }
-        *phase = "target";
-        let target = Evidence::open_observed(path, Binding::FullTarget, operation)?;
-        *operation = "file_admission";
-        admissible_file(&target.stamp, uid)?;
-        *operation = "cloud_attributes";
+        stage.phase = "target";
+        let target = Evidence::open_observed(path, Binding::FullTarget, &mut stage.operation)?;
+        if bundle {
+            stage.operation = "bundle_admission";
+            admissible_bundle_target(&target.stamp, uid, path)?;
+            stage.operation = "bundle_manifest";
+        } else {
+            stage.operation = "file_admission";
+            admissible_file(&target.stamp, uid)?;
+        }
+        let bundle_manifest = if bundle {
+            Some(bundle_manifest_identity(path)?)
+        } else {
+            None
+        };
+        stage.operation = "cloud_attributes";
         reject_cloud_attributes(&target.file)?;
-        *phase = "source";
-        *operation = "source_capture";
+        stage.phase = "source";
+        stage.operation = "source_capture";
         let source = if let Some(source_path) = source_path {
             if source_path == path {
                 return Err(refused("source and target must be different files"));
@@ -685,8 +729,8 @@ impl Candidate {
         } else {
             None
         };
-        *phase = "scope";
-        *operation = "physical_containment";
+        stage.phase = "scope";
+        stage.operation = "physical_containment";
         let scope_evidence = ancestors
             .iter()
             .find(|ancestor| ancestor.path == scope)
@@ -702,22 +746,23 @@ impl Candidate {
         }
         let mut protections = Vec::with_capacity(protected.len());
         for protection in protected {
-            *phase = "protection";
-            *operation = "validate_path";
+            stage.phase = "protection";
+            stage.operation = "validate_path";
             valid_path(protection)?;
             // Exclusions may themselves be aliases. Resolve only the exclusion,
             // under the no-materialization policy, then retain its physical object.
             // Missing/inaccessible exclusions are unknown, not permission.
-            *operation = "canonicalize";
+            stage.operation = "canonicalize";
             let canonical = fs::canonicalize(protection)?;
-            let mut evidence = Evidence::open_observed(&canonical, Binding::Safety, operation)?;
+            let mut evidence =
+                Evidence::open_observed(&canonical, Binding::Safety, &mut stage.operation)?;
             evidence.path = protection.clone();
             protections.push(evidence);
         }
-        *phase = "volume";
-        *operation = "target_volume";
+        stage.phase = "volume";
+        stage.operation = "target_volume";
         let volume = supported_volume(&target)?;
-        *operation = "scope_volume";
+        stage.operation = "scope_volume";
         if supported_volume(scope_evidence)? != volume
             || scope_evidence.stamp.device != target.stamp.device
         {
@@ -725,8 +770,8 @@ impl Candidate {
                 "scope and target must share the supported APFS volume",
             ));
         }
-        *phase = "target";
-        *operation = "final_metadata";
+        stage.phase = "target";
+        stage.operation = "final_metadata";
         let metadata = target.file.metadata()?;
         let candidate = Self {
             info: NativeFileInfo {
@@ -744,14 +789,16 @@ impl Candidate {
             target_marker: marker,
             protections,
             volume,
+            bundle,
+            bundle_manifest,
             attempted: AtomicBool::new(false),
             rule_binding_witness: None,
         };
-        *phase = "revalidation";
-        *operation = "full_candidate_revalidation";
+        stage.phase = "revalidation";
+        stage.operation = "full_candidate_revalidation";
         candidate.revalidate_inner()?;
         let mut candidate = candidate;
-        *operation = "rule_binding_witness";
+        stage.operation = "rule_binding_witness";
         candidate.rule_binding_witness = candidate.build_rule_binding_witness()?;
         Ok(candidate)
     }
@@ -820,7 +867,17 @@ impl Candidate {
             reject_package(ancestor)?;
         }
         self.target.revalidate()?;
-        admissible_file(&self.target.stamp, self.uid)?;
+        if self.bundle {
+            admissible_bundle_target(&self.target.stamp, self.uid, &self.path)?;
+            let manifest = self
+                .bundle_manifest
+                .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
+            if bundle_manifest_identity(&self.path)? != manifest {
+                return Err(refused("Contents/Info.plist identity changed"));
+            }
+        } else {
+            admissible_file(&self.target.stamp, self.uid)?;
+        }
         reject_cloud_attributes(&self.target.file)?;
         if let Some(source) = &self.source {
             source.revalidate()?;
@@ -882,7 +939,18 @@ impl Candidate {
 
     fn check_protection(&self) -> io::Result<()> {
         for path in [&self.path, &self.target.physical, &self.scope] {
-            if standard_protected(path) {
+            // The bundle target's own `.app` name is the intended target, not
+            // a protected package; its parent chain keeps full protection, so
+            // nested bundles and protected locations stay refused.
+            let checked = if self.bundle
+                && (path == &self.path || path == &self.target.physical)
+                && let Some(parent) = path.parent()
+            {
+                parent
+            } else {
+                path
+            };
+            if standard_protected(checked) {
                 return Err(refused(
                     "system, cloud, hidden, or application-managed path",
                 ));
@@ -1044,7 +1112,19 @@ impl Candidate {
                 "returned destination identity does not match the retained original",
             ));
         }
-        admissible_file(&stamp, self.uid)?;
+        if self.bundle {
+            admissible_moved_bundle(&stamp, self.uid)?;
+            let manifest = self
+                .bundle_manifest
+                .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
+            if bundle_manifest_identity(destination)? != manifest {
+                return Err(refused(
+                    "destination Contents/Info.plist identity does not match the sealed original",
+                ));
+            }
+        } else {
+            admissible_file(&stamp, self.uid)?;
+        }
         reject_destination_attributes(&file)?;
         let mut result = Evidence::complete(destination, Binding::PostMoveTarget, file, stamp)?;
         let mut held = Stamp::read(&self.target.file.metadata()?);
@@ -1054,7 +1134,11 @@ impl Candidate {
                 "retained source identity changed after reported move",
             ));
         }
-        admissible_file(&held, self.uid)?;
+        if self.bundle {
+            admissible_moved_bundle(&held, self.uid)?;
+        } else {
+            admissible_file(&held, self.uid)?;
+        }
         // The initial destination observation tolerates bounded ctime evolution
         // while metadata/ACL capture settles. Afterwards, pin the observed ctime
         // and require full target equality for held/source and final revalidation.
@@ -1308,6 +1392,67 @@ fn admissible_ancestor(stamp: &Stamp, uid: u32) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// T9 bundle target: an ordinary user-owned directory named `*.app`.
+/// Unlike file targets there is no single-link rule (directories always
+/// have extra links) and the package itself is the intended target.
+fn admissible_bundle_target(stamp: &Stamp, uid: u32, path: &Path) -> io::Result<()> {
+    if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
+        || stamp.mode & 0o7022 != 0
+        || stamp.uid != uid
+        || stamp.flags & !ORDINARY_FLAGS != 0
+        || stamp.inode == 0
+    {
+        return Err(refused(
+            "requires an ordinary user-owned unprotected bundle directory",
+        ));
+    }
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_none_or(|name| !name.ends_with(".app"))
+    {
+        return Err(refused("bundle directory name must end in .app"));
+    }
+    Ok(())
+}
+
+/// A bundle directory after a reported move: same admission as at capture,
+/// without the name rule (Trash may rename on conflict).
+fn admissible_moved_bundle(stamp: &Stamp, uid: u32) -> io::Result<()> {
+    if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
+        || stamp.mode & 0o7022 != 0
+        || stamp.uid != uid
+        || stamp.flags & !ORDINARY_FLAGS != 0
+        || stamp.inode == 0
+    {
+        return Err(refused(
+            "returned destination is not an ordinary user-owned bundle directory",
+        ));
+    }
+    Ok(())
+}
+
+/// The bundle must carry a regular-file Contents/Info.plist, and its
+/// (device, inode) identity is sealed at capture. This pathname query sits
+/// inside the module's documented check/use disclosure; the bundle identity
+/// itself is pinned and revalidated separately.
+fn bundle_manifest_identity(bundle: &Path) -> io::Result<(u64, u64)> {
+    let plist = bundle.join("Contents").join("Info.plist");
+    let metadata = fs::symlink_metadata(&plist).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            refused("Contents/Info.plist is missing")
+        } else {
+            error
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(refused(
+            "Contents/Info.plist is not a regular file (links are not followed)",
+        ));
+    }
+    Ok((metadata.dev(), metadata.ino()))
 }
 
 fn reject_package(evidence: &Evidence) -> io::Result<()> {

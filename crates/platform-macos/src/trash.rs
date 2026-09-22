@@ -318,6 +318,85 @@ impl TrashCandidate {
     }
 }
 
+/// Sealed `.app` bundle directory candidate for T9 bundle uninstall.
+/// The target is the package itself; ancestor/protection/volume rules are
+/// unchanged from ordinary candidates. See docs/UNINSTALL_EXECUTION.md.
+pub struct BundleTrashCandidate {
+    #[cfg(target_os = "macos")]
+    native: native::Candidate,
+    #[cfg(not(target_os = "macos"))]
+    unavailable: std::convert::Infallible,
+}
+
+impl BundleTrashCandidate {
+    /// Captures a bundle directory: ordinary user-owned `.app` directory with
+    /// a regular-file Contents/Info.plist, strictly beneath the explicit
+    /// scope on the same supported volume. Links and dataless objects are
+    /// refused; the package-boundary rejection applies to ancestors only.
+    pub fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            native::Candidate::capture_bundle_diagnostic(scope, path, protected)
+                .map(|native| Self { native })
+                .map_err(NativeCaptureFailure::into_legacy_error)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (scope, path, protected);
+            Err(unsupported())
+        }
+    }
+
+    pub fn info(&self) -> &NativeFileInfo {
+        #[cfg(target_os = "macos")]
+        {
+            &self.native.info
+        }
+        #[cfg(not(target_os = "macos"))]
+        match self.unavailable {}
+    }
+
+    pub fn path(&self) -> &Path {
+        #[cfg(target_os = "macos")]
+        {
+            &self.native.path
+        }
+        #[cfg(not(target_os = "macos"))]
+        match self.unavailable {}
+    }
+
+    pub fn revalidate(&self) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.revalidate()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(unsupported())
+        }
+    }
+
+    /// Same single-attempt contract as ordinary candidates: durable intent
+    /// first, cancellation evaluated once before the sole Foundation call,
+    /// never submitted twice.
+    pub fn move_to_trash_with_last_guard(
+        &self,
+        cancelled: impl FnOnce() -> bool,
+        last_guard: impl FnOnce() -> NativeLastGuard,
+    ) -> NativeTrashOutcome {
+        #[cfg(target_os = "macos")]
+        {
+            self.native
+                .move_to_trash_with_last_guard(cancelled, last_guard)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (cancelled, last_guard);
+            NativeTrashOutcome::Refused(unsupported().to_string())
+        }
+    }
+}
+
 /// Requests Darwin F_FULLFSYNC, with no fsync-only durability fallback.
 pub fn full_sync(file: &std::fs::File) -> io::Result<()> {
     #[cfg(target_os = "macos")]

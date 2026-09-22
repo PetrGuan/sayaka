@@ -150,7 +150,10 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
         clean_policy: Option<journal::CleanPolicyContextRecord>,
         mut guard: GuardHook<'_>,
     ) -> io::Result<ExecutionReport> {
-        if preview.execution_contract() != ExecutionContract::RevalidatedTrashV1 {
+        if !matches!(
+            preview.execution_contract(),
+            ExecutionContract::RevalidatedTrashV1 | ExecutionContract::RevalidatedBundleTrashV1
+        ) {
             return Err(journal::invalid(
                 "model-only approval cannot authorize native execution",
             ));
@@ -252,6 +255,8 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
         let clean_profile = clean_policy.is_some();
         let schema_version = if clean_profile {
             3
+        } else if preview.schema_version() == 4 {
+            journal::BUNDLE_SCHEMA_VERSION
         } else if preview.schema_version() == 3 {
             journal::SCHEMA_VERSION
         } else {
@@ -457,7 +462,43 @@ impl GuardPoint {
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{CleanSession, InstallerSession, TrashSession};
+pub use macos::{BundleUninstallSession, CleanSession, InstallerSession, TrashSession};
+
+#[cfg(not(target_os = "macos"))]
+pub struct BundleUninstallSession {
+    unavailable: std::convert::Infallible,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl BundleUninstallSession {
+    pub fn prepare(_: Scope, _: &Path, _: &Cancellation) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "bundle uninstall is macOS-only",
+        ))
+    }
+    pub fn preview(&self) -> &Plan {
+        match self.unavailable {}
+    }
+    pub fn issues(&self) -> &[SelectionIssue] {
+        match self.unavailable {}
+    }
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        match self.unavailable {}
+    }
+    pub fn approve(&mut self, _: &Plan) -> Result<Approval, Error> {
+        match self.unavailable {}
+    }
+    pub fn execute(
+        &mut self,
+        _: &Plan,
+        _: &Approval,
+        _: &Cancellation,
+        _: &Store,
+    ) -> io::Result<ExecutionReport> {
+        match self.unavailable {}
+    }
+}
 
 #[cfg(not(target_os = "macos"))]
 pub struct InstallerSession {
