@@ -79,6 +79,17 @@ hidden behind a "cleanup" label.
   dedicated plan variant `RevalidatedSavedStateTrashV1`
   (`saved_state_trash_v1`, own plan/journal schema tuple) is required;
   the purge and bundle variants stay untouched.
+- **Library admission carve-out (narrow and named):** the M3/purge
+  protection chain classifies `~/Library` as protected, which would refuse
+  every candidate of this operation by construction. This contract admits
+  exactly one ancestor chain for this operation only: the current user's
+  home directory, its `Library` child, and the fixed
+  `Saved Application State` directory itself — verified by device/inode
+  identity at capture like every other ancestor. Every *other* Library
+  descendant, every package ancestor, and every protected path stays
+  refused unchanged; the location's own children that are not candidates
+  gain no admission. The native candidate grows a corresponding narrow
+  admission mode for this operation; no other operation may enable it.
 - One synchronous `trashItemAtURL` call per item is the only mutation
   attempt; single-attempt discipline, destination URL journaled as the
   recovery witness, NO-means-not-moved semantics exactly as in the
