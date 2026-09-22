@@ -165,7 +165,7 @@ unsupported/authorization-required states each keep recorded evidence.
 | --- | --- | --- |
 | system_maintenance | D (DNS flush) | gap (privilege design pending); diagnostic `mdutil -s` part: partial (read-only CLI slice, isolated-host acceptance pending) |
 | cache_refresh | B | gap (mechanism contract pending) |
-| saved_state_cleanup | B | gap |
+| saved_state_cleanup | B | contract drafted ([SAVED_STATE_CLEANUP.md](SAVED_STATE_CLEANUP.md)); implementation and native evidence pending |
 | fix_broken_configs | B | gap |
 | network_optimization | D | gap (privilege design pending) |
 | sqlite_vacuum | E | gap |
