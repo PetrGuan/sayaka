@@ -2,9 +2,12 @@
 
 # Purge execution contract: selected project artifacts to Trash
 
-Design for issue PetrGuan/SayakaCleaner#28 (T8). This document is the
-architect contract that must be confirmed before **any** purge effect is
-enabled. It implements nothing: merging this document authorizes no removal.
+Design for issue PetrGuan/SayakaCleaner#28 (T8). This contract was
+confirmed by independent review in PetrGuan/sayaka#48 and **is implemented**
+by the subsequent execution slice (PetrGuan/sayaka#51,
+`revalidated_purge_trash_v1`). The required native evidence below is the
+remaining acceptance gate: until it is recorded on a guarded disposable
+host, the slice is implemented but **not validated directory coverage**.
 Inputs: the read-only [purge preview](PURGE.md) (qualification rules,
 evidence base), the M3 ordinary-file Trash contract
 ([EXECUTION.md](EXECUTION.md)), the single-bundle uninstall
@@ -164,7 +167,7 @@ is explicitly out of scope for this slice.
   `unknown`), not from the cancellation request.
 - Quit/close during confirmation abandons the approval; nothing moves.
 
-## Required native evidence (before the implementation slice merges)
+## Required native evidence (acceptance gate, still open)
 
 All in disposable, owned fixtures — never on real project checkouts the
 operator cares about:

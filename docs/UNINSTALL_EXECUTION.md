@@ -72,8 +72,8 @@ minimum deltas:
 
 ## Approval, confirmation and journal
 
-- Preview (already shipped) is the only evidence source. The shipped preview
-  keeps `can_execute == false`; the future execution slice may derive
+- Preview is the only evidence source. The preview shipped with
+  `can_execute == false`; the execution slice (now implemented) derives
   approval eligibility only when zero refusals remain and running is
   `not_running`.
 - Approval seals the plan for 120 seconds; expiry invalidates it.

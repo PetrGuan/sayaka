@@ -2,10 +2,16 @@
 
 # Directory actions: read-only foundation and decision gate
 
-**Status:** implemented observation-only assessment; native directory actions
-are not approved or implemented. This is not a directory-cleaning command,
-application uninstaller, executable plan, or extension of `revalidated_trash_v1`.
-The ordinary-file planner and native Trash adapter continue to reject directories.
+**Status:** implemented observation-only assessment. Native directory actions
+beyond two separately contracted slices are not approved or implemented: the
+single `.app` bundle Trash contract
+([UNINSTALL_EXECUTION.md](UNINSTALL_EXECUTION.md)) and the bounded
+marker-bound purge artifact contract
+([PURGE_EXECUTION.md](PURGE_EXECUTION.md)) each seal their own candidates and
+are not directory actions of this foundation. This document remains no
+directory-cleaning command, application uninstaller, executable plan, or
+extension of `revalidated_trash_v1`; the ordinary-file planner and native
+Trash adapter continue to reject directories.
 
 ## Implemented read-only surface
 

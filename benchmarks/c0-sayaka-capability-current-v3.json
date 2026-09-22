@@ -1,7 +1,7 @@
 {
   "benchmark_id": "c0-sayaka-capability-current-v3",
   "scope": "Current Sayaka feature-subset capability ledger for C0 guarded-host planning. Not parity and not competitive-result evidence. Supersedes v2 for planning; v2 remains the immutable record of its time.",
-  "source_commit": "4316428b",
+  "source_commit": "43164285a13bb9d995cc201e6c926cbc2dddad65",
   "comparator_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
   "capabilities": [
     {
