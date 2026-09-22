@@ -313,6 +313,19 @@ choices); by design no launcher configuration is written on the user's
 behalf. None of these are new benchmark results, complete task-family
 coverage, or distribution evidence.
 
+Two further slices narrow the `purge` and `uninstall` rows without closing
+them. `sayaka purge ROOT...` is a read-only preview grouping rebuildable
+artifact directories under their project-marker roots (default/custom roots,
+staleness cutoff, grouped output, dry-run only); selected removal stays a
+future directory-effects contract. `sayaka uninstall --bundle PATH
+[--execute]` moves one explicit non-running `.app` bundle to the user Trash
+under the `revalidated_bundle_trash_v1` contract — typed exact-name
+confirmation, journaled intent/outcome with the Trash destination witness,
+Finder 'Put Back' recovery, and sealed manifest identity; multi-copy flows,
+related-data selection and official uninstaller paths remain gaps. Numeric
+temperature is now a recorded deliberate gap (no public unprivileged Apple
+Silicon source; no Intel validation host), not an unexamined one.
+
 Potentially irreversible maintenance, directory actions, and privileged
 operations require new action-specific design gates after M3. They are not
 authorized by the initial ordinary-file trash contract. "Optimize" must name the
