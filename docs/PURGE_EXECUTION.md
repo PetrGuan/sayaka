@@ -57,8 +57,10 @@ Per item, the candidate reuses the bundle candidate's admission pipeline
 with the purge-specific deltas:
 
 - **Target admission**: directory (not regular file), **not** required to
-  end in `.app`, not a symlink, no dataless/cloud attributes, same
-  supported local writable volume as the scan scope. The package-boundary
+  end in `.app`, not a symlink, no dataless/cloud attributes, on the same
+  supported local writable volume as the selected artifact's own project
+  root and marker witness (each item is judged against its own volume;
+  the roots of one invocation may span volumes). The package-boundary
   rejection applies to the target and its ancestors exactly as today: an
   artifact directory nested inside an `.app` bundle is refused.
 - **Marker binding revalidated**: the marker file named by the preview
@@ -91,6 +93,20 @@ with the purge-specific deltas:
   whole, that item fails whole and later items are still attempted (their
   outcomes are their own).
 
+## Approved object: the container, not a member set
+
+Following the directory-action decision gate, this contract explicitly
+approves the artifact directory **container under revalidation** — never
+an "exact observed member set". The preview's sizes, counts and staleness
+are bounded observations of a moment; the revalidation above proves the
+container's identity, marker binding and nesting at approval and at the
+last native guard, but **a stable container identity does not prove stable
+descendants**. Concurrent additions, removals or rewrites inside the
+artifact after the last bounded check move to Trash with it, exactly as if
+the user had dragged the folder in Finder at that moment. The execution
+output discloses this: displayed byte totals are observations, not a
+promise of what moved, and never "reclaimed space".
+
 ## Running-build limitation (disclosed, not detected)
 
 A project build tool running against an artifact directory is **not**
@@ -116,7 +132,9 @@ is explicitly out of scope for this slice.
   the state (`planned`/`started`/`succeeded`/`skipped`/`failed`/`unknown`).
   Cancellation before an item's native call records that item `skipped`
   with reason `cancelled`; only a durable interrupted `started` record
-  reconciles to `unknown`. No new journal schema is required.
+  reconciles to `unknown`. Marker evidence and multi-item artifact records
+  fit the existing extensible item evidence/recovery fields, so no new
+  journal schema is required.
 - Operation history is never deleted by purge, including the record of the
   purge itself.
 
@@ -126,6 +144,9 @@ is explicitly out of scope for this slice.
   per item, using the journaled destination path. There is no programmatic
   restore in this contract; 'Put Back' itself may fail if the original
   parent changed, and that limit is disclosed in the execution output.
+  The journaled Trash location is **evidence, not durable recovery
+  capability**: the user or another application may move or empty the
+  Trash at any time (M3 caveat, inherited unchanged).
 - Rebuild is the primary recovery for this object class by design: the
   marker file is the retained rebuild evidence and is never itself a
   target.
@@ -158,19 +179,35 @@ operator cares about:
 4. Artifact replaced between approval and native call (forced race):
    skipped with reason, new object never followed.
 5. Nested artifact, dataless placeholder, artifact inside an `.app`
-   bundle: each refused without any effect.
+   bundle: each refused without any effect. A bare lookalike directory
+   (`target/` without its marker) never qualifies and `--only` naming it
+   is refused as a non-candidate.
 6. Destination-name conflict in Trash (two same-named artifacts from
    different projects): both destinations journaled distinctly.
 7. Interrupted run (SIGINT during confirmation, during the native window):
    no effect before the call; honest per-item outcome after it.
+   Cancellation after some items have succeeded but before later items
+   start: the completed items stay `succeeded` with their destinations,
+   every unattempted item is journaled `skipped` with reason `cancelled`,
+   and the summary never merges the two.
 8. 'Put Back' performed by the operator; artifact intact, project rebuilds
    (or the fixture's rebuild surrogate) from the retained marker.
+9. Partial or unknown size coverage in the preview (unknown member sizes,
+   budget-limited coverage): the displayed totals stay labeled as
+   incomplete observations, the container decision is unchanged, and the
+   journal does not relabel unknown bytes as reclaimed.
+10. Native Trash environment failure (Trash unavailable or refusing the
+    item, e.g. simulated destination failure in the fixture harness):
+    honest per-item `failed`/`unknown` outcomes with preserved evidence,
+    no retry loop, no permanent-delete fallback.
 
 ## C0 and equal-work notes
 
 Purge comparisons against Mole `purge` must use equal task scope (same
 fixture trees, same selected set), include preview, confirmation, journal
 and revalidation work in Sayaka timings, and must not substitute skipped
-protections for speed. The slice is not full Mole `purge` parity: custom
+protections for speed. Displayed byte totals are bounded observations,
+never "reclaimed space" (the PURGE.md rule), and no comparison may present
+them as freed bytes. The slice is not full Mole `purge` parity: custom
 root sets, staleness-based filtering UX and grouped-project reporting
 remain ledger gaps tracked by the C0 `purge` row.
