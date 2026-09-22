@@ -56,7 +56,8 @@ C0 source/ledger/protocol manifests are now pinned in:
 - `benchmarks/c0-batch2-results-schema-v1.json` (strict shareable Phase A result schema with unknown-field rejection)
 - `benchmarks/results/c0-batch2-phase-a-ready-v1.json` (current blocked guard record; the filename does not imply readiness)
 - `benchmarks/results/c0-batch2-phase-b-results-v1.json` (Phase B pipeline artifact produced without execution; `--execute` remains required and parent authorization is still required before any Mole execution)
-- `benchmarks/c0-sayaka-capability-current-v2.json` (machine-readable current Sayaka feature-subset capability ledger for batch-2 planning)
+- `benchmarks/c0-sayaka-capability-current-v2.json` (machine-readable Sayaka capability ledger as of its recording; immutable)
+- `benchmarks/c0-sayaka-capability-current-v3.json` (current machine-readable Sayaka feature-subset capability ledger; supersedes v2 for planning)
 - `benchmarks/c0-batch3-direct-analyzer-v1.json` (independent batch-3 preregistration for direct verified Mole `analyze` artifact vs owned Sayaka `scan` on the same frozen flat fixture and AB/BA order)
 - `benchmarks/results/c0-batch3-direct-analyzer-results-v1.json` (completed direct-artifact comparison: correctness checks, warmups, 31 AB/BA pairs, and no-effects fingerprints)
 - `benchmarks/c0-batch3-direct-analyzer-v2.json` (corrected preregistration using the post-validation last-non-whitespace collector method; keeps the same frozen 31-pair schedule and fixture contract)
@@ -251,9 +252,9 @@ C0 must expand each row into version-pinned task cases, supported platforms,
 eligible targets, expected effects, exclusions, and evidence before parity is
 accepted. Scan/JSON, terminal exploration, rule/installer file approval, application
 previews, status/process top and local lifecycle implement parts of the ledger.
-Directory purge, uninstall, system maintenance and full distribution are still
-gaps; implemented command families must not be mistaken for complete task
-coverage.
+General directory actions, complete uninstall flows, system maintenance
+effects and full distribution are still gaps; implemented command families
+must not be mistaken for complete task coverage.
 
 | Mole capability | Required Sayaka user outcome | Delivery |
 | --- | --- | --- |
@@ -291,12 +292,19 @@ and broader account/volume/real-download acceptance remain separate gaps.
 This is not full T8/Mole installer parity, a new competitive timing result, or
 permission to rerun/alter the historical C0 benchmark records.
 
-Directory cleanup remains unavailable. The separate
+General directory actions remain unavailable beyond one bounded
+contract. Marker-bound project artifact directories can now move to the user
+Trash under the [purge execution/recovery contract](PURGE_EXECUTION.md):
+explicit per-item `--only` selection from a complete same-invocation preview,
+typed confirmation, per-item journaled outcomes, and marker/nesting/identity
+revalidation at approval and the last native guard. The contract's
+disposable-fixture native evidence is pending, so this is not yet validated
+directory coverage and not Mole `purge` parity. The separate
 [read-only directory foundation](DIRECTORY_ACTIONS.md) records observed
 subtree/ancestor blockers and unresolved native gates; its owned in-fixture
 rename counterexample shows why a stable root inode is not an exact member-set
-guarantee. This is preparation for a separately approved contract, not directory
-purge, application uninstall or additional parity coverage.
+guarantee — the purge contract's container-not-member-set decision inherits
+that lesson. All other directory actions stay unapproved.
 
 Recent slices narrow four ledger rows without closing them. The terminal menu
 now launches the read-only `apps-related` association preview after two
@@ -314,11 +322,11 @@ behalf. None of these are new benchmark results, complete task-family
 coverage, or distribution evidence.
 
 Two further slices narrow the `purge` and `uninstall` rows without closing
-them. `sayaka purge ROOT...` is a read-only preview grouping rebuildable
+them. `sayaka purge ROOT...` was a read-only preview grouping rebuildable
 artifact directories under their project-marker roots (explicit roots only —
 Mole's default roots are deliberately not imitated — staleness cutoff,
-grouped output, dry-run only); selected removal stays a
-future directory-effects contract. `sayaka uninstall --bundle PATH
+grouped output, dry-run only); selected removal was then a
+future directory-effects contract and has since landed as recorded below. `sayaka uninstall --bundle PATH
 [--execute]` moves one explicit non-running `.app` bundle to the user Trash
 under the `revalidated_bundle_trash_v1` contract — typed exact-name
 confirmation, journaled intent/outcome with the Trash destination witness,
@@ -326,6 +334,26 @@ Finder 'Put Back' recovery, and sealed manifest identity; multi-copy flows,
 related-data selection and official uninstaller paths remain gaps. Numeric
 temperature is now a recorded deliberate gap (no public unprivileged Apple
 Silicon source; no Intel validation host), not an unexamined one.
+
+Three further slices narrow the `optimize`, `purge` and `uninstall` rows
+without closing them. `sayaka diagnose` delivers the T10 Class A read-only
+diagnostics — `disk` (`diskutil verifyVolume`), `login-items` (`sfltool
+dumpbtm` audit) and `spotlight` (`mdutil -s` observation) — under one
+bounded tool runner (fixed argv, reset environment, bounded output,
+timeout and honest cancellation); 18 of the 21 pinned maintenance tasks
+stay gap, every effect class still needs its own reviewed contract, and
+isolated-host native acceptance is pending. `sayaka uninstall
+--copies-root` observes coexisting copies of the same bundle identifier as
+evidence only — never targets — with honest not-checked/not-attributable
+states; shared-data and restart-required evidence remain gaps. `sayaka
+purge --execute --only` moves explicitly selected artifacts to the user
+Trash under `revalidated_purge_trash_v1` (complete-preview gate, typed
+`purge N artifacts` confirmation, per-item journaled outcomes, marker
+rebuild evidence and nesting revalidated at approval and at the last
+native guard, running builds disclosed but not detected); the contract's
+disposable-fixture native evidence list is still open. None of these are
+new benchmark results, complete task-family coverage, or distribution
+evidence.
 
 Potentially irreversible maintenance, directory actions, and privileged
 operations require new action-specific design gates after M3. They are not

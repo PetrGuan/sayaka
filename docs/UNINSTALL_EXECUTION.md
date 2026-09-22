@@ -3,7 +3,7 @@
 Design for issue PetrGuan/SayakaCleaner#29 (T9), confirmed by independent
 review in PetrGuan/sayaka#42 and implemented in the subsequent execution
 slice. Inputs: the read-only
-[uninstall preview](APPLICATIONS.md#uninstall-preview-contract-execution-deferred)
+[uninstall preview](APPLICATIONS.md#uninstall-preview-and-execution-contract)
 (evidence, protections, refusal surface), the M3 ordinary-file Trash contract
 (EXECUTION.md), and the read-only [directory foundation](DIRECTORY_ACTIONS.md).
 
@@ -72,8 +72,8 @@ minimum deltas:
 
 ## Approval, confirmation and journal
 
-- Preview (already shipped) is the only evidence source. The shipped preview
-  keeps `can_execute == false`; the future execution slice may derive
+- Preview is the only evidence source. The preview shipped with
+  `can_execute == false`; the execution slice (now implemented) derives
   approval eligibility only when zero refusals remain and running is
   `not_running`.
 - Approval seals the plan for 120 seconds; expiry invalidates it.
@@ -111,7 +111,7 @@ minimum deltas:
   `unknown`), not from the cancellation request.
 - Quit/close during confirmation abandons the approval; nothing moves.
 
-## Required native evidence (before the slice merges)
+## Required native evidence (acceptance gate, still open)
 
 All in disposable, owned fixtures — never on real installed applications:
 

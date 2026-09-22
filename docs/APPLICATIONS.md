@@ -36,7 +36,7 @@ sayaka apps . --running
 
 Exit codes: **0 complete, 3 partial, 130 cancelled, 1 runtime failure, 2 invalid arguments**.
 
-## Uninstall preview contract (execution deferred)
+## Uninstall preview and execution contract
 
 ```sh
 sayaka uninstall --bundle ./Fixture.app
@@ -78,7 +78,7 @@ never `not_running`), explicit refusals (`not_found`, `not_directory`,
 `running`, `internal_error`), the standing protections (related data,
 preferences, caches, credentials and other copies untouched; running bundles
 refused, never signaled; no permanent-delete fallback; `/System` refused) and
-the recovery note (future execution targets the user Trash with Finder
+the recovery note (the bundle moves to the user Trash with Finder
 'Put Back'; no programmatic restore). Exit codes: **0 clean / succeeded,
 3 refusals or partial, 130 cancelled, 1 runtime failure, 2 invalid arguments**.
 Journaled intent/outcome follows the M3 schema (directory item under the

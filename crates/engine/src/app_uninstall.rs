@@ -2,10 +2,11 @@
 
 //! Read-only uninstall preview contract for one explicit `.app` bundle (T9).
 //!
-//! This module defines the evidence, protections and refusal surface that a
-//! future execution slice must satisfy. It performs no effects: no Trash, no
-//! deletion, no signals to processes. Execution is explicitly deferred to a
-//! separately reviewed contract; nothing here authorizes removal.
+//! This module defines the evidence, protections and refusal surface that
+//! the execution slice (`revalidated_bundle_trash_v1`,
+//! docs/UNINSTALL_EXECUTION.md) consumes. It performs no effects itself: no
+//! Trash, no deletion, no signals to processes; nothing here authorizes
+//! removal.
 
 use crate::app_inventory::{
     AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, AppInventoryStatus,
@@ -21,7 +22,7 @@ use std::time::{Duration, SystemTime};
 pub const EXECUTION_DEFERRED: &str = "deferred_contract";
 
 /// Recovery statement published by every preview of this slice.
-pub const RECOVERY_NOTE: &str = "the future execution slice moves the bundle to the user Trash; recovery is Finder 'Put Back', with no programmatic restore";
+pub const RECOVERY_NOTE: &str = "the bundle moves to the user Trash; recovery is Finder 'Put Back', with no programmatic restore";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UninstallRefusalCode {
