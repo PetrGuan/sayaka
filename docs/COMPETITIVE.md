@@ -315,8 +315,9 @@ coverage, or distribution evidence.
 
 Two further slices narrow the `purge` and `uninstall` rows without closing
 them. `sayaka purge ROOT...` is a read-only preview grouping rebuildable
-artifact directories under their project-marker roots (default/custom roots,
-staleness cutoff, grouped output, dry-run only); selected removal stays a
+artifact directories under their project-marker roots (explicit roots only —
+Mole's default roots are deliberately not imitated — staleness cutoff,
+grouped output, dry-run only); selected removal stays a
 future directory-effects contract. `sayaka uninstall --bundle PATH
 [--execute]` moves one explicit non-running `.app` bundle to the user Trash
 under the `revalidated_bundle_trash_v1` contract — typed exact-name
