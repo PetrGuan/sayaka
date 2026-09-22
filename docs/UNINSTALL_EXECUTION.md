@@ -3,7 +3,7 @@
 Design for issue PetrGuan/SayakaCleaner#29 (T9), confirmed by independent
 review in PetrGuan/sayaka#42 and implemented in the subsequent execution
 slice. Inputs: the read-only
-[uninstall preview](APPLICATIONS.md#uninstall-preview-contract-execution-deferred)
+[uninstall preview](APPLICATIONS.md#uninstall-preview-and-execution-contract)
 (evidence, protections, refusal surface), the M3 ordinary-file Trash contract
 (EXECUTION.md), and the read-only [directory foundation](DIRECTORY_ACTIONS.md).
 

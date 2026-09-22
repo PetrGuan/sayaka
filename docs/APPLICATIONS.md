@@ -36,7 +36,7 @@ sayaka apps . --running
 
 Exit codes: **0 complete, 3 partial, 130 cancelled, 1 runtime failure, 2 invalid arguments**.
 
-## Uninstall preview contract (execution deferred)
+## Uninstall preview and execution contract
 
 ```sh
 sayaka uninstall --bundle ./Fixture.app
