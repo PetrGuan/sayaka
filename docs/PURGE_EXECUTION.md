@@ -70,8 +70,9 @@ with the purge-specific deltas:
   replaced marker means the rebuild evidence changed: the item is refused,
   never "cleaned anyway".
 - **Nesting revalidated**: the artifact still does not nest inside another
-  project's artifact, and no new nested artifact appeared between preview
-  and effect; the preview's exclusion rule is re-evaluated, not trusted.
+  project's artifact, and no new nested artifact is observed at approval or
+  the last native guard; the preview's exclusion rule is re-evaluated,
+  not trusted.
 - **Identity**: artifact directory device/inode/size/mtime revalidated
   after approval and again by the last native guard before the move, using
   the same revalidation discipline as file and bundle candidates. A changed
