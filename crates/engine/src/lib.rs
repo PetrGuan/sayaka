@@ -24,6 +24,7 @@ pub mod purge_preview;
 mod readonly_task;
 pub mod receipt;
 pub mod rules;
+pub mod saved_state;
 pub mod scan;
 pub mod status;
 
