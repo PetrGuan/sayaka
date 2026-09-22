@@ -5,6 +5,7 @@ mod apps_related;
 mod browser;
 mod clean;
 mod completions;
+mod diagnose;
 mod history;
 mod human;
 mod installer;
@@ -127,6 +128,7 @@ fn command() -> Command {
         .subcommand(rules::command())
         .subcommand(clean::command())
         .subcommand(completions::command())
+        .subcommand(diagnose::command())
         .subcommand(launchers::command())
         .subcommand(lifecycle::install_command())
         .subcommand(lifecycle::update_command())
@@ -427,6 +429,7 @@ fn run() -> io::Result<u8> {
         Some(("rules", args)) => rules::run(args),
         Some(("clean", args)) => clean::run(args),
         Some(("completions", args)) => completions::run(args),
+        Some(("diagnose", args)) => diagnose::run(args),
         Some(("launchers", args)) => launchers::run(args),
         Some(("install", args)) => lifecycle::run(args, "install"),
         Some(("update", args)) => lifecycle::run(args, "update"),
