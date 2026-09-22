@@ -303,33 +303,21 @@ fn run_verify(volume: &Path, timeout: Duration) -> io::Result<DiskReport> {
             return Err(error);
         }
     };
-    let mut cancelled = false;
-    let mut timed_out = false;
-    let status = loop {
-        let cancel = signals.interrupted() || signals.terminated();
-        let expired = started.elapsed() > timeout;
-        if cancel || expired {
-            cancelled = cancel;
-            timed_out = !cancel;
-            break request_stop(&mut child, cancel)?;
-        }
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    // Ctrl-C signals the whole foreground process group, so the tool can
-    // exit from the shared SIGINT before this loop observes the request.
-    // The user's cancellation is still what happened; report it honestly.
-    if !cancelled && !timed_out && (signals.interrupted() || signals.terminated()) {
-        cancelled = true;
+    let wait_result = wait_outcome(&mut child, &signals, started, timeout);
+    if wait_result.is_err() {
+        // Stop and reap the tool so the pipes close and the readers end;
+        // never join while the child can still be running.
+        drop(child);
     }
     let stdout = stdout_reader
         .join()
-        .map_err(|_| io::Error::other("stdout reader panicked"))??;
+        .map_err(|_| io::Error::other("stdout reader panicked"));
     let stderr = stderr_reader
         .join()
-        .map_err(|_| io::Error::other("stderr reader panicked"))??;
+        .map_err(|_| io::Error::other("stderr reader panicked"));
+    let (status, cancelled, timed_out) = wait_result?;
+    let stdout = stdout??;
+    let stderr = stderr??;
     Ok(DiskReport {
         schema_version: 1,
         kind: "sayaka.diagnose_disk",
@@ -349,6 +337,38 @@ fn run_verify(volume: &Path, timeout: Duration) -> io::Result<DiskReport> {
             "max_stderr_bytes": MAX_STDERR_BYTES,
         }),
     })
+}
+
+/// Polls the tool to completion, honoring the time budget and Ctrl-C, and
+/// returns the tool's real exit status with the honest outcome flags.
+fn wait_outcome(
+    child: &mut OwnedChild,
+    signals: &Signals,
+    started: Instant,
+    timeout: Duration,
+) -> io::Result<(ExitStatus, bool, bool)> {
+    let mut cancelled = false;
+    let mut timed_out = false;
+    let status = loop {
+        let cancel = signals.interrupted() || signals.terminated();
+        let expired = started.elapsed() > timeout;
+        if cancel || expired {
+            cancelled = cancel;
+            timed_out = !cancel;
+            break request_stop(child, cancel)?;
+        }
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // Ctrl-C signals the whole foreground process group, so the tool can
+    // exit from the shared SIGINT before this loop observes the request.
+    // The user's cancellation is still what happened; report it honestly.
+    if !cancelled && !timed_out && (signals.interrupted() || signals.terminated()) {
+        cancelled = true;
+    }
+    Ok((status, cancelled, timed_out))
 }
 
 #[cfg(unix)]
