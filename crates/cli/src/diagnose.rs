@@ -244,6 +244,23 @@ impl OwnedChild {
     }
 }
 
+impl OwnedChild {
+    /// Best-effort stop: SIGKILL (ignored when the tool already exited),
+    /// then reap. The readers can only end once the tool is gone, so this
+    /// must never skip the wait on paths that join them afterwards.
+    fn stop_and_reap(&mut self) {
+        if let Err(error) = self.child.kill()
+            && error.kind() != io::ErrorKind::InvalidInput
+        {
+            eprintln!("could not request tool stop {}: {error}", self.child.id());
+        }
+        match self.child.wait() {
+            Ok(_) => self.reaped = true,
+            Err(error) => eprintln!("could not reap tool child {}: {error}", self.child.id()),
+        }
+    }
+}
+
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if self.reaped {
@@ -251,19 +268,14 @@ impl Drop for OwnedChild {
         }
         match self.child.try_wait() {
             Ok(Some(_)) => self.reaped = true,
-            Ok(None) => {
-                if let Err(error) = self.child.kill() {
-                    eprintln!("could not request tool stop {}: {error}", self.child.id());
-                }
-                if let Err(error) = self.child.wait() {
-                    eprintln!("could not reap tool child {}: {error}", self.child.id());
-                }
-                self.reaped = true;
+            Ok(None) => self.stop_and_reap(),
+            Err(error) => {
+                eprintln!(
+                    "could not poll tool child {}; status unknown: {error}",
+                    self.child.id()
+                );
+                self.stop_and_reap();
             }
-            Err(error) => eprintln!(
-                "could not poll tool child {}; status unknown: {error}",
-                self.child.id()
-            ),
         }
     }
 }
