@@ -59,7 +59,9 @@ never `not_running`), explicit refusals (`not_found`, `not_directory`,
 preferences, caches, credentials and other copies untouched; running bundles
 refused, never signaled; no permanent-delete fallback; `/System` refused) and
 the recovery note (future execution targets the user Trash with Finder
-'Put Back'; no programmatic restore).
+'Put Back'; no programmatic restore). The execution/recovery contract itself
+is drafted in [UNINSTALL_EXECUTION.md](UNINSTALL_EXECUTION.md) pending
+confirmation; it authorizes nothing by itself.
 
 ## Related-data preview contract
 
