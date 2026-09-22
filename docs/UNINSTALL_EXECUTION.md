@@ -111,7 +111,10 @@ minimum deltas:
   `unknown`), not from the cancellation request.
 - Quit/close during confirmation abandons the approval; nothing moves.
 
-## Required native evidence (acceptance gate, still open)
+## Required native evidence (acceptance gate, partially recorded)
+
+Cases 1–6 are recorded as of 2026-09-22 — see *Recorded native acceptance*
+below. Still open: non-local volume and dataless placeholder shapes.
 
 All in disposable, owned fixtures — never on real installed applications:
 

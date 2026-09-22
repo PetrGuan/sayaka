@@ -167,7 +167,11 @@ is explicitly out of scope for this slice.
   `unknown`), not from the cancellation request.
 - Quit/close during confirmation abandons the approval; nothing moves.
 
-## Required native evidence (acceptance gate, still open)
+## Required native evidence (acceptance gate, partially recorded)
+
+Most cases are recorded as of 2026-09-22 — see *Recorded native acceptance*
+below. Still open: the dataless placeholder, a fully unavailable Trash, and
+a separately staged final-native-guard race window.
 
 All in disposable, owned fixtures — never on real project checkouts the
 operator cares about:
