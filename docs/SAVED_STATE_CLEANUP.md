@@ -162,8 +162,9 @@ each need their own contract.
 **Read-only preview (this slice).** `sayaka saved-states [--older-than-days
 DAYS] [--json]` enumerates the fixed location with the per-item states
 above, the published effective cutoff (days and computed moment), known /
-unknown / partial sizes, and the honest `unnecessary` state when the
-location is absent or holds no candidates. Running ownership uses the
+unknown / partial sizes, the honest `unnecessary` state when the
+location is absent, holds no candidates, or nothing is currently eligible
+(the counts show which), and `unsupported_platform` off macOS. Running ownership uses the
 official `NSRunningApplication` bundle-identifier query; the location is
 resolved from the native account record, never `$HOME` text. It performs
 no effects and offers no selection.

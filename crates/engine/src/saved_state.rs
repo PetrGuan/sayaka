@@ -45,11 +45,13 @@ impl Default for SavedStateOptions {
 
 impl SavedStateOptions {
     pub fn validate(self) -> Result<(), String> {
-        if (1..=MAX_OLDER_THAN_DAYS).contains(&self.older_than_days) {
+        // The Mole-pinned 30-day floor: an adjustable value never weakens
+        // the fixed rule it replaces.
+        if (DEFAULT_OLDER_THAN_DAYS..=MAX_OLDER_THAN_DAYS).contains(&self.older_than_days) {
             Ok(())
         } else {
             Err(format!(
-                "older-than days must be in 1..={MAX_OLDER_THAN_DAYS}, got {}",
+                "older-than days must be in {DEFAULT_OLDER_THAN_DAYS}..={MAX_OLDER_THAN_DAYS}, got {}",
                 self.older_than_days
             ))
         }
@@ -112,9 +114,12 @@ pub struct SavedStateCounts {
 pub enum SavedStateStatus {
     Complete,
     Partial,
-    /// The fixed location does not exist or holds no candidates; a
-    /// distinct state, never an error disguised as success.
+    /// The fixed location is absent, holds no candidates, or nothing is
+    /// currently eligible; a distinct state, never an error disguised as
+    /// success. Counts always show which.
     Unnecessary,
+    /// Not macOS; the operation is unavailable, never a silent skip.
+    UnsupportedPlatform,
     Cancelled,
     Failed,
 }
@@ -125,6 +130,7 @@ impl SavedStateStatus {
             Self::Complete => "complete",
             Self::Partial => "partial",
             Self::Unnecessary => "unnecessary",
+            Self::UnsupportedPlatform => "unsupported_platform",
             Self::Cancelled => "cancelled",
             Self::Failed => "failed",
         }
@@ -407,5 +413,14 @@ mod tests {
         assert_eq!(bundle_id_from_name("has space.app.savedState"), None);
         assert_eq!(bundle_id_from_name("com.example.app"), None);
         assert_eq!(bundle_id_from_name("trailing..savedState"), None);
+        // Real-world digit-leading labels stay valid; hyphens stay interior.
+        assert_eq!(
+            bundle_id_from_name("com.360buy.x.savedState"),
+            Some("com.360buy.x")
+        );
+        assert_eq!(bundle_id_from_name("-dev.example.app.savedState"), None);
+        assert_eq!(bundle_id_from_name("dev.-example.app.savedState"), None);
+        assert_eq!(bundle_id_from_name("dev.example-.app.savedState"), None);
+        assert_eq!(bundle_id_from_name("123.456.savedState"), None);
     }
 }

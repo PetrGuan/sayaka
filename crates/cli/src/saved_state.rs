@@ -70,8 +70,19 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     options
         .validate()
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    let location = saved_state::default_location()?;
     let now = SystemTime::now();
+    if cfg!(not(target_os = "macos")) {
+        // The operation is unavailable off macOS, never a silent skip.
+        let preview = unsupported_platform_preview(
+            std::path::PathBuf::new(),
+            args.get_one::<u32>("older-than-days")
+                .copied()
+                .unwrap_or(DEFAULT_OLDER_THAN_DAYS),
+            now,
+        );
+        return print_preview(&preview, json);
+    }
+    let location = saved_state::default_location()?;
     let cutoff_unix_ms = now
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()
@@ -106,6 +117,19 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
             scan_issues_omitted: 0,
         };
         return print_preview(&preview, json);
+    }
+    // Applicability per contract: the location must be a real directory
+    // owned by the current user; anything else fails closed.
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::symlink_metadata(&location)?;
+        let owned = metadata.uid() == rustix::process::getuid().as_raw();
+        if !metadata.is_dir() || !owned {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the saved-state location must be a directory owned by the current user",
+            ));
+        }
     }
     let json_mode = json;
     let stderr_terminal = io::stderr().is_terminal();
@@ -164,6 +188,38 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     print_preview(&preview, json_mode)
 }
 
+fn unsupported_platform_preview(
+    location: std::path::PathBuf,
+    days: u32,
+    now: SystemTime,
+) -> SavedStatePreview {
+    SavedStatePreview {
+        schema_version: saved_state::SAVED_STATE_SCHEMA_VERSION,
+        kind: saved_state::SAVED_STATE_KIND,
+        platform: "unsupported",
+        status: SavedStateStatus::UnsupportedPlatform,
+        complete: false,
+        effects_performed: false,
+        location,
+        effective_cutoff_days: days,
+        cutoff_unix_ms: now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| {
+                i64::try_from(
+                    duration
+                        .as_millis()
+                        .saturating_sub(u128::from(days) * 86_400_000),
+                )
+                .ok()
+            }),
+        candidates: Vec::new(),
+        counts: Default::default(),
+        scan_issues: Vec::new(),
+        scan_issues_omitted: 0,
+    }
+}
+
 fn print_preview(preview: &SavedStatePreview, json: bool) -> io::Result<u8> {
     if json {
         write_json(&mut io::stdout().lock(), preview)?;
@@ -174,7 +230,7 @@ fn print_preview(preview: &SavedStatePreview, json: bool) -> io::Result<u8> {
         SavedStateStatus::Complete | SavedStateStatus::Unnecessary => 0,
         SavedStateStatus::Partial => 3,
         SavedStateStatus::Cancelled => 130,
-        SavedStateStatus::Failed => 1,
+        SavedStateStatus::Failed | SavedStateStatus::UnsupportedPlatform => 1,
     })
 }
 
