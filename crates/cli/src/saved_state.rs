@@ -120,6 +120,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     }
     // Applicability per contract: the location must be a real directory
     // owned by the current user; anything else fails closed.
+    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let metadata = std::fs::symlink_metadata(&location)?;

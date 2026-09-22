@@ -13,12 +13,34 @@ use crate::scan::{ScanIssue, ScanStatus};
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// The fixed per-user location (macOS); off macOS the query is an honest
+/// Unsupported error and the CLI emits the unsupported_platform preview.
+#[cfg(target_os = "macos")]
 pub use sayaka_platform_macos::saved_state_location as default_location;
+
+/// The fixed per-user location is macOS-only.
+#[cfg(not(target_os = "macos"))]
+pub fn default_location() -> io::Result<PathBuf> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "the saved-state location currently requires macOS",
+    ))
+}
 
 /// Running PIDs of the application owning one bundle identifier, via the
 /// official unprivileged AppKit query; an error never means "not running".
+#[cfg(target_os = "macos")]
 pub fn running_owner_pids(bundle_id: &str) -> io::Result<Vec<u32>> {
     sayaka_platform_macos::running_pids_with_bundle_identifier(bundle_id)
+}
+
+/// Running ownership queries are macOS-only.
+#[cfg(not(target_os = "macos"))]
+pub fn running_owner_pids(_bundle_id: &str) -> io::Result<Vec<u32>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "running application query is macOS-only",
+    ))
 }
 use std::time::{SystemTime, UNIX_EPOCH};
 

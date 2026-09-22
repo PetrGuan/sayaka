@@ -87,36 +87,60 @@ pub fn running_pids_with_bundle_identifier(_bundle_id: &str) -> io::Result<Vec<u
 }
 
 /// The fixed per-user `Saved Application State` location, resolved from the
-/// native account record (getpwuid), never from `$HOME` text.
-#[cfg(unix)]
+/// native account record (getpwuid_r, never `$HOME` text).
+#[cfg(target_os = "macos")]
 pub fn saved_state_location() -> io::Result<std::path::PathBuf> {
     use std::ffi::{CStr, OsStr};
     use std::os::unix::ffi::OsStrExt;
     use std::path::PathBuf;
-    // SAFETY: getpwuid's returned pointer is borrowed static storage, read
-    // only here, and checked for null before use.
     // SAFETY: getuid needs no arguments and cannot fail.
     let uid = unsafe { libc::getuid() };
-    let pw = unsafe { libc::getpwuid(uid) };
-    if pw.is_null() {
-        return Err(io::Error::other("native account record unavailable"));
+    let mut size = 1024usize;
+    for _ in 0..6 {
+        let mut buffer = vec![0u8; size];
+        // SAFETY: entry is valid writable out storage for the call.
+        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: buffer is writable for its full length, entry/result are
+        // valid out-pointers, and getpwuid_r is the thread-safe query.
+        let code = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut entry,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if code == libc::ERANGE {
+            size *= 4;
+            continue;
+        }
+        if code != 0 {
+            return Err(io::Error::from_raw_os_error(code));
+        }
+        if result.is_null() {
+            return Err(io::Error::other("native account record unavailable"));
+        }
+        if entry.pw_dir.is_null() {
+            return Err(io::Error::other("native home directory unavailable"));
+        }
+        // SAFETY: entry.pw_dir points into the live buffer as a valid
+        // NUL-terminated path string per getpwuid_r.
+        let bytes = unsafe { CStr::from_ptr(entry.pw_dir) }.to_bytes();
+        return Ok(PathBuf::from(OsStr::from_bytes(bytes))
+            .join("Library")
+            .join("Saved Application State"));
     }
-    // SAFETY: pw is non-null; pw_dir is checked before reading.
-    let dir = unsafe { (*pw).pw_dir };
-    if dir.is_null() {
-        return Err(io::Error::other("native home directory unavailable"));
-    }
-    // SAFETY: dir is a valid NUL-terminated path string per getpwuid.
-    let bytes = unsafe { CStr::from_ptr(dir) }.to_bytes();
-    Ok(PathBuf::from(OsStr::from_bytes(bytes))
-        .join("Library")
-        .join("Saved Application State"))
+    Err(io::Error::other(
+        "native account record exceeds the query budget",
+    ))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "macos"))]
 pub fn saved_state_location() -> io::Result<std::path::PathBuf> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "the saved-state location currently requires a unix account record",
+        "the saved-state location currently requires macOS",
     ))
 }
