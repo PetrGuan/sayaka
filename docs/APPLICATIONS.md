@@ -58,15 +58,16 @@ again immediately before the native call.
 
 `--copies-root` (repeatable) asks the preview to observe **coexisting copies**
 of the same bundle identifier under the explicitly given roots, reusing the
-bounded app-bundle scan, the inventory's plist metadata and running
-attribution with a 60-second budget. Copies are evidence only — the named
-bundle itself is excluded by device/inode identity, never by path text, and
-no copy is selected, touched, signaled or cleaned up after. The observation
-is honestly stated: `not_checked` (no roots given), `not_attributable` (the
-target's own `CFBundleIdentifier` could not be established, so no trustworthy
-comparison exists), `unsupported_platform`, `complete`, `partial`,
-`cancelled` or `failed`; an empty copy list is never evidence that no other
-copy exists.
+bounded app-bundle scan (30-second cooperative engine cap) and the
+inventory's plist metadata and running attribution (60-second budget); both
+effective budgets are published in the JSON report. Copies are evidence only
+— the named bundle itself is excluded by device/inode identity, never by
+path text, and no copy is selected, touched, signaled or cleaned up after.
+The observation is honestly stated: `not_checked` (no roots given),
+`not_attributable` (the target's own `CFBundleIdentifier` or device/inode
+identity could not be established, so no trustworthy comparison exists),
+`unsupported_platform`, `complete`, `partial`, `cancelled` or `failed`; an
+empty copy list is never evidence that no other copy exists.
 
 The preview publishes the bundle identity (nofollow), the count of regular
 executables directly under `Contents/MacOS`, a running-process observation

@@ -142,6 +142,11 @@ pub struct CopiesEvidence {
     pub target_bundle_id: Option<String>,
     pub requested_roots: Vec<PathBuf>,
     pub copies: Vec<CopyEvidence>,
+    /// Effective budgets when a scan actually ran: the artifact scan keeps
+    /// the engine's cooperative default capped by the caller budget, and
+    /// the inventory metadata pass gets the caller budget.
+    pub scan_budget_sec: Option<u64>,
+    pub inventory_budget_sec: Option<u64>,
     pub note: &'static str,
 }
 
@@ -153,6 +158,8 @@ impl CopiesEvidence {
             target_bundle_id: None,
             requested_roots: Vec::new(),
             copies: Vec::new(),
+            scan_budget_sec: None,
+            inventory_budget_sec: None,
             note: COPIES_NOTE,
         }
     }
@@ -170,14 +177,19 @@ pub fn observe_copies(
     budget: Duration,
 ) -> CopiesEvidence {
     let requested_roots = roots.to_vec();
-    let evidence = |status, reason, target_bundle_id, copies| CopiesEvidence {
-        status,
-        reason,
-        target_bundle_id,
-        requested_roots,
-        copies,
-        note: COPIES_NOTE,
-    };
+    let evidence =
+        |status, reason, target_bundle_id, copies, scan_budget_sec, inventory_budget_sec| {
+            CopiesEvidence {
+                status,
+                reason,
+                target_bundle_id,
+                requested_roots,
+                copies,
+                scan_budget_sec,
+                inventory_budget_sec,
+                note: COPIES_NOTE,
+            }
+        };
     if roots.is_empty() {
         return CopiesEvidence::not_checked();
     }
@@ -187,6 +199,20 @@ pub fn observe_copies(
             Some("copy observation currently requires macOS"),
             None,
             Vec::new(),
+            None,
+            None,
+        );
+    }
+    if preview.identity.is_none() {
+        // Without the target's device/inode there is no trustworthy
+        // exclusion, so the named bundle could be listed as its own copy.
+        return evidence(
+            CopiesStatus::NotAttributable,
+            Some("the target bundle identity is unavailable"),
+            None,
+            Vec::new(),
+            None,
+            None,
         );
     }
     let target_bundle_id = match read_bundle_identifier(&preview.bundle_path) {
@@ -207,6 +233,8 @@ pub fn observe_copies(
                 Some(reason),
                 None,
                 Vec::new(),
+                None,
+                None,
             );
         }
         BundleIdentifierRead::Unreadable(reason) => {
@@ -215,6 +243,8 @@ pub fn observe_copies(
                 Some(reason),
                 None,
                 Vec::new(),
+                None,
+                None,
             );
         }
     };
@@ -228,6 +258,8 @@ pub fn observe_copies(
                 Some("the coexisting-copies scan failed"),
                 Some(target_bundle_id),
                 Vec::new(),
+                Some(scan_limits.time_budget.as_secs()),
+                None,
             );
         }
     };
@@ -267,7 +299,14 @@ pub fn observe_copies(
             running: app.running.clone(),
         })
         .collect();
-    evidence(status, None, Some(target_bundle_id), copies)
+    evidence(
+        status,
+        None,
+        Some(target_bundle_id),
+        copies,
+        Some(scan_limits.time_budget.as_secs()),
+        Some(budget.as_secs()),
+    )
 }
 
 /// Read-only preview of uninstalling one explicit `.app` bundle.
@@ -687,12 +726,40 @@ mod tests {
             evidence.target_bundle_id.as_deref(),
             Some("com.example.demo")
         );
+        // The published budgets are the effective ones: the scan keeps the
+        // engine's 30-second cooperative cap, the inventory gets the call.
+        assert_eq!(evidence.scan_budget_sec, Some(30));
+        assert_eq!(evidence.inventory_budget_sec, Some(30));
         assert_eq!(evidence.requested_roots, roots);
         // Exactly the other same-ID bundle: the target is excluded by
         // device/inode identity and the different-ID bundle by comparison.
         assert_eq!(evidence.copies.len(), 1, "{:?}", evidence.copies);
         assert_eq!(evidence.copies[0].bundle_path, copy);
         assert_eq!(evidence.note, COPIES_NOTE);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn copies_need_a_target_identity_for_exclusion() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // A missing bundle previews with no identity: without device/inode
+        // there is no trustworthy exclusion, so the observation refuses
+        // instead of risking the named bundle listed as its own copy.
+        let preview = preview_bundle_uninstall(&root.path().join("Ghost.app"));
+        assert!(preview.identity.is_none());
+        let evidence = observe_copies(
+            &preview,
+            &[root.path().to_path_buf()],
+            &Cancellation::default(),
+            Duration::from_secs(30),
+        );
+        assert_eq!(evidence.status, CopiesStatus::NotAttributable);
+        assert_eq!(
+            evidence.reason,
+            Some("the target bundle identity is unavailable")
+        );
+        assert!(evidence.copies.is_empty());
+        assert!(evidence.scan_budget_sec.is_none());
     }
 
     #[cfg(target_os = "macos")]

@@ -204,7 +204,8 @@ fn copies_json(preview: &UninstallPreview) -> serde_json::Value {
         "state": copies.status.as_str(),
         "reason": copies.reason,
         "target_bundle_id": copies.target_bundle_id,
-        "scan_budget_sec": COPIES_SCAN_BUDGET_SEC,
+        "scan_budget_sec": copies.scan_budget_sec,
+        "inventory_budget_sec": copies.inventory_budget_sec,
         "requested_roots": copies.requested_roots.iter().map(|root| crate::apps::write_native_path(root)).collect::<Vec<_>>(),
         "copies": copies.copies.iter().map(|copy| serde_json::json!({
             "bundle_path": crate::apps::write_native_path(&copy.bundle_path),
