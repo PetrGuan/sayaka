@@ -740,10 +740,34 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn failed_copies_scan_publishes_only_the_scan_budget() {
+    fn invalid_copies_root_publishes_only_the_scan_budget() {
         let root = tempfile::tempdir().expect("tempdir");
         let target = fixture_bundle_with_id(root.path(), "Demo.app", "com.example.demo");
         let preview = preview_bundle_uninstall(&target);
+        // A lexically invalid root fails root normalization, so the scan
+        // returns an error before any traversal or inventory pass runs.
+        let evidence = observe_copies(
+            &preview,
+            &[PathBuf::from("relative-root")],
+            &Cancellation::default(),
+            Duration::from_secs(60),
+        );
+        assert_eq!(evidence.status, CopiesStatus::Failed);
+        assert_eq!(evidence.scan_budget_sec, Some(30));
+        assert!(evidence.inventory_budget_sec.is_none());
+        assert!(evidence.copies.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn missing_copies_root_fails_the_scan_but_runs_the_inventory() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let target = fixture_bundle_with_id(root.path(), "Demo.app", "com.example.demo");
+        let preview = preview_bundle_uninstall(&target);
+        // A missing root is lexically valid: it is retained for admission,
+        // fails as a scan issue, and with zero accepted roots the report
+        // comes back Failed — the inventory pass still ran on that report,
+        // so both effective budgets are published honestly.
         let missing_root = root.path().join("no-such-root");
         let evidence = observe_copies(
             &preview,
@@ -753,7 +777,7 @@ mod tests {
         );
         assert_eq!(evidence.status, CopiesStatus::Failed);
         assert_eq!(evidence.scan_budget_sec, Some(30));
-        assert!(evidence.inventory_budget_sec.is_none());
+        assert_eq!(evidence.inventory_budget_sec, Some(60));
         assert!(evidence.copies.is_empty());
     }
 
