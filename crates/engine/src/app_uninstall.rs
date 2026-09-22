@@ -7,9 +7,15 @@
 //! deletion, no signals to processes. Execution is explicitly deferred to a
 //! separately reviewed contract; nothing here authorizes removal.
 
-use crate::app_inventory::{RunningObservation, running_process_paths};
+use crate::app_inventory::{
+    AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, AppInventoryStatus,
+    BundleIdentifierRead, RunningObservation, StringState, inventory_apps, read_bundle_identifier,
+    running_process_paths,
+};
+use crate::model::{Cancellation, FileIdentity};
+use crate::scan::{ScanLimits, scan_prune_app_bundles};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Execution state published by every preview of this slice.
 pub const EXECUTION_DEFERRED: &str = "deferred_contract";
@@ -84,6 +90,225 @@ pub struct BundleIdentity {
     pub modified: SystemTime,
 }
 
+/// Coexisting-copy observation states. A missing copy list is never
+/// evidence that no other copy exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopiesStatus {
+    /// No roots were supplied; nothing was searched.
+    NotChecked,
+    /// The target's own identifier could not be established, so no
+    /// trustworthy comparison exists.
+    NotAttributable,
+    /// Copy observation currently requires macOS.
+    UnsupportedPlatform,
+    Complete,
+    Partial,
+    Cancelled,
+    Failed,
+}
+
+impl CopiesStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotChecked => "not_checked",
+            Self::NotAttributable => "not_attributable",
+            Self::UnsupportedPlatform => "unsupported_platform",
+            Self::Complete => "complete",
+            Self::Partial => "partial",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Published with every copies observation so a list of coexisting copies
+/// can never be mistaken for a selection.
+pub const COPIES_NOTE: &str = "coexisting copies are evidence only: an uninstall moves exactly the named bundle and never touches, signals or cleans up after any other copy";
+
+/// One observed coexisting copy of the previewed bundle's identifier.
+#[derive(Clone, Debug)]
+pub struct CopyEvidence {
+    pub bundle_path: PathBuf,
+    pub observed_roots: Vec<PathBuf>,
+    pub running: RunningObservation,
+}
+
+/// Read-only coexisting-copy observation for the previewed bundle.
+#[derive(Clone, Debug)]
+pub struct CopiesEvidence {
+    pub status: CopiesStatus,
+    pub reason: Option<&'static str>,
+    /// The previewed bundle's own observed identifier, when attributable.
+    pub target_bundle_id: Option<String>,
+    pub requested_roots: Vec<PathBuf>,
+    pub copies: Vec<CopyEvidence>,
+    /// Effective budgets when a scan actually ran: the artifact scan keeps
+    /// the engine's cooperative default capped by the caller budget, and
+    /// the inventory metadata pass gets the caller budget.
+    pub scan_budget_sec: Option<u64>,
+    pub inventory_budget_sec: Option<u64>,
+    pub note: &'static str,
+}
+
+impl CopiesEvidence {
+    pub fn not_checked() -> Self {
+        Self {
+            status: CopiesStatus::NotChecked,
+            reason: Some("no copies roots were given"),
+            target_bundle_id: None,
+            requested_roots: Vec::new(),
+            copies: Vec::new(),
+            scan_budget_sec: None,
+            inventory_budget_sec: None,
+            note: COPIES_NOTE,
+        }
+    }
+}
+
+/// Observes coexisting copies of the previewed bundle's identifier under
+/// the explicitly given roots, using the bounded app-bundle scan and the
+/// inventory's plist metadata and running attribution. Read-only: copies
+/// are evidence, never targets, and the named bundle itself is excluded by
+/// device/inode identity, not by path text.
+pub fn observe_copies(
+    preview: &UninstallPreview,
+    roots: &[PathBuf],
+    cancellation: &Cancellation,
+    budget: Duration,
+) -> CopiesEvidence {
+    let requested_roots = roots.to_vec();
+    let evidence =
+        |status, reason, target_bundle_id, copies, scan_budget_sec, inventory_budget_sec| {
+            CopiesEvidence {
+                status,
+                reason,
+                target_bundle_id,
+                requested_roots,
+                copies,
+                scan_budget_sec,
+                inventory_budget_sec,
+                note: COPIES_NOTE,
+            }
+        };
+    if roots.is_empty() {
+        return CopiesEvidence::not_checked();
+    }
+    if !cfg!(target_os = "macos") {
+        return evidence(
+            CopiesStatus::UnsupportedPlatform,
+            Some("copy observation currently requires macOS"),
+            None,
+            Vec::new(),
+            None,
+            None,
+        );
+    }
+    if preview.identity.is_none() {
+        // Without the target's device/inode there is no trustworthy
+        // exclusion, so the named bundle could be listed as its own copy.
+        return evidence(
+            CopiesStatus::NotAttributable,
+            Some("the target bundle identity is unavailable"),
+            None,
+            Vec::new(),
+            None,
+            None,
+        );
+    }
+    let target_bundle_id = match read_bundle_identifier(&preview.bundle_path) {
+        BundleIdentifierRead::Parsed(crate::app_inventory::StringField {
+            state: StringState::Present,
+            value: Some(id),
+        }) => id,
+        BundleIdentifierRead::Parsed(field) => {
+            let reason = match field.state {
+                StringState::Missing => "the target bundle declares no bundle identifier",
+                StringState::NotString => "the target bundle identifier is not a string",
+                StringState::Duplicate => "the target bundle identifier is declared twice",
+                StringState::TooLong => "the target bundle identifier exceeds the parser limit",
+                StringState::Present => "the target bundle identifier is unavailable",
+            };
+            return evidence(
+                CopiesStatus::NotAttributable,
+                Some(reason),
+                None,
+                Vec::new(),
+                None,
+                None,
+            );
+        }
+        BundleIdentifierRead::Unreadable(reason) => {
+            return evidence(
+                CopiesStatus::NotAttributable,
+                Some(reason),
+                None,
+                Vec::new(),
+                None,
+                None,
+            );
+        }
+    };
+    let mut scan_limits = ScanLimits::default();
+    scan_limits.time_budget = scan_limits.time_budget.min(budget);
+    let report = match scan_prune_app_bundles(roots, &scan_limits, cancellation, |_| {}) {
+        Ok(report) => report,
+        Err(_) => {
+            return evidence(
+                CopiesStatus::Failed,
+                Some("the coexisting-copies scan failed"),
+                Some(target_bundle_id),
+                Vec::new(),
+                Some(scan_limits.time_budget.as_secs()),
+                None,
+            );
+        }
+    };
+    let inventory = inventory_apps(
+        report,
+        &AppInventoryOptions {
+            filter: String::new(),
+            excludes: Vec::new(),
+            limits: AppInventoryLimits::default(),
+            metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
+            running_attribution: true,
+        },
+        cancellation,
+        budget,
+    );
+    let status = match inventory.status {
+        AppInventoryStatus::Complete => CopiesStatus::Complete,
+        AppInventoryStatus::Partial => CopiesStatus::Partial,
+        AppInventoryStatus::Cancelled => CopiesStatus::Cancelled,
+        AppInventoryStatus::Failed => CopiesStatus::Failed,
+    };
+    let target_identity = preview
+        .identity
+        .as_ref()
+        .map(|identity| FileIdentity::Unix {
+            device: identity.device,
+            inode: identity.inode,
+        });
+    let copies = inventory
+        .apps
+        .iter()
+        .filter(|app| app.bundle_id.value.as_deref() == Some(target_bundle_id.as_str()))
+        .filter(|app| Some(app.bundle_identity) != target_identity)
+        .map(|app| CopyEvidence {
+            bundle_path: app.bundle_path.clone(),
+            observed_roots: app.observed_roots.clone(),
+            running: app.running.clone(),
+        })
+        .collect();
+    evidence(
+        status,
+        None,
+        Some(target_bundle_id),
+        copies,
+        Some(scan_limits.time_budget.as_secs()),
+        Some(budget.as_secs()),
+    )
+}
+
 /// Read-only preview of uninstalling one explicit `.app` bundle.
 #[derive(Clone, Debug)]
 pub struct UninstallPreview {
@@ -93,6 +318,9 @@ pub struct UninstallPreview {
     /// Regular files observed directly under `Contents/MacOS` (nofollow).
     pub executables_observed: Option<usize>,
     pub running: RunningObservation,
+    /// Coexisting copies of the same bundle identifier, observed only when
+    /// the caller explicitly supplies roots; evidence, never targets.
+    pub copies: CopiesEvidence,
     pub protections: Vec<&'static str>,
     pub recovery: &'static str,
     pub execution: &'static str,
@@ -129,6 +357,7 @@ fn base_preview(bundle_path: PathBuf) -> UninstallPreview {
         identity: None,
         executables_observed: None,
         running: RunningObservation::NotChecked,
+        copies: CopiesEvidence::not_checked(),
         protections: protections(),
         recovery: RECOVERY_NOTE,
         execution: EXECUTION_DEFERRED,
@@ -430,6 +659,22 @@ mod tests {
         bundle
     }
 
+    fn fixture_bundle_with_id(root: &Path, name: &str, id: &str) -> PathBuf {
+        let bundle = root.join(name);
+        let macos = bundle.join("Contents").join("MacOS");
+        fs::create_dir_all(&macos).expect("create bundle tree");
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>{id}</string>
+<key>CFBundleExecutable</key><string>Run</string>
+</dict></plist>"#
+        );
+        fs::write(bundle.join("Contents").join("Info.plist"), plist).expect("write plist");
+        fs::write(macos.join("Run"), b"inert").expect("write executable");
+        bundle
+    }
+
     #[test]
     fn valid_bundle_previews_without_refusals_but_never_executable() {
         let root = tempfile::tempdir().expect("tempdir");
@@ -443,6 +688,140 @@ mod tests {
         assert!(preview.identity.is_some());
         assert!(preview.recovery.contains("Put Back"));
         assert!(preview.protections.len() >= 4);
+        assert_eq!(preview.copies.status, CopiesStatus::NotChecked);
+    }
+
+    #[test]
+    fn empty_copies_roots_stay_not_checked() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = fixture_bundle(root.path(), "Fixture.app");
+        let preview = preview_bundle_uninstall(&bundle);
+        let evidence = observe_copies(&preview, &[], &Cancellation::default(), Duration::ZERO);
+        assert_eq!(evidence.status, CopiesStatus::NotChecked);
+        assert!(evidence.copies.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn copies_across_roots_are_evidence_and_the_target_is_excluded() {
+        let target_root = tempfile::tempdir().expect("tempdir");
+        let other_root = tempfile::tempdir().expect("tempdir");
+        let target = fixture_bundle_with_id(target_root.path(), "Demo.app", "com.example.demo");
+        let copy = fixture_bundle_with_id(other_root.path(), "Demo.app", "com.example.demo");
+        let _different =
+            fixture_bundle_with_id(other_root.path(), "Other.app", "com.example.other");
+        let preview = preview_bundle_uninstall(&target);
+        let roots = vec![
+            target_root.path().to_path_buf(),
+            other_root.path().to_path_buf(),
+        ];
+        let evidence = observe_copies(
+            &preview,
+            &roots,
+            &Cancellation::default(),
+            Duration::from_secs(60),
+        );
+        assert_eq!(evidence.status, CopiesStatus::Complete);
+        assert_eq!(
+            evidence.target_bundle_id.as_deref(),
+            Some("com.example.demo")
+        );
+        // The published budgets are the effective ones: the scan keeps the
+        // engine's 30-second cooperative cap, the inventory gets the call.
+        assert_eq!(evidence.scan_budget_sec, Some(30));
+        assert_eq!(evidence.inventory_budget_sec, Some(60));
+        assert_eq!(evidence.requested_roots, roots);
+        // Exactly the other same-ID bundle: the target is excluded by
+        // device/inode identity and the different-ID bundle by comparison.
+        assert_eq!(evidence.copies.len(), 1, "{:?}", evidence.copies);
+        assert_eq!(evidence.copies[0].bundle_path, copy);
+        assert_eq!(evidence.note, COPIES_NOTE);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn invalid_copies_root_publishes_only_the_scan_budget() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let target = fixture_bundle_with_id(root.path(), "Demo.app", "com.example.demo");
+        let preview = preview_bundle_uninstall(&target);
+        // A lexically invalid root fails root normalization, so the scan
+        // returns an error before any traversal or inventory pass runs.
+        let evidence = observe_copies(
+            &preview,
+            &[PathBuf::from("relative-root")],
+            &Cancellation::default(),
+            Duration::from_secs(60),
+        );
+        assert_eq!(evidence.status, CopiesStatus::Failed);
+        assert_eq!(evidence.scan_budget_sec, Some(30));
+        assert!(evidence.inventory_budget_sec.is_none());
+        assert!(evidence.copies.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn missing_copies_root_fails_the_scan_but_runs_the_inventory() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let target = fixture_bundle_with_id(root.path(), "Demo.app", "com.example.demo");
+        let preview = preview_bundle_uninstall(&target);
+        // A missing root is lexically valid: it is retained for admission,
+        // fails as a scan issue, and with zero accepted roots the report
+        // comes back Failed — the inventory pass still ran on that report,
+        // so both effective budgets are published honestly.
+        let missing_root = root.path().join("no-such-root");
+        let evidence = observe_copies(
+            &preview,
+            &[missing_root],
+            &Cancellation::default(),
+            Duration::from_secs(60),
+        );
+        assert_eq!(evidence.status, CopiesStatus::Failed);
+        assert_eq!(evidence.scan_budget_sec, Some(30));
+        assert_eq!(evidence.inventory_budget_sec, Some(60));
+        assert!(evidence.copies.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn copies_need_a_target_identity_for_exclusion() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // A missing bundle previews with no identity: without device/inode
+        // there is no trustworthy exclusion, so the observation refuses
+        // instead of risking the named bundle listed as its own copy.
+        let preview = preview_bundle_uninstall(&root.path().join("Ghost.app"));
+        assert!(preview.identity.is_none());
+        let evidence = observe_copies(
+            &preview,
+            &[root.path().to_path_buf()],
+            &Cancellation::default(),
+            Duration::from_secs(30),
+        );
+        assert_eq!(evidence.status, CopiesStatus::NotAttributable);
+        assert_eq!(
+            evidence.reason,
+            Some("the target bundle identity is unavailable")
+        );
+        assert!(evidence.copies.is_empty());
+        assert!(evidence.scan_budget_sec.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn copies_need_an_attributable_target_identifier() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = fixture_bundle(root.path(), "Fixture.app");
+        let preview = preview_bundle_uninstall(&bundle);
+        let evidence = observe_copies(
+            &preview,
+            &[root.path().to_path_buf()],
+            &Cancellation::default(),
+            Duration::from_secs(30),
+        );
+        // The fixture plist is deliberately not parseable: no identifier
+        // means no trustworthy comparison, never an empty "no copies" claim.
+        assert_eq!(evidence.status, CopiesStatus::NotAttributable);
+        assert!(evidence.target_bundle_id.is_none());
+        assert!(evidence.copies.is_empty());
     }
 
     #[test]

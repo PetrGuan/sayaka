@@ -2,15 +2,17 @@
 
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use sayaka_engine::app_inventory::RunningObservation;
-use sayaka_engine::app_uninstall::{self, UninstallPreview, UninstallRefusal};
+use sayaka_engine::app_uninstall::{self, CopiesStatus, UninstallPreview, UninstallRefusal};
 use sayaka_engine::execute::BundleUninstallSession;
 use sayaka_engine::journal::Store;
 use sayaka_engine::model::{Cancellation, ReasonCode, Scope};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 const SCHEMA_VERSION: u32 = 1;
 const KIND: &str = "sayaka.app_uninstall_preview";
+const COPIES_SCAN_BUDGET_SEC: u64 = 60;
 
 pub fn command() -> Command {
     Command::new("uninstall")
@@ -42,8 +44,16 @@ pub fn command() -> Command {
                 .value_parser(value_parser!(PathBuf))
                 .help("Private M3 journal directory for the durable intent/outcome record"),
         )
+        .arg(
+            Arg::new("copies-root")
+                .long("copies-root")
+                .value_name("ROOT")
+                .action(ArgAction::Append)
+                .value_parser(value_parser!(PathBuf))
+                .help("Repeatable root searched for coexisting copies of the same bundle ID (read-only evidence; copies are never targets)"),
+        )
         .after_help(
-            "Default is a read-only preview. --execute requires an interactive terminal and moves\nexactly the named bundle to the user Trash (recovery: Finder 'Put Back'; no programmatic\nrestore). Related data, preferences, caches and other copies are never touched. A running\nbundle is refused at preview, approval and immediately before the native call.",
+            "Default is a read-only preview. --execute requires an interactive terminal and moves\nexactly the named bundle to the user Trash (recovery: Finder 'Put Back'; no programmatic\nrestore). Related data, preferences, caches and other copies are never touched. A running\nbundle is refused at preview, approval and immediately before the native call.\n--copies-root only observes coexisting copies; it never selects them for any effect.",
         )
 }
 
@@ -80,7 +90,23 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         args.get_one::<PathBuf>("bundle")
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "--bundle is required"))?,
     )?;
-    let preview = app_uninstall::preview_bundle_uninstall(&bundle);
+    let mut preview = app_uninstall::preview_bundle_uninstall(&bundle);
+    let copies_roots: Vec<PathBuf> = args
+        .get_many::<PathBuf>("copies-root")
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    if !copies_roots.is_empty() {
+        // Read-only evidence; the preview phase installs no signal handler,
+        // so Ctrl-C keeps its default behavior, same as the base preview.
+        preview.copies = app_uninstall::observe_copies(
+            &preview,
+            &copies_roots,
+            &Cancellation::default(),
+            Duration::from_secs(COPIES_SCAN_BUDGET_SEC),
+        );
+    }
     if args.get_flag("json") {
         write_json(&mut io::stdout().lock(), &preview)?;
     } else {
@@ -158,17 +184,35 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     Ok(report.exit_code())
 }
 
-fn running_json(preview: &UninstallPreview) -> serde_json::Value {
+fn running_json(observation: &RunningObservation) -> serde_json::Value {
     serde_json::json!({
-        "state": preview.running.as_str(),
-        "pids": match &preview.running {
+        "state": observation.as_str(),
+        "pids": match observation {
             RunningObservation::Running(pids) => serde_json::json!(pids),
             _ => serde_json::Value::Null,
         },
-        "reason": match &preview.running {
+        "reason": match observation {
             RunningObservation::NotAttributable(reason) => serde_json::json!(reason),
             _ => serde_json::Value::Null,
         },
+    })
+}
+
+fn copies_json(preview: &UninstallPreview) -> serde_json::Value {
+    let copies = &preview.copies;
+    serde_json::json!({
+        "state": copies.status.as_str(),
+        "reason": copies.reason,
+        "target_bundle_id": copies.target_bundle_id,
+        "scan_budget_sec": copies.scan_budget_sec,
+        "inventory_budget_sec": copies.inventory_budget_sec,
+        "requested_roots": copies.requested_roots.iter().map(|root| crate::apps::write_native_path(root)).collect::<Vec<_>>(),
+        "copies": copies.copies.iter().map(|copy| serde_json::json!({
+            "bundle_path": crate::apps::write_native_path(&copy.bundle_path),
+            "observed_roots": copy.observed_roots.iter().map(|root| crate::apps::write_native_path(root)).collect::<Vec<_>>(),
+            "running": running_json(&copy.running),
+        })).collect::<Vec<_>>(),
+        "note": copies.note,
     })
 }
 
@@ -196,7 +240,8 @@ fn write_json(out: &mut impl Write, preview: &UninstallPreview) -> io::Result<()
             "logical_bytes": identity.logical_bytes,
         })),
         "executables_observed": preview.executables_observed,
-        "running": running_json(preview),
+        "running": running_json(&preview.running),
+        "copies": copies_json(preview),
         "protections": preview.protections,
         "recovery": preview.recovery,
         "refusals": preview.refusals.iter().map(refusal_json).collect::<Vec<_>>(),
@@ -246,6 +291,24 @@ fn write_human(out: &mut impl Write, preview: &UninstallPreview) -> io::Result<(
         }
         RunningObservation::NotChecked => writeln!(out, "running: not checked")?,
     }
+    if preview.copies.status != CopiesStatus::NotChecked {
+        writeln!(out, "copies: {}", preview.copies.status.as_str())?;
+        if let Some(reason) = preview.copies.reason {
+            writeln!(out, "copies_reason: {reason}")?;
+        }
+        if let Some(id) = &preview.copies.target_bundle_id {
+            writeln!(out, "target_bundle_id: {id}")?;
+        }
+        for copy in &preview.copies.copies {
+            writeln!(
+                out,
+                "  - {} (running: {})",
+                sayaka_engine::scan::display_path(&copy.bundle_path),
+                copy.running.as_str()
+            )?;
+        }
+        writeln!(out, "  note: {}", preview.copies.note)?;
+    }
     writeln!(out, "protections:")?;
     for protection in &preview.protections {
         writeln!(out, "  - {protection}")?;
@@ -283,6 +346,13 @@ mod tests {
         assert_eq!(value["can_execute"], false);
         assert_eq!(value["execution"], app_uninstall::EXECUTION_DEFERRED);
         assert_eq!(value["running"]["state"], "not_running");
+        assert_eq!(value["copies"]["state"], "not_checked");
+        assert!(
+            value["copies"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("evidence only")
+        );
         assert!(value["refusals"].as_array().expect("refusals").is_empty());
         assert!(value["identity"]["inode"].is_u64());
     }
