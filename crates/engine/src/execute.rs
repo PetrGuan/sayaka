@@ -267,6 +267,8 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
         let clean_profile = clean_policy.is_some();
         let schema_version = if clean_profile {
             3
+        } else if preview.schema_version() == 5 {
+            journal::PURGE_SCHEMA_VERSION
         } else if preview.schema_version() == 4 {
             journal::BUNDLE_SCHEMA_VERSION
         } else if preview.schema_version() == 3 {

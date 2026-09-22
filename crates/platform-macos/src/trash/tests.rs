@@ -1782,7 +1782,11 @@ fn purge_marker_identity_change_after_capture_is_refused() {
     assert!(candidate.revalidate().is_err());
     // Re-register the swapped identity so verified fixture cleanup accepts it.
     let identity = Stamp::read(&fs::symlink_metadata(&marker).unwrap()).identity();
-    fixture.objects.push((marker.clone(), identity, false));
+    for object in fixture.objects.iter_mut() {
+        if object.0 == marker {
+            object.1 = identity;
+        }
+    }
     drop(candidate);
     fixture.finish();
 }

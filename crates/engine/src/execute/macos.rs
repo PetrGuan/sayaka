@@ -868,10 +868,13 @@ impl PurgeSession {
                 }
             }
         }
+        // Scope over the project roots: every artifact is a strict child of
+        // its project root, so even a single-item selection keeps the
+        // target strictly beneath the scope (the native admission rule).
         let scope_root = common_ancestor(
             &selections
                 .iter()
-                .map(|selection| selection.artifact.clone())
+                .map(|selection| selection.project_root.clone())
                 .collect::<Vec<_>>(),
         )
         .ok_or_else(|| journal::invalid("selections share no common ancestor"))?;

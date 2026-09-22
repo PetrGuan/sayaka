@@ -27,6 +27,10 @@ pub const BUNDLE_SCHEMA_VERSION: u32 = 4;
 const BUNDLE_PLAN_SCHEMA_VERSION: u32 = 4;
 const BUNDLE_ENGINE_VERSION: u32 = 2;
 const BUNDLE_RULES_VERSION: u32 = 1;
+pub const PURGE_SCHEMA_VERSION: u32 = 5;
+const PURGE_PLAN_SCHEMA_VERSION: u32 = 5;
+const PURGE_ENGINE_VERSION: u32 = 2;
+const PURGE_RULES_VERSION: u32 = 1;
 const SF_DATALESS: u32 = 0x40000000;
 const SF_RESTRICTED: u32 = 0x00080000;
 const SF_NOUNLINK: u32 = 0x00100000;
@@ -293,7 +297,12 @@ impl Record {
             && self.engine_version == BUNDLE_ENGINE_VERSION
             && self.rules_version == BUNDLE_RULES_VERSION
             && self.contract == "revalidated_bundle_trash_v1";
-        if !(legacy || rule_bound || clean || bundle)
+        let purge = self.schema_version == PURGE_SCHEMA_VERSION
+            && self.plan_schema_version == PURGE_PLAN_SCHEMA_VERSION
+            && self.engine_version == PURGE_ENGINE_VERSION
+            && self.rules_version == PURGE_RULES_VERSION
+            && self.contract == "revalidated_purge_trash_v1";
+        if !(legacy || rule_bound || clean || bundle || purge)
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
             || self.items.len() > MAX_ITEMS

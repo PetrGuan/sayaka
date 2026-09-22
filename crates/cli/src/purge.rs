@@ -73,6 +73,20 @@ pub fn command() -> Command {
 }
 
 pub fn run(args: &ArgMatches) -> io::Result<u8> {
+    match run_inner(args) {
+        Ok(code) => Ok(code),
+        Err(error) => {
+            writeln!(io::stderr().lock(), "purge failed: {:?}", error.to_string())?;
+            Ok(if error.kind() == io::ErrorKind::InvalidInput {
+                2
+            } else {
+                1
+            })
+        }
+    }
+}
+
+fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     let json = args.get_flag("json");
     let stderr_terminal = io::stderr().is_terminal();
     let dumb = std::env::var_os("TERM").is_some_and(|term| term == "dumb");
@@ -96,6 +110,12 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
         .cloned()
         .collect();
     if execute {
+        if json {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--json applies to the read-only preview; --execute prints a journaled execution report instead",
+            ));
+        }
         if !(io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal())
         {
             return Err(io::Error::new(
@@ -546,6 +566,26 @@ mod tests {
         assert!(
             resolve_selections(&preview, &[std::path::PathBuf::from("app/../app/target")]).is_err()
         );
+    }
+
+    #[test]
+    fn invalid_execution_arguments_exit_2_before_any_scan() {
+        for argv in [
+            vec!["sayaka", "purge", ".", "--execute"],
+            vec!["sayaka", "purge", ".", "--only", "/tmp/x"],
+            vec![
+                "sayaka",
+                "purge",
+                ".",
+                "--execute",
+                "--json",
+                "--only",
+                "/tmp/x",
+            ],
+        ] {
+            let matches = command().try_get_matches_from(argv).expect("matches");
+            assert_eq!(run(&matches).expect("run"), 2);
+        }
     }
 
     #[test]
