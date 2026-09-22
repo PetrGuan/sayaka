@@ -61,9 +61,10 @@ minimum deltas:
 - **Effect**: one synchronous `trashItemAtURL` call is the only mutation
   attempt; there is no fallback path. The returned destination URL is
   captured as the recovery witness. NO means the item was not moved
-  (documented Foundation contract); a contradictory NO+destination or a
-  missing destination yields the existing `Unknown` outcome with preserved
-  evidence, never a retry without new approval.
+  (documented Foundation contract): NO without a destination is `Failed`.
+  Only a YES without a usable destination, a YES with an error, or a
+  contradictory NO+destination yields the existing `Unknown` outcome with
+  preserved evidence, never a retry without new approval.
 - **No partial directory semantics**: the bundle moves as one object. There
   is no per-member progress, no recursive walk by Sayaka, and no
   partial-success state; if the bundle cannot move as a whole, the item
@@ -71,8 +72,10 @@ minimum deltas:
 
 ## Approval, confirmation and journal
 
-- Preview (already shipped) is the only evidence source; `can_execute`
-  becomes true only when zero refusals remain and running is `not_running`.
+- Preview (already shipped) is the only evidence source. The shipped preview
+  keeps `can_execute == false`; the future execution slice may derive
+  approval eligibility only when zero refusals remain and running is
+  `not_running`.
 - Approval seals the plan for 120 seconds; expiry invalidates it.
 - Confirmation is typed and exact: the bundle directory name
   (e.g. `uninstall Fixture.app`). Empty input cancels. No `--yes`, no
@@ -80,8 +83,12 @@ minimum deltas:
 - The journal records intent before the effect (existing M3 `Store`
   publish discipline) and the outcome per item: the bundle path, directory
   identity evidence, the returned Trash destination, and the state
-  (`succeeded`/`failed`/`unknown`/`cancelled`). Recovery evidence on
-  `Unknown` follows the existing schema; no new journal schema is required.
+  (`planned`/`started`/`succeeded`/`skipped`/`failed`/`unknown` — the
+  existing item states; there is no `cancelled` state). Cancellation before
+  the native call records `skipped` with reason `cancelled`; only a durable
+  interrupted `started` record reconciles to `unknown`. Recovery evidence
+  on `Unknown` follows the existing schema; no new journal schema is
+  required.
 - Operation history is never deleted by uninstall, including the record of
   the uninstall itself.
 
@@ -95,8 +102,10 @@ minimum deltas:
 
 ## Cancellation and interruption
 
-- Cancellation before the native call leaves zero effects (planned/started
-  states remain `unknown` in history, never `succeeded`).
+- Cancellation before the native call leaves zero effects; items not yet
+  attempted are journaled `skipped` with reason `cancelled`, never
+  `succeeded`. Only a durable `started` record interrupted mid-effect
+  reconciles to `unknown`.
 - Cancellation racing the synchronous Foundation call cannot retract it; the
   item is reported from the actual native outcome (`moved`/`failed`/
   `unknown`), not from the cancellation request.
