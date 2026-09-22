@@ -1,0 +1,55 @@
+{
+  "benchmark_id": "c0-sayaka-capability-current-v3",
+  "scope": "Current Sayaka feature-subset capability ledger for C0 guarded-host planning. Not parity and not competitive-result evidence. Supersedes v2 for planning; v2 remains the immutable record of its time.",
+  "source_commit": "4316428b",
+  "comparator_commit": "1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+  "capabilities": [
+    {
+      "family": "menu",
+      "status": "partial",
+      "details": "Terminal browser and scan exploration implemented; no claim of full Mole overview/TUI parity."
+    },
+    {
+      "family": "rules-v2",
+      "status": "partial",
+      "details": "Rule-bound trash and validation slices implemented; broad maintenance/clean catalogs remain out of scope."
+    },
+    {
+      "family": "apps-related",
+      "status": "partial",
+      "details": "Single-bundle uninstall execution (revalidated_bundle_trash_v1) and read-only coexisting-copy evidence implemented; multi-copy execution, related-data selection, shared/restart-required evidence and official uninstaller flows remain gaps."
+    },
+    {
+      "family": "installer-preview",
+      "status": "partial",
+      "details": "Read-only installer discovery/preview plus explicitly approved ordinary-file cleanup implemented; no full installer cleanup parity claim."
+    },
+    {
+      "family": "purge",
+      "status": "partial",
+      "details": "Marker-bound artifact preview and bounded per-item Trash execution (revalidated_purge_trash_v1) implemented; the execution contract's disposable-fixture native evidence is pending, and custom root sets / staleness-filtering UX remain gaps."
+    },
+    {
+      "family": "optimize",
+      "status": "partial",
+      "details": "Read-only bounded CLI diagnostics for disk_verify, login_items_audit and the mdutil system_maintenance observation (3 of 21 pinned catalog tasks); effect classes B/C require per-operation contracts, Class D stays blocked on the privilege design, and isolated-host native acceptance is pending."
+    },
+    {
+      "family": "status",
+      "status": "partial",
+      "details": "Read-only status sampler exists with known metric coverage gaps versus Mole; numeric temperature is a recorded deliberate gap."
+    },
+    {
+      "family": "lifecycle",
+      "status": "partial",
+      "details": "Owned-prefix install/update/recover/remove plus completion implemented for local profile; not full distribution parity."
+    }
+  ],
+  "non_claims": {
+    "full_parity": false,
+    "faster": false,
+    "smaller": false,
+    "easier": false,
+    "native_gui_in_scope": false
+  }
+}
