@@ -58,11 +58,12 @@ Every operation slice MUST define, before implementation:
 
 ## Catalog triage (21 pinned tasks)
 
-Proposed effect classes and sequencing. Status today: `disk_verify` and
-`login_items_audit` have read-only CLI diagnostic slices
-(`sayaka diagnose disk` / `sayaka diagnose login-items`); their
-isolated-host native acceptance is still pending, and the other 19 tasks
-remain `gap`.
+Proposed effect classes and sequencing. Status today: `disk_verify`,
+`login_items_audit` and the `system_maintenance` diagnostic part
+(`sayaka diagnose disk` / `login-items` / `spotlight`) have read-only CLI
+diagnostic slices; their isolated-host native acceptance is still pending,
+the `system_maintenance` DNS flush part stays Class D, and the other 18
+tasks remain `gap`.
 
 ### Class A — read-only diagnostics (first candidates, no effects)
 
@@ -162,7 +163,7 @@ unsupported/authorization-required states each keep recorded evidence.
 
 | Task | Class | Status |
 | --- | --- | --- |
-| system_maintenance | D | gap (privilege design pending) |
+| system_maintenance | D (DNS flush) | gap (privilege design pending); diagnostic `mdutil -s` part: partial (read-only CLI slice, isolated-host acceptance pending) |
 | cache_refresh | B | gap (mechanism contract pending) |
 | saved_state_cleanup | B | gap |
 | fix_broken_configs | B | gap |
