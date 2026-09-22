@@ -30,10 +30,10 @@ hidden behind a "cleanup" label.
 | Applicability | The fixed named location exists and is a directory owned by the current user. Absent/unreadable location is `unnecessary`/`unknown`, never an error disguised as success |
 | Necessity evidence | None required beyond the user's explicit request: this is a named user-initiated cleanup, not an optimization. No "speed up", "free memory" or health-score language anywhere. Age is a filter, not a judgment: mtime is an observation, not proof of disuse |
 | Impact scope | Exactly the selected `*.savedState` bundle directories, each moved to the user Trash as one container. Provably untouched: every other file in the location, the owning applications, their documents/preferences/caches/credentials, and the Trash itself beyond the additions |
-| Concurrency | The owning application must not be running — detected by exact bundle identifier via `NSRunningApplication runningApplicationsWithBundleIdentifier:` (official, unprivileged, per-item). A running owner refuses the item at preview, at approval and at the last native guard; it is never signaled or terminated. Other Sayaka operations are unaffected |
+| Concurrency | The owning application must not be running — detected by exact bundle identifier via `NSRunningApplication runningApplicationsWithBundleIdentifier:` (official, unprivileged, per-item). A running owner refuses the item at preview, at approval and at the last native guard; it is never signaled or terminated. Other Sayaka operations are unaffected. Honest limits: the identifier comes from the directory **naming convention**, not from proof of installed-app or team identity; if any application running under a duplicate identifier matches, the item conservatively refuses; an app or helper rewriting state while quitting can still alter descendants around the move (the container disclosure below applies) |
 | Permission | Ordinary user authority. No privilege escalation of any kind |
-| Recovery limits | Finder 'Put Back' per item from the journaled Trash destination (M3 caveat: Trash location is evidence, not durable recovery capability). Primary recovery is the app regenerating its state at next launch. **Disclosed residual cost: window positions and resume state are not restorable once Trash is emptied; this is the honest price of the operation and is printed in preview and execution output.** No programmatic restore; no permanent-delete fallback |
-| Result granularity | Per-item outcomes: `moved`/`skipped` (with reason)/`failed`/`unknown`, journaled individually. Never a bare success count |
+| Recovery limits | Finder 'Put Back' per item from the journaled Trash destination, which itself may fail if the original parent changed (M3 caveat: Trash location is evidence, not durable recovery capability). Primary recovery is the app regenerating its state at next launch. **Disclosed residual cost: window positions and resume state are not restorable once Trash is emptied; this is the honest price of the operation and is printed in preview and execution output.** No programmatic restore; no permanent-delete fallback |
+| Result granularity | Per-item journaled lifecycle states exactly as M3 defines them: `planned`/`started`/`succeeded`/`skipped` (with reason)/`failed`/`unknown`. Presentation may say "moved" for `succeeded`; the durable record and every recovery statement use the M3 names. Never a bare success count |
 
 ## Enumeration and eligibility
 
@@ -41,16 +41,19 @@ hidden behind a "cleanup" label.
   resolved against the current user's home (no environment-variable trust;
   the home comes from the native user directory, not `$HOME` text). No
   recursion below the location's direct children, no other directories.
-- A direct child is a candidate only when: its name ends `.savedState`, it
-  is a directory (never a symlink), not dataless, and its prefix before
-  `.savedState` parses as a bundle identifier (reverse-DNS shape). Anything
-  else stays invisible — it is not reported as a candidate and is never
-  touched.
+- Names not ending `.savedState` stay invisible: they are not reported and
+  are never touched. A `.savedState` child is a candidate only when it is a
+  directory (never a symlink), not dataless, and its prefix before
+  `.savedState` parses as a bundle identifier (reverse-DNS shape); one that
+  fails these checks is listed as `not_attributable` with the reason —
+  visible, not selectable, never touched.
 - Each candidate reports: directory name, derived bundle identifier,
   logical/allocated subtotals (unknown stays unknown, partial marked),
   observed mtime, and its age vs the cutoff. Default cutoff 30 days
   (Mole-pinned), adjustable with an explicit flag bounded 30..3650; the
-  effective value is published.
+  effective day value and the computed cutoff date are published in both
+  human and JSON output, so an adjustable value never hides the fixed rule
+  it replaced.
 - Per-item preview states: `eligible` (old enough, owner not running),
   `too_recent`, `running` (with the bundle identifier), `not_attributable`
   (running state cannot be proven clear — fail closed), `unknown`
@@ -66,9 +69,13 @@ hidden behind a "cleanup" label.
 - The effect mechanism reuses the bounded native directory-candidate
   pipeline introduced for purge (`revalidated_purge_trash_v1` shape):
   ordinary-authority directory admission, full ancestry protection chain,
-  volume identity, cloud/dataless refusal, package-boundary rejection — but
-  **without a marker requirement**; the binding evidence here is the
-  bundle-identifier naming convention plus the running observation. A
+  volume identity, cloud/dataless refusal — and package-boundary rejection
+  applied to the **ancestors**, with the target itself exempted exactly as
+  the uninstall contract exempted the `.app` target: the `.savedState`
+  directory is the intended object, while a state bundle nested inside any
+  *other* package stays refused — but **without a marker requirement**; the
+  binding evidence here is the bundle-identifier naming convention plus the
+  running observation. A
   dedicated plan variant `RevalidatedSavedStateTrashV1`
   (`saved_state_trash_v1`, own plan/journal schema tuple) is required;
   the purge and bundle variants stay untouched.
@@ -111,10 +118,12 @@ All in disposable, owned fixtures — never against the operator's real
 2. Running owner (fixture app launched by bundle identifier): refused at
    preview, at approval, and (forced race) at the last native guard; the
    process is never signaled.
-3. Owner quits between preview and approval: eligible again, moves.
-4. Non-conforming names (`randomdir`, `weird.savedState` without a bundle
-   identifier shape, symlink, dataless placeholder): invisible or refused,
-   never touched.
+3. Running-at-preview items are not selectable; becoming eligible requires a
+   new preview. An owner that starts between approval and the last native
+   guard (forced race) is refused there, never raced.
+4. Non-conforming children: a non-`.savedState` name stays invisible;
+   malformed `.savedState` children (bad identifier shape, symlink,
+   dataless placeholder) are listed `not_attributable` and never touched.
 5. Bundle replaced between approval and native call (forced identity
    race): skipped with reason; the new object never followed.
 6. Destination-name conflict in Trash: both destinations journaled
@@ -122,6 +131,10 @@ All in disposable, owned fixtures — never against the operator's real
 7. Interrupted run (SIGINT during confirmation, during the native window):
    no effect before the call; honest per-item outcome after it.
 8. 'Put Back' performed by the operator; bundle intact.
+9. Native Trash environment failure (Trash unavailable or refusing the
+   item, simulated in the fixture harness): honest per-item
+   `failed`/`unknown` outcomes with preserved evidence, no retry loop, no
+   permanent-delete fallback.
 
 ## C0 and equal-work notes
 
