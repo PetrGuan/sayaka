@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::{BundleTrashCandidate, TrashCandidate, full_sync, has_extended_acl};
+use crate::{
+    BundleTrashCandidate, PurgeTrashCandidate, TrashCandidate, full_sync, has_extended_acl,
+};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt, symlink};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1676,6 +1678,111 @@ fn bundle_capture_accepts_owned_app_directory_and_cancel_has_no_effect() {
         ),
         NativeTrashOutcome::Refused(_)
     ));
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
+fn purge_capture_accepts_artifact_with_marker_and_cancel_has_no_effect() {
+    let mut fixture = Fixture::new();
+    fixture.directory("app");
+    let artifact = fixture.directory("app/target");
+    let marker = fixture.file("app/Cargo.toml", b"[package]");
+    fixture.file("app/target/bin", b"x");
+    let candidate =
+        PurgeTrashCandidate::capture(&fixture.root, &artifact, std::slice::from_ref(&marker), &[])
+            .unwrap();
+    assert_eq!(candidate.path(), artifact);
+    candidate.revalidate().unwrap();
+    let mut called = false;
+    let result = candidate.move_to_trash_with_last_guard(
+        || {
+            called = true;
+            true
+        },
+        || NativeLastGuard::Proceed,
+    );
+    assert!(called);
+    assert!(matches!(result, NativeTrashOutcome::Refused(reason) if reason == "cancelled"));
+    // Cancellation before the sole call leaves artifact and marker intact.
+    assert_eq!(fs::read(&marker).unwrap(), b"[package]");
+    assert_eq!(fs::read(artifact.join("bin")).unwrap(), b"x");
+    assert!(matches!(
+        candidate.move_to_trash_with_last_guard(
+            || panic!("a consumed candidate must never retry"),
+            || NativeLastGuard::Proceed,
+        ),
+        NativeTrashOutcome::Refused(_)
+    ));
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
+fn purge_capture_rejects_bad_shapes_missing_markers_and_out_of_scope_markers() {
+    let mut fixture = Fixture::new();
+    fixture.directory("app");
+    let artifact = fixture.directory("app/target");
+    let marker = fixture.file("app/Cargo.toml", b"[package]");
+    // No markers, or markers that are missing / directories / the artifact
+    // itself / outside the scope.
+    assert!(PurgeTrashCandidate::capture(&fixture.root, &artifact, &[], &[]).is_err());
+    assert!(
+        PurgeTrashCandidate::capture(
+            &fixture.root,
+            &artifact,
+            &[fixture.root.join("app/missing.toml")],
+            &[],
+        )
+        .is_err()
+    );
+    let marker_dir = fixture.directory("app/markerdir");
+    assert!(PurgeTrashCandidate::capture(&fixture.root, &artifact, &[marker_dir], &[]).is_err());
+    assert!(
+        PurgeTrashCandidate::capture(
+            &fixture.root,
+            &artifact,
+            std::slice::from_ref(&artifact),
+            &[]
+        )
+        .is_err()
+    );
+    assert!(
+        PurgeTrashCandidate::capture(
+            &fixture.root,
+            &artifact,
+            &[std::path::PathBuf::from("/etc/hosts")],
+            &[],
+        )
+        .is_err()
+    );
+    // A regular file is never an artifact target.
+    let file = fixture.file("ordinary.txt", b"x");
+    assert!(
+        PurgeTrashCandidate::capture(&fixture.root, &file, std::slice::from_ref(&marker), &[])
+            .is_err()
+    );
+    fixture.finish();
+}
+
+#[test]
+fn purge_marker_identity_change_after_capture_is_refused() {
+    let mut fixture = Fixture::new();
+    fixture.directory("app");
+    let artifact = fixture.directory("app/target");
+    let marker = fixture.file("app/Cargo.toml", b"one");
+    let candidate =
+        PurgeTrashCandidate::capture(&fixture.root, &artifact, std::slice::from_ref(&marker), &[])
+            .unwrap();
+    // Same-path content swap keeps the inode here; replace with a rename to
+    // force an identity change.
+    let swapped = fixture.root.join("app/Cargo.toml.tmp");
+    fs::write(&swapped, b"two").unwrap();
+    fs::rename(&swapped, &marker).unwrap();
+    assert!(candidate.revalidate().is_err());
+    // Re-register the swapped identity so verified fixture cleanup accepts it.
+    let identity = Stamp::read(&fs::symlink_metadata(&marker).unwrap()).identity();
+    fixture.objects.push((marker.clone(), identity, false));
     drop(candidate);
     fixture.finish();
 }

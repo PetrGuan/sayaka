@@ -1,16 +1,18 @@
-# Read-only project artifact (purge) preview
+# Project artifact (purge) preview and bounded execution
 
 `sayaka purge ROOT...` previews rebuildable project artifact directories,
 grouped by project, from one bounded scan. It advances T8
-(PetrGuan/SayakaCleaner#28) and the C0 `purge` ledger row. **It performs no
-effects**: directory effects remain unapproved (see
-[DIRECTORY_ACTIONS.md](DIRECTORY_ACTIONS.md)); there is no `--execute`, no
-selection approval and no permanent deletion.
+(PetrGuan/SayakaCleaner#28) and the C0 `purge` ledger row. The default is a
+read-only preview; `--execute` with explicit `--only` selections moves the
+selected artifacts to the user Trash under the
+[purge execution/recovery contract](PURGE_EXECUTION.md). There is no
+select-all flag, no staleness auto-selection and no permanent deletion.
 
 ```sh
 sayaka purge .
 sayaka purge . --stale-days 60
 sayaka purge . --json
+sayaka purge . --execute --only ./app/target
 ```
 
 ## Qualification rules
@@ -40,8 +42,14 @@ additive, and no displayed byte count is guaranteed reclaimable.
 
 Human output groups artifacts under their project root with marker kinds;
 JSON is a versioned envelope (`sayaka.purge_preview` schema 1) always
-carrying `effects_performed: false`. Exit codes: **0 complete, 3 partial,
-130 cancelled, 1 runtime failure, 2 invalid arguments**.
+carrying `effects_performed: false`. Exit codes: **0 complete, 3 partial or
+refusals, 130 cancelled, 1 runtime failure, 2 invalid arguments**.
 
-Removal of selected artifacts is a future directory-effects contract; this
-preview is its evidence base, not an approval.
+Execution requires a complete preview, an interactive terminal, 1..32
+explicit `--only` selections from the same invocation's preview, and a typed
+exact confirmation (`purge N artifacts`, 120-second approval). Each artifact
+moves as one container with per-item journaled outcomes; the binding marker
+(rebuild evidence) is revalidated and never touched. Displayed byte totals
+are observations, not reclaimed space, and a running build tool is not
+detected — see [PURGE_EXECUTION.md](PURGE_EXECUTION.md) for the full
+contract and its disclosures.

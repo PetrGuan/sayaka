@@ -31,6 +31,15 @@ pub enum ProjectMarker {
 }
 
 impl ProjectMarker {
+    /// Every marker kind, for re-evaluating the artifact/marker binding
+    /// against the live filesystem at approval and guard time.
+    pub const ALL: &'static [ProjectMarker] = &[
+        Self::CargoToml,
+        Self::PackageJson,
+        Self::PyprojectToml,
+        Self::PackageSwift,
+    ];
+
     pub const fn file_name(self) -> &'static str {
         match self {
             Self::CargoToml => "Cargo.toml",

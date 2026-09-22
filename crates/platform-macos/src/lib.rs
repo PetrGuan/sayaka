@@ -18,7 +18,7 @@ mod trash;
 pub use trash::{
     BundleTrashCandidate, NativeAdmissionWitness, NativeCaptureFailure, NativeFileInfo,
     NativeLastGuard, NativeRecoveryEvidence, NativeRuleBindingWitness, NativeTargetMarker,
-    NativeTrashOutcome, NativeWitnessInfo, TrashCandidate, full_sync,
+    NativeTrashOutcome, NativeWitnessInfo, PurgeTrashCandidate, TrashCandidate, full_sync,
 };
 
 mod acl;

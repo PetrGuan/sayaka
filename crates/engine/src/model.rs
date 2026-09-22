@@ -267,6 +267,8 @@ pub enum ExecutionContract {
     RevalidatedTrashV1,
     /// Single sealed `.app` bundle directory to the user Trash (T9).
     RevalidatedBundleTrashV1,
+    /// Sealed marker-bound project artifact directories to the user Trash (T8).
+    RevalidatedPurgeTrashV1,
 }
 
 impl ExecutionContract {
@@ -275,6 +277,7 @@ impl ExecutionContract {
             Self::ModelOnly => "model_only",
             Self::RevalidatedTrashV1 => "revalidated_trash_v1",
             Self::RevalidatedBundleTrashV1 => "revalidated_bundle_trash_v1",
+            Self::RevalidatedPurgeTrashV1 => "revalidated_purge_trash_v1",
         }
     }
 
@@ -286,6 +289,9 @@ impl ExecutionContract {
             }
             Self::RevalidatedBundleTrashV1 => {
                 "A bundle or ancestor replaced after the last check could cause a different directory to be moved. Trash does not free space or guarantee restoration; related data is never touched."
+            }
+            Self::RevalidatedPurgeTrashV1 => {
+                "An artifact, marker or ancestor replaced after the last check could cause a different directory to be moved; a stable container does not prove stable members. Trash does not free space or guarantee restoration; the marker stays untouched."
             }
         }
     }
@@ -461,9 +467,9 @@ impl Finding {
     pub fn action(&self) -> Option<Action> {
         self.refusal.is_none().then_some(match self.contract {
             ExecutionContract::ModelOnly => Action::MoveToTrash,
-            ExecutionContract::RevalidatedTrashV1 | ExecutionContract::RevalidatedBundleTrashV1 => {
-                Action::RevalidatedMoveToTrash
-            }
+            ExecutionContract::RevalidatedTrashV1
+            | ExecutionContract::RevalidatedBundleTrashV1
+            | ExecutionContract::RevalidatedPurgeTrashV1 => Action::RevalidatedMoveToTrash,
         })
     }
 }
@@ -498,9 +504,9 @@ impl PlanItem {
     pub fn action(&self) -> Action {
         match self.contract {
             ExecutionContract::ModelOnly => Action::MoveToTrash,
-            ExecutionContract::RevalidatedTrashV1 | ExecutionContract::RevalidatedBundleTrashV1 => {
-                Action::RevalidatedMoveToTrash
-            }
+            ExecutionContract::RevalidatedTrashV1
+            | ExecutionContract::RevalidatedBundleTrashV1
+            | ExecutionContract::RevalidatedPurgeTrashV1 => Action::RevalidatedMoveToTrash,
         }
     }
     pub fn reason(&self) -> FindingReason {
@@ -643,6 +649,7 @@ impl Plan {
         match self.contract {
             ExecutionContract::ModelOnly => 1,
             ExecutionContract::RevalidatedBundleTrashV1 => 4,
+            ExecutionContract::RevalidatedPurgeTrashV1 => 5,
             ExecutionContract::RevalidatedTrashV1 => {
                 if self.items.iter().any(|item| item.rule_binding.is_some()) {
                     3

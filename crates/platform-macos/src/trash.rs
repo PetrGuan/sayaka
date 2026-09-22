@@ -397,6 +397,93 @@ impl BundleTrashCandidate {
     }
 }
 
+/// Sealed Trash candidate for one marker-bound project artifact directory
+/// (T8 purge). The artifact moves as one container; its marker files are
+/// captured as revalidation evidence and are never targets. Admission,
+/// ancestry, protection and volume rules are the ordinary-candidate rules
+/// without a bundle-name requirement.
+pub struct PurgeTrashCandidate {
+    #[cfg(target_os = "macos")]
+    native: native::Candidate,
+    #[cfg(not(target_os = "macos"))]
+    unavailable: std::convert::Infallible,
+}
+
+impl PurgeTrashCandidate {
+    /// Captures an artifact directory with its sealed marker files:
+    /// ordinary user-owned directory strictly beneath the explicit scope on
+    /// the same supported volume; every marker an ordinary user-owned
+    /// regular file beneath the scope, distinct from the artifact. Links
+    /// and dataless objects are refused.
+    pub fn capture(
+        scope: &Path,
+        path: &Path,
+        purge_markers: &[PathBuf],
+        protected: &[PathBuf],
+    ) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            native::Candidate::capture_purge_diagnostic(scope, path, purge_markers, protected)
+                .map(|native| Self { native })
+                .map_err(NativeCaptureFailure::into_legacy_error)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (scope, path, purge_markers, protected);
+            Err(unsupported())
+        }
+    }
+
+    pub fn info(&self) -> &NativeFileInfo {
+        #[cfg(target_os = "macos")]
+        {
+            &self.native.info
+        }
+        #[cfg(not(target_os = "macos"))]
+        match self.unavailable {}
+    }
+
+    pub fn path(&self) -> &Path {
+        #[cfg(target_os = "macos")]
+        {
+            &self.native.path
+        }
+        #[cfg(not(target_os = "macos"))]
+        match self.unavailable {}
+    }
+
+    pub fn revalidate(&self) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.revalidate()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(unsupported())
+        }
+    }
+
+    /// Same single-attempt contract as ordinary candidates: durable intent
+    /// first, cancellation evaluated once before the sole Foundation call,
+    /// never submitted twice.
+    pub fn move_to_trash_with_last_guard(
+        &self,
+        cancelled: impl FnOnce() -> bool,
+        last_guard: impl FnOnce() -> NativeLastGuard,
+    ) -> NativeTrashOutcome {
+        #[cfg(target_os = "macos")]
+        {
+            self.native
+                .move_to_trash_with_last_guard(cancelled, last_guard)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (cancelled, last_guard);
+            NativeTrashOutcome::Refused(unsupported().to_string())
+        }
+    }
+}
+
 /// Requests Darwin F_FULLFSYNC, with no fsync-only durability fallback.
 pub fn full_sync(file: &std::fs::File) -> io::Result<()> {
     #[cfg(target_os = "macos")]

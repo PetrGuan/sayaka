@@ -566,6 +566,29 @@ impl CaptureStage {
     }
 }
 
+/// Target object shapes admitted by the candidate pipeline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetShape {
+    File,
+    /// Sealed `.app` bundle directory (T9 uninstall).
+    Bundle,
+    /// Sealed marker-bound project artifact directory (T8 purge).
+    PurgeArtifact,
+}
+
+impl TargetShape {
+    fn is_directory(self) -> bool {
+        !matches!(self, Self::File)
+    }
+}
+
+/// The admitted target shape plus its shape-specific sealed evidence.
+#[derive(Clone, Copy)]
+struct TargetSpec<'a> {
+    shape: TargetShape,
+    purge_markers: &'a [PathBuf],
+}
+
 pub(super) struct Candidate {
     pub(super) info: NativeFileInfo,
     pub(super) path: PathBuf,
@@ -577,12 +600,15 @@ pub(super) struct Candidate {
     target_marker: Option<NativeTargetMarker>,
     protections: Vec<Evidence>,
     volume: VolumeInfo,
-    /// The target is a sealed `.app` bundle directory (T9 uninstall); all
-    /// file-only admission/destination checks take their directory variants.
-    bundle: bool,
+    /// The admitted target shape; file-only admission/destination checks
+    /// take their directory variants for directory shapes.
+    shape: TargetShape,
     /// Captured Contents/Info.plist identity (device, inode), revalidated
     /// with the bundle and verified again at the destination.
     bundle_manifest: Option<(u64, u64)>,
+    /// Sealed purge marker files (T8): regular files whose identity is
+    /// revalidated with the artifact; never targets themselves.
+    purge_markers: Vec<Evidence>,
     attempted: AtomicBool,
     rule_binding_witness: Option<NativeRuleBindingWitness>,
 }
@@ -593,7 +619,7 @@ impl Candidate {
         path: &Path,
         protected: &[PathBuf],
     ) -> Result<Self, NativeCaptureFailure> {
-        Self::capture_diagnostic_mode(scope, path, protected, false)
+        Self::capture_diagnostic_mode(scope, path, &[], protected, TargetShape::File)
     }
 
     /// Bundle-directory capture (T9 uninstall): the target is a sealed `.app`
@@ -603,14 +629,33 @@ impl Candidate {
         path: &Path,
         protected: &[PathBuf],
     ) -> Result<Self, NativeCaptureFailure> {
-        Self::capture_diagnostic_mode(scope, path, protected, true)
+        Self::capture_diagnostic_mode(scope, path, &[], protected, TargetShape::Bundle)
+    }
+
+    /// Purge-artifact capture (T8): the target is a sealed marker-bound
+    /// project artifact directory; the marker files are captured as
+    /// revalidation evidence and are never targets.
+    pub(super) fn capture_purge_diagnostic(
+        scope: &Path,
+        path: &Path,
+        purge_markers: &[PathBuf],
+        protected: &[PathBuf],
+    ) -> Result<Self, NativeCaptureFailure> {
+        Self::capture_diagnostic_mode(
+            scope,
+            path,
+            purge_markers,
+            protected,
+            TargetShape::PurgeArtifact,
+        )
     }
 
     fn capture_diagnostic_mode(
         scope: &Path,
         path: &Path,
+        purge_markers: &[PathBuf],
         protected: &[PathBuf],
-        bundle: bool,
+        shape: TargetShape,
     ) -> Result<Self, NativeCaptureFailure> {
         let policy = ReadOnlyPolicy::enter().map_err(|error| NativeCaptureFailure {
             phase: "policy",
@@ -619,7 +664,11 @@ impl Candidate {
             restoration_error: None,
         })?;
         let mut stage = CaptureStage::new();
-        let result = Self::capture_inner(scope, path, None, None, protected, bundle, &mut stage);
+        let spec = TargetSpec {
+            shape,
+            purge_markers,
+        };
+        let result = Self::capture_inner(scope, path, None, None, spec, protected, &mut stage);
         match (result, policy.restore()) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(error), Ok(())) => Err(NativeCaptureFailure {
@@ -656,8 +705,11 @@ impl Candidate {
                 target,
                 Some(source),
                 marker,
+                TargetSpec {
+                    shape: TargetShape::File,
+                    purge_markers: &[],
+                },
                 protected,
-                false,
                 &mut CaptureStage::new(),
             )
         })
@@ -668,10 +720,12 @@ impl Candidate {
         path: &Path,
         source_path: Option<&Path>,
         marker: Option<NativeTargetMarker>,
+        spec: TargetSpec<'_>,
         protected: &[PathBuf],
-        bundle: bool,
         stage: &mut CaptureStage,
     ) -> io::Result<Self> {
+        let shape = spec.shape;
+        let purge_markers = spec.purge_markers;
         stage.operation = "ordinary_authority";
         let uid = ordinary_authority()?;
         stage.operation = "scope_validation";
@@ -698,21 +752,37 @@ impl Candidate {
         }
         stage.phase = "target";
         let target = Evidence::open_observed(path, Binding::FullTarget, &mut stage.operation)?;
-        if bundle {
-            stage.operation = "bundle_admission";
-            admissible_bundle_target(&target.stamp, uid, path)?;
-            stage.operation = "bundle_manifest";
-        } else {
-            stage.operation = "file_admission";
-            admissible_file(&target.stamp, uid)?;
+        match shape {
+            TargetShape::Bundle => {
+                stage.operation = "bundle_admission";
+                admissible_bundle_target(&target.stamp, uid, path)?;
+                stage.operation = "bundle_manifest";
+            }
+            TargetShape::PurgeArtifact => {
+                stage.operation = "purge_admission";
+                admissible_purge_target(&target.stamp, uid)?;
+            }
+            TargetShape::File => {
+                stage.operation = "file_admission";
+                admissible_file(&target.stamp, uid)?;
+            }
         }
-        let bundle_manifest = if bundle {
+        let bundle_manifest = if shape == TargetShape::Bundle {
             Some(bundle_manifest_identity(path)?)
         } else {
             None
         };
         stage.operation = "cloud_attributes";
         reject_cloud_attributes(&target.file)?;
+        stage.phase = "purge_marker";
+        let purge_marker_evidence = Self::capture_purge_markers(
+            scope,
+            path,
+            purge_markers,
+            shape,
+            uid,
+            &mut stage.operation,
+        )?;
         stage.phase = "source";
         stage.operation = "source_capture";
         let source = if let Some(source_path) = source_path {
@@ -789,8 +859,9 @@ impl Candidate {
             target_marker: marker,
             protections,
             volume,
-            bundle,
+            shape,
             bundle_manifest,
+            purge_markers: purge_marker_evidence,
             attempted: AtomicBool::new(false),
             rule_binding_witness: None,
         };
@@ -801,6 +872,50 @@ impl Candidate {
         stage.operation = "rule_binding_witness";
         candidate.rule_binding_witness = candidate.build_rule_binding_witness()?;
         Ok(candidate)
+    }
+
+    /// Captures the sealed purge markers: each must be a regular user-owned
+    /// file strictly beneath the scope, distinct from the artifact. Only a
+    /// purge artifact carries markers; any other shape must carry none.
+    fn capture_purge_markers(
+        scope: &Path,
+        path: &Path,
+        purge_markers: &[PathBuf],
+        shape: TargetShape,
+        uid: u32,
+        operation: &mut &'static str,
+    ) -> io::Result<Vec<Evidence>> {
+        if shape != TargetShape::PurgeArtifact {
+            if !purge_markers.is_empty() {
+                return Err(refused("purge markers require a purge artifact target"));
+            }
+            return Ok(Vec::new());
+        }
+        if purge_markers.is_empty() || purge_markers.len() > 4 {
+            return Err(refused("a purge artifact carries between 1 and 4 markers"));
+        }
+        let mut evidence = Vec::with_capacity(purge_markers.len());
+        for marker_path in purge_markers {
+            *operation = "purge_marker_path";
+            valid_path(marker_path)?;
+            if marker_path == path || !marker_path.starts_with(scope) {
+                return Err(refused(
+                    "purge marker must be strictly beneath the scope and distinct from the target",
+                ));
+            }
+            *operation = "purge_marker_capture";
+            let marker = Evidence::open_observed(marker_path, Binding::Safety, operation)?;
+            *operation = "purge_marker_admission";
+            admissible_purge_marker(&marker.stamp, uid)?;
+            if evidence
+                .iter()
+                .any(|m: &Evidence| m.stamp.identity() == marker.stamp.identity())
+            {
+                return Err(refused("purge markers must be distinct files"));
+            }
+            evidence.push(marker);
+        }
+        Ok(evidence)
     }
 
     pub(super) fn rule_binding_witness(&self) -> Option<&NativeRuleBindingWitness> {
@@ -867,16 +982,26 @@ impl Candidate {
             reject_package(ancestor)?;
         }
         self.target.revalidate()?;
-        if self.bundle {
-            admissible_bundle_target(&self.target.stamp, self.uid, &self.path)?;
-            let manifest = self
-                .bundle_manifest
-                .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
-            if bundle_manifest_identity(&self.path)? != manifest {
-                return Err(refused("Contents/Info.plist identity changed"));
+        match self.shape {
+            TargetShape::Bundle => {
+                admissible_bundle_target(&self.target.stamp, self.uid, &self.path)?;
+                let manifest = self
+                    .bundle_manifest
+                    .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
+                if bundle_manifest_identity(&self.path)? != manifest {
+                    return Err(refused("Contents/Info.plist identity changed"));
+                }
             }
-        } else {
-            admissible_file(&self.target.stamp, self.uid)?;
+            TargetShape::PurgeArtifact => {
+                admissible_purge_target(&self.target.stamp, self.uid)?;
+                for marker in &self.purge_markers {
+                    marker.revalidate()?;
+                    admissible_purge_marker(&marker.stamp, self.uid)?;
+                }
+            }
+            TargetShape::File => {
+                admissible_file(&self.target.stamp, self.uid)?;
+            }
         }
         reject_cloud_attributes(&self.target.file)?;
         if let Some(source) = &self.source {
@@ -942,7 +1067,7 @@ impl Candidate {
             // The bundle target's own `.app` name is the intended target, not
             // a protected package; its parent chain keeps full protection, so
             // nested bundles and protected locations stay refused.
-            let checked = if self.bundle
+            let checked = if self.shape == TargetShape::Bundle
                 && (path == &self.path || path == &self.target.physical)
                 && let Some(parent) = path.parent()
             {
@@ -1112,18 +1237,24 @@ impl Candidate {
                 "returned destination identity does not match the retained original",
             ));
         }
-        if self.bundle {
-            admissible_moved_bundle(&stamp, self.uid)?;
-            let manifest = self
-                .bundle_manifest
-                .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
-            if bundle_manifest_identity(destination)? != manifest {
-                return Err(refused(
-                    "destination Contents/Info.plist identity does not match the sealed original",
-                ));
+        match self.shape {
+            TargetShape::Bundle => {
+                admissible_moved_bundle(&stamp, self.uid)?;
+                let manifest = self
+                    .bundle_manifest
+                    .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
+                if bundle_manifest_identity(destination)? != manifest {
+                    return Err(refused(
+                        "destination Contents/Info.plist identity does not match the sealed original",
+                    ));
+                }
             }
-        } else {
-            admissible_file(&stamp, self.uid)?;
+            TargetShape::PurgeArtifact => {
+                admissible_moved_bundle(&stamp, self.uid)?;
+            }
+            TargetShape::File => {
+                admissible_file(&stamp, self.uid)?;
+            }
         }
         reject_destination_attributes(&file)?;
         let mut result = Evidence::complete(destination, Binding::PostMoveTarget, file, stamp)?;
@@ -1134,7 +1265,7 @@ impl Candidate {
                 "retained source identity changed after reported move",
             ));
         }
-        if self.bundle {
+        if self.shape.is_directory() {
             admissible_moved_bundle(&held, self.uid)?;
         } else {
             admissible_file(&held, self.uid)?;
@@ -1429,6 +1560,37 @@ fn admissible_moved_bundle(stamp: &Stamp, uid: u32) -> io::Result<()> {
     {
         return Err(refused(
             "returned destination is not an ordinary user-owned bundle directory",
+        ));
+    }
+    Ok(())
+}
+
+/// A purge artifact directory: the bundle admission without the `.app`
+/// name rule; the marker binding is sealed separately.
+fn admissible_purge_target(stamp: &Stamp, uid: u32) -> io::Result<()> {
+    if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
+        || stamp.mode & 0o7022 != 0
+        || stamp.uid != uid
+        || stamp.flags & !ORDINARY_FLAGS != 0
+        || stamp.inode == 0
+    {
+        return Err(refused(
+            "requires an ordinary user-owned unprotected artifact directory",
+        ));
+    }
+    Ok(())
+}
+
+/// A purge marker is an ordinary user-owned regular file; it is evidence,
+/// never a target, and its identity is sealed at capture.
+fn admissible_purge_marker(stamp: &Stamp, uid: u32) -> io::Result<()> {
+    if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFREG)
+        || stamp.uid != uid
+        || stamp.flags & !ORDINARY_FLAGS != 0
+        || stamp.inode == 0
+    {
+        return Err(refused(
+            "purge marker must be an ordinary user-owned regular file",
         ));
     }
     Ok(())

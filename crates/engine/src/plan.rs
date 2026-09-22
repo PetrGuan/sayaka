@@ -364,6 +364,12 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
     }
 
     #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn for_revalidated_purge_trash(mut self) -> Self {
+        self.contract = ExecutionContract::RevalidatedPurgeTrashV1;
+        self
+    }
+
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn stop_reason(
         &mut self,
         plan: &Plan,
@@ -458,7 +464,10 @@ impl<C: Clock, I: IdSource> Planner<C, I> {
             // Only a sealed bundle candidate from the uninstall session may
             // execute against a directory; everything else keeps the
             // ordinary-file requirement.
-            ExecutionContract::RevalidatedBundleTrashV1 => snapshot.kind == ResourceKind::Directory,
+            ExecutionContract::RevalidatedBundleTrashV1
+            | ExecutionContract::RevalidatedPurgeTrashV1 => {
+                snapshot.kind == ResourceKind::Directory
+            }
             _ => snapshot.kind == ResourceKind::File,
         };
         if !kind_accepted {

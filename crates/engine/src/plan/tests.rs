@@ -297,6 +297,28 @@ fn sealing_rule_bindings_updates_prepared_plan_identity() {
 }
 
 #[test]
+fn purge_contract_accepts_directories_and_refuses_other_kinds() {
+    let (planner, mut probe, _) = setup();
+    let mut planner = planner.for_revalidated_purge_trash();
+    let mut directory = snapshot(1);
+    directory.kind = ResourceKind::Directory;
+    let finding = discover(&mut planner, &mut probe, "target", directory);
+    assert_eq!(finding.refusal(), None);
+    let plan = prepare(&mut planner, &[finding.observation().id()]);
+    assert_eq!(plan.schema_version(), 5);
+    assert_eq!(plan.items().len(), 1);
+    for (index, kind) in [ResourceKind::File, ResourceKind::Link, ResourceKind::Other]
+        .into_iter()
+        .enumerate()
+    {
+        let mut state = snapshot(index as u64 + 2);
+        state.kind = kind;
+        let finding = discover(&mut planner, &mut probe, &format!("other{index}"), state);
+        assert_eq!(finding.refusal(), Some(ReasonCode::UnsupportedResource));
+    }
+}
+
+#[test]
 fn invalid_paths_and_scope_boundaries_fail_before_probe() {
     for path in [PathBuf::new(), PathBuf::from("relative"), root().join("..")] {
         assert_code(Scope::new(path, vec![]), ReasonCode::InvalidScope);
