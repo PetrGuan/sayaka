@@ -276,23 +276,24 @@ impl Record {
         let legacy = self.schema_version == LEGACY_SCHEMA_VERSION
             && self.plan_schema_version == LEGACY_PLAN_SCHEMA_VERSION
             && self.engine_version == LEGACY_ENGINE_VERSION
-            && self.rules_version == LEGACY_RULES_VERSION;
+            && self.rules_version == LEGACY_RULES_VERSION
+            && self.contract == "revalidated_trash_v1";
         let rule_bound = self.schema_version == SCHEMA_VERSION
             && self.plan_schema_version == RULE_BOUND_PLAN_SCHEMA_VERSION
             && self.engine_version == RULE_BOUND_ENGINE_VERSION
-            && self.rules_version == RULE_BOUND_RULES_VERSION;
+            && self.rules_version == RULE_BOUND_RULES_VERSION
+            && self.contract == "revalidated_trash_v1";
         let clean = self.schema_version == CLEAN_SCHEMA_VERSION
             && self.plan_schema_version == CLEAN_PLAN_SCHEMA_VERSION
             && self.engine_version == CLEAN_ENGINE_VERSION
-            && self.rules_version == CLEAN_RULES_VERSION;
+            && self.rules_version == CLEAN_RULES_VERSION
+            && self.contract == "revalidated_trash_v1";
         let bundle = self.schema_version == BUNDLE_SCHEMA_VERSION
             && self.plan_schema_version == BUNDLE_PLAN_SCHEMA_VERSION
             && self.engine_version == BUNDLE_ENGINE_VERSION
             && self.rules_version == BUNDLE_RULES_VERSION
             && self.contract == "revalidated_bundle_trash_v1";
         if !(legacy || rule_bound || clean || bundle)
-            || !(self.contract == "revalidated_trash_v1"
-                || self.contract == "revalidated_bundle_trash_v1")
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
             || self.items.len() > MAX_ITEMS

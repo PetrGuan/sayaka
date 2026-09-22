@@ -580,6 +580,9 @@ pub(super) struct Candidate {
     /// The target is a sealed `.app` bundle directory (T9 uninstall); all
     /// file-only admission/destination checks take their directory variants.
     bundle: bool,
+    /// Captured Contents/Info.plist identity (device, inode), revalidated
+    /// with the bundle and verified again at the destination.
+    bundle_manifest: Option<(u64, u64)>,
     attempted: AtomicBool,
     rule_binding_witness: Option<NativeRuleBindingWitness>,
 }
@@ -699,11 +702,15 @@ impl Candidate {
             stage.operation = "bundle_admission";
             admissible_bundle_target(&target.stamp, uid, path)?;
             stage.operation = "bundle_manifest";
-            bundle_manifest_is_regular(path)?;
         } else {
             stage.operation = "file_admission";
             admissible_file(&target.stamp, uid)?;
         }
+        let bundle_manifest = if bundle {
+            Some(bundle_manifest_identity(path)?)
+        } else {
+            None
+        };
         stage.operation = "cloud_attributes";
         reject_cloud_attributes(&target.file)?;
         stage.phase = "source";
@@ -783,6 +790,7 @@ impl Candidate {
             protections,
             volume,
             bundle,
+            bundle_manifest,
             attempted: AtomicBool::new(false),
             rule_binding_witness: None,
         };
@@ -861,6 +869,12 @@ impl Candidate {
         self.target.revalidate()?;
         if self.bundle {
             admissible_bundle_target(&self.target.stamp, self.uid, &self.path)?;
+            let manifest = self
+                .bundle_manifest
+                .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
+            if bundle_manifest_identity(&self.path)? != manifest {
+                return Err(refused("Contents/Info.plist identity changed"));
+            }
         } else {
             admissible_file(&self.target.stamp, self.uid)?;
         }
@@ -1100,6 +1114,14 @@ impl Candidate {
         }
         if self.bundle {
             admissible_moved_bundle(&stamp, self.uid)?;
+            let manifest = self
+                .bundle_manifest
+                .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
+            if bundle_manifest_identity(destination)? != manifest {
+                return Err(refused(
+                    "destination Contents/Info.plist identity does not match the sealed original",
+                ));
+            }
         } else {
             admissible_file(&stamp, self.uid)?;
         }
@@ -1412,10 +1434,11 @@ fn admissible_moved_bundle(stamp: &Stamp, uid: u32) -> io::Result<()> {
     Ok(())
 }
 
-/// The bundle must carry a regular-file Contents/Info.plist. This pathname
-/// query sits inside the module's documented check/use disclosure; the bundle
-/// identity itself is pinned and revalidated separately.
-fn bundle_manifest_is_regular(bundle: &Path) -> io::Result<()> {
+/// The bundle must carry a regular-file Contents/Info.plist, and its
+/// (device, inode) identity is sealed at capture. This pathname query sits
+/// inside the module's documented check/use disclosure; the bundle identity
+/// itself is pinned and revalidated separately.
+fn bundle_manifest_identity(bundle: &Path) -> io::Result<(u64, u64)> {
     let plist = bundle.join("Contents").join("Info.plist");
     let metadata = fs::symlink_metadata(&plist).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -1429,7 +1452,7 @@ fn bundle_manifest_is_regular(bundle: &Path) -> io::Result<()> {
             "Contents/Info.plist is not a regular file (links are not followed)",
         ));
     }
-    Ok(())
+    Ok((metadata.dev(), metadata.ino()))
 }
 
 fn reject_package(evidence: &Evidence) -> io::Result<()> {

@@ -74,7 +74,7 @@ fn bundle_session_prepares_sealed_directory_plan_without_effect() {
 }
 
 #[test]
-fn bundle_contract_rejects_file_targets_and_running_bundles_stay_refused() {
+fn bundle_contract_rejects_file_targets() {
     let fixture = FixtureDir::new();
     let file = fixture.0.join("ordinary.txt");
     fs::write(&file, b"x").expect("file");

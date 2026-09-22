@@ -1691,3 +1691,29 @@ fn bundle_capture_rejects_files_unsuffixed_dirs_and_missing_manifests() {
     assert!(BundleTrashCandidate::capture(&fixture.root, &no_manifest, &[]).is_err());
     fixture.finish();
 }
+
+#[test]
+fn bundle_manifest_identity_change_after_capture_is_refused() {
+    let mut fixture = Fixture::new();
+    let app = fixture.directory("Fixture.app");
+    fixture.directory("Fixture.app/Contents");
+    fixture.directory("Fixture.app/Contents/MacOS");
+    fixture.file("Fixture.app/Contents/Info.plist", b"one");
+    let candidate = BundleTrashCandidate::capture(&fixture.root, &app, &[]).unwrap();
+    // Same-path content swap keeps the inode here; replace with a rename to
+    // force an identity change.
+    let swapped = app.join("Contents/Info.plist.tmp");
+    fs::write(&swapped, b"two").unwrap();
+    fs::rename(&swapped, app.join("Contents/Info.plist")).unwrap();
+    assert!(candidate.revalidate().is_err());
+    // Re-register the swapped identity so verified fixture cleanup accepts it.
+    let plist = app.join("Contents/Info.plist");
+    let identity = Stamp::read(&fs::symlink_metadata(&plist).unwrap()).identity();
+    for object in fixture.objects.iter_mut() {
+        if object.0 == plist {
+            object.1 = identity;
+        }
+    }
+    drop(candidate);
+    fixture.finish();
+}
