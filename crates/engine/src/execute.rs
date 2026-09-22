@@ -30,6 +30,16 @@ pub struct SelectionRefusal {
     pub reason: String,
 }
 
+/// One sealed purge selection: an artifact directory, its project root and
+/// the binding marker files, exactly as named by the same invocation's
+/// purge preview. Markers are revalidation evidence, never targets.
+#[derive(Clone, Debug)]
+pub struct PurgeSelection {
+    pub artifact: PathBuf,
+    pub project_root: PathBuf,
+    pub markers: Vec<PathBuf>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExecutionReport {
     pub record: Record,
@@ -152,7 +162,9 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
     ) -> io::Result<ExecutionReport> {
         if !matches!(
             preview.execution_contract(),
-            ExecutionContract::RevalidatedTrashV1 | ExecutionContract::RevalidatedBundleTrashV1
+            ExecutionContract::RevalidatedTrashV1
+                | ExecutionContract::RevalidatedBundleTrashV1
+                | ExecutionContract::RevalidatedPurgeTrashV1
         ) {
             return Err(journal::invalid(
                 "model-only approval cannot authorize native execution",
@@ -255,6 +267,8 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
         let clean_profile = clean_policy.is_some();
         let schema_version = if clean_profile {
             3
+        } else if preview.schema_version() == 5 {
+            journal::PURGE_SCHEMA_VERSION
         } else if preview.schema_version() == 4 {
             journal::BUNDLE_SCHEMA_VERSION
         } else if preview.schema_version() == 3 {
@@ -462,7 +476,9 @@ impl GuardPoint {
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{BundleUninstallSession, CleanSession, InstallerSession, TrashSession};
+pub use macos::{
+    BundleUninstallSession, CleanSession, InstallerSession, PurgeSession, TrashSession,
+};
 
 #[cfg(not(target_os = "macos"))]
 pub struct BundleUninstallSession {
@@ -475,6 +491,42 @@ impl BundleUninstallSession {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "bundle uninstall is macOS-only",
+        ))
+    }
+    pub fn preview(&self) -> &Plan {
+        match self.unavailable {}
+    }
+    pub fn issues(&self) -> &[SelectionIssue] {
+        match self.unavailable {}
+    }
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        match self.unavailable {}
+    }
+    pub fn approve(&mut self, _: &Plan) -> Result<Approval, Error> {
+        match self.unavailable {}
+    }
+    pub fn execute(
+        &mut self,
+        _: &Plan,
+        _: &Approval,
+        _: &Cancellation,
+        _: &Store,
+    ) -> io::Result<ExecutionReport> {
+        match self.unavailable {}
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub struct PurgeSession {
+    unavailable: std::convert::Infallible,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl PurgeSession {
+    pub fn prepare(_: &[PurgeSelection], _: &Cancellation) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "purge execution is macOS-only",
         ))
     }
     pub fn preview(&self) -> &Plan {

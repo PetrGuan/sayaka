@@ -5,10 +5,11 @@ use crate::app_inventory::RunningObservation;
 use crate::app_uninstall;
 use crate::clean_policy::{self, ConfigPath, PolicyFileState, PolicyGuardStatus, PolicySnapshot};
 use crate::journal::{CleanPolicyContextRecord, CleanPolicyIdentityRecord, CleanPolicyPathRecord};
+use crate::purge_preview::ProjectMarker;
 use crate::rules;
 use sayaka_platform_macos::{
     BundleTrashCandidate, NativeFileInfo, NativeLastGuard, NativeRuleBindingWitness,
-    NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo, TrashCandidate,
+    NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo, PurgeTrashCandidate, TrashCandidate,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -711,6 +712,338 @@ impl BundleUninstallSession {
             Some(&mut guard),
         )
     }
+}
+
+/// Explicit Trash session for sealed marker-bound project artifacts (T8
+/// purge). Every item moves as one container under its own candidate; the
+/// marker files are revalidation evidence and are never targets.
+pub struct PurgeSession {
+    inner: Session<PurgePlatform>,
+    selections: Vec<PurgeSelection>,
+    discovered: Vec<(ResourceId, PathBuf)>,
+}
+
+struct PurgePlatform {
+    markers: HashMap<PathBuf, Vec<PathBuf>>,
+    candidates: HashMap<PathBuf, PurgeTrashCandidate>,
+    issues: Vec<SelectionIssue>,
+}
+
+impl Probe for PurgePlatform {
+    fn inspect(&mut self, scope: &Scope, path: &Path) -> Result<Snapshot, ProbeError> {
+        if let Some(candidate) = self.candidates.get(path) {
+            candidate
+                .revalidate()
+                .map_err(|error| ProbeError::Other(error.to_string()))?;
+        } else {
+            let markers = self.markers.get(path).cloned().unwrap_or_default();
+            match PurgeTrashCandidate::capture(
+                scope.root(),
+                path,
+                &markers,
+                scope.protected_paths(),
+            ) {
+                Ok(candidate) => {
+                    self.candidates.insert(path.to_owned(), candidate);
+                }
+                Err(error) => {
+                    self.issues.push(SelectionIssue {
+                        path: NativePath::from_path(path),
+                        message: error.to_string(),
+                        os_code: error.raw_os_error(),
+                        native_phase: None,
+                        native_operation: None,
+                    });
+                    return Ok(Snapshot {
+                        identity: None,
+                        kind: ResourceKind::Other,
+                        logical_bytes: None,
+                        modified_at: None,
+                        complete: false,
+                        boundary: Boundary::Unknown,
+                        protection: Protection::Unknown,
+                        trash: Capability::Unsupported,
+                        owner: OwnerState::Unknown,
+                    });
+                }
+            }
+        }
+        let info = self
+            .candidates
+            .get(path)
+            .ok_or_else(|| ProbeError::Other("native candidate was not retained".into()))?
+            .info();
+        Ok(Snapshot {
+            identity: Some(FileIdentity::Unix {
+                device: info.device,
+                inode: info.inode,
+            }),
+            kind: ResourceKind::Directory,
+            // The directory's own inode bytes, not a subtree total.
+            logical_bytes: Some(info.logical_bytes),
+            modified_at: Some(info.modified_at),
+            complete: true,
+            boundary: Boundary::Verified,
+            protection: Protection::Clear,
+            trash: Capability::Available,
+            // An artifact directory has no running-owner concept; the
+            // disclosed running-build limitation lives in the contract.
+            owner: OwnerState::NotApplicable,
+        })
+    }
+}
+
+impl Platform for PurgePlatform {
+    fn effect(
+        &mut self,
+        path: &Path,
+        stop: &mut dyn FnMut() -> bool,
+        guard: &mut dyn FnMut() -> GuardDecision,
+    ) -> Effect {
+        let Some(candidate) = self.candidates.get(path) else {
+            return Effect::Refused("native purge candidate unavailable".into());
+        };
+        match candidate.move_to_trash_with_last_guard(stop, || match guard() {
+            GuardDecision::Proceed => NativeLastGuard::Proceed,
+            GuardDecision::Refused(reason) => NativeLastGuard::PolicyRefused(reason),
+        }) {
+            NativeTrashOutcome::Moved { destination } => Effect::Moved(destination),
+            NativeTrashOutcome::Refused(message) => Effect::Refused(message),
+            NativeTrashOutcome::Failed(message) => Effect::Failed(message),
+            NativeTrashOutcome::Unknown { message, evidence } => Effect::Unknown {
+                message,
+                evidence: Some(Box::new(journal::RecoveryEvidence {
+                    approved: file_evidence(&evidence.approved),
+                    returned_destination: evidence
+                        .returned_destination
+                        .as_deref()
+                        .map(NativePath::from_path),
+                    held_source: evidence.held_source.as_ref().map(file_evidence),
+                    held_source_path: evidence
+                        .held_source_path
+                        .as_deref()
+                        .map(NativePath::from_path),
+                    observation_errors: evidence.observation_errors,
+                })),
+            },
+        }
+    }
+}
+
+impl PurgeSession {
+    /// Prepares a sealed multi-item plan for the explicitly selected
+    /// artifacts. The scope is the selections' deepest common ancestor; the
+    /// per-item candidates carry the full ancestry protection chain.
+    pub fn prepare(selections: &[PurgeSelection], cancellation: &Cancellation) -> io::Result<Self> {
+        if selections.is_empty() || selections.len() > journal::MAX_ITEMS {
+            return Err(journal::invalid(
+                "select between 1 and 32 explicit artifact directories",
+            ));
+        }
+        for selection in selections {
+            if !crate::model::valid_absolute_path(&selection.artifact)
+                || !crate::model::valid_absolute_path(&selection.project_root)
+            {
+                return Err(journal::invalid(
+                    "artifacts and project roots must be absolute native paths without traversal",
+                ));
+            }
+            if selection.artifact.parent() != Some(selection.project_root.as_path()) {
+                return Err(journal::invalid(
+                    "an artifact must be a direct child of its project root",
+                ));
+            }
+            if selection.markers.is_empty() || selection.markers.len() > 4 {
+                return Err(journal::invalid(
+                    "an artifact carries between 1 and 4 binding markers",
+                ));
+            }
+            for marker in &selection.markers {
+                if !crate::model::valid_absolute_path(marker)
+                    || marker.parent() != Some(selection.project_root.as_path())
+                {
+                    return Err(journal::invalid(
+                        "markers must be files directly at the project root",
+                    ));
+                }
+            }
+        }
+        // Scope over the project roots: every artifact is a strict child of
+        // its project root, so even a single-item selection keeps the
+        // target strictly beneath the scope (the native admission rule).
+        let scope_root = common_ancestor(
+            &selections
+                .iter()
+                .map(|selection| selection.project_root.clone())
+                .collect::<Vec<_>>(),
+        )
+        .ok_or_else(|| journal::invalid("selections share no common ancestor"))?;
+        let mut planner = Planner::new(
+            Scope::new(scope_root, vec![]).map_err(model_error)?,
+            Versions {
+                engine: 2,
+                rules: 1,
+            },
+        )
+        .map_err(model_error)?
+        .for_revalidated_purge_trash();
+        let mut platform = PurgePlatform {
+            markers: selections
+                .iter()
+                .map(|selection| (selection.artifact.clone(), selection.markers.clone()))
+                .collect(),
+            candidates: HashMap::new(),
+            issues: Vec::new(),
+        };
+        if cancellation.is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "cancelled during preview",
+            ));
+        }
+        let mut ids = Vec::with_capacity(selections.len());
+        let mut discovered = Vec::with_capacity(selections.len());
+        for selection in selections {
+            let finding = planner
+                .discover(&selection.artifact, &mut platform)
+                .map_err(model_error)?;
+            let id = finding.observation().id();
+            ids.push(id);
+            discovered.push((id, selection.artifact.clone()));
+        }
+        let preview = planner
+            .prepare(&ids, &[], Duration::from_secs(120))
+            .map_err(model_error)?;
+        Ok(Self {
+            inner: Session {
+                planner,
+                platform,
+                preview,
+            },
+            selections: selections.to_vec(),
+            discovered,
+        })
+    }
+
+    pub fn preview(&self) -> &Plan {
+        &self.inner.preview
+    }
+
+    pub fn issues(&self) -> &[SelectionIssue] {
+        &self.inner.platform.issues
+    }
+
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        self.inner
+            .preview
+            .rejected()
+            .iter()
+            .map(|item| {
+                let path = self
+                    .discovered
+                    .iter()
+                    .find(|(id, _)| *id == item.resource)
+                    .map(|(_, path)| NativePath::from_path(path));
+                SelectionRefusal {
+                    path: path.unwrap_or_else(|| NativePath::from_path(Path::new("(unknown)"))),
+                    reason: item.code.as_str().into(),
+                }
+            })
+            .collect()
+    }
+
+    /// Approval re-validates every candidate (identity, ancestry, markers)
+    /// and re-evaluates the nesting exclusion against the live filesystem;
+    /// any change refuses approval, never substitutes the new state.
+    pub fn approve(&mut self, preview: &Plan) -> Result<Approval, Error> {
+        for selection in &self.selections {
+            if purge_nesting_observed(&selection.artifact) {
+                return Err(Error::new(ReasonCode::ResourceChanged));
+            }
+            let candidate = self
+                .inner
+                .platform
+                .candidates
+                .get(&selection.artifact)
+                .ok_or(Error::new(ReasonCode::ProbeFailed))?;
+            candidate
+                .revalidate()
+                .map_err(|_| Error::new(ReasonCode::ResourceChanged))?;
+        }
+        self.inner.planner.approve(preview)
+    }
+
+    pub fn execute(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+    ) -> io::Result<ExecutionReport> {
+        let mut guard = move |point: GuardPoint, path: &Path| -> io::Result<GuardDecision> {
+            // Last native guard per item: re-evaluate nesting immediately
+            // before its sole Foundation call. Identity, marker and
+            // ancestry revalidation run inside the native candidate itself.
+            if matches!(point, GuardPoint::LastNative) && purge_nesting_observed(path) {
+                return Ok(GuardDecision::Refused(
+                    "a marker-bound ancestor artifact appeared; the selection nests and is refused"
+                        .into(),
+                ));
+            }
+            Ok(GuardDecision::Proceed)
+        };
+        self.inner.execute_with_clean_policy(
+            preview,
+            approval,
+            cancellation,
+            store,
+            None,
+            Some(&mut guard),
+        )
+    }
+}
+
+/// Re-evaluates the preview's nesting exclusion against the live
+/// filesystem: if any strict ancestor of the artifact is itself a
+/// marker-bound artifact directory, the selection nests inside another
+/// project's artifact and must not move. Fail-closed on observation
+/// errors; bounded by the ancestor handle budget.
+fn purge_nesting_observed(artifact: &Path) -> bool {
+    for ancestor in artifact.ancestors().skip(1).take(64) {
+        let Some(name) = ancestor.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(parent) = ancestor.parent() else {
+            continue;
+        };
+        for marker in ProjectMarker::ALL {
+            if !marker.artifacts().contains(&name) {
+                continue;
+            }
+            match std::fs::symlink_metadata(parent.join(marker.file_name())) {
+                Ok(metadata) if metadata.file_type().is_file() => return true,
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                // An observation error is not proof of absence; fail closed.
+                Err(_) => return true,
+            }
+        }
+    }
+    false
+}
+
+/// Deepest common ancestor of the given absolute paths.
+fn common_ancestor(paths: &[PathBuf]) -> Option<PathBuf> {
+    let mut iterator = paths.iter();
+    let mut common = iterator.next()?.clone();
+    for path in iterator {
+        while !path.starts_with(&common) {
+            if !common.pop() {
+                return None;
+            }
+        }
+    }
+    Some(common)
 }
 
 pub struct CleanSession {

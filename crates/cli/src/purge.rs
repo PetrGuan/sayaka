@@ -2,19 +2,21 @@
 
 use crate::{human, output};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
+use sayaka_engine::execute::{PurgeSelection, PurgeSession};
+use sayaka_engine::journal::Store;
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::purge_preview::{
     self, DEFAULT_STALE_DAYS, MAX_STALE_DAYS, PurgeOptions, PurgePreview,
 };
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::{self, ScanCode, ScanError};
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub fn command() -> Command {
     Command::new("purge")
-        .about("Read-only preview of rebuildable project artifacts grouped by project")
+        .about("Preview rebuildable project artifacts, or Trash the explicitly selected ones")
         .arg(
             Arg::new("roots")
                 .value_name("ROOT")
@@ -44,12 +46,47 @@ pub fn command() -> Command {
                 .action(ArgAction::SetTrue)
                 .help("Show scan progress on stderr (NDJSON with --json)"),
         )
+        .arg(
+            Arg::new("execute")
+                .long("execute")
+                .action(ArgAction::SetTrue)
+                .help("Move the --only-selected artifacts to Trash after typed confirmation (120-second approval)"),
+        )
+        .arg(
+            Arg::new("only")
+                .long("only")
+                .value_name("PATH")
+                .action(ArgAction::Append)
+                .value_parser(value_parser!(PathBuf))
+                .help("Artifact directory from this invocation's preview selected for execution (repeatable, 1..32)"),
+        )
+        .arg(
+            Arg::new("state-dir")
+                .long("state-dir")
+                .value_name("DIR")
+                .value_parser(value_parser!(PathBuf))
+                .help("Private M3 journal directory for the durable intent/outcome record"),
+        )
         .after_help(
-            "Preview only: no directory effects exist in this slice. A name match alone never qualifies;\nevery artifact is bound to its project marker (rebuild evidence). mtime is an observation, not proof of disuse.",
+            "Default is a read-only preview. --execute requires an interactive terminal and explicit\n--only selections from this invocation's preview (no select-all, no staleness rule); each\nartifact moves to Trash as one container (recovery: Finder 'Put Back' plus rebuild from the\nretained marker; markers are never targets). A running build tool is not detected; displayed\nbytes are observations, not reclaimed space.",
         )
 }
 
 pub fn run(args: &ArgMatches) -> io::Result<u8> {
+    match run_inner(args) {
+        Ok(code) => Ok(code),
+        Err(error) => {
+            writeln!(io::stderr().lock(), "purge failed: {:?}", error.to_string())?;
+            Ok(if error.kind() == io::ErrorKind::InvalidInput {
+                2
+            } else {
+                1
+            })
+        }
+    }
+}
+
+fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     let json = args.get_flag("json");
     let stderr_terminal = io::stderr().is_terminal();
     let dumb = std::env::var_os("TERM").is_some_and(|term| term == "dumb");
@@ -65,6 +102,43 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
     };
     let mut progress = human::Progress::default();
     let mut progress_error = None;
+    let execute = args.get_flag("execute");
+    let only: Vec<PathBuf> = args
+        .get_many::<PathBuf>("only")
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    if execute {
+        if json {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--json applies to the read-only preview; --execute prints a journaled execution report instead",
+            ));
+        }
+        if !(io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--execute requires an interactive terminal; piped approval is not accepted",
+            ));
+        }
+        if only.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--execute without --only selects nothing and is refused",
+            ));
+        }
+    } else if !only.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--only only applies together with --execute",
+        ));
+    }
+    let cancellation = Cancellation::default();
+    let signal = cancellation.clone();
+    ctrlc::set_handler(move || signal.cancel()).map_err(io::Error::other)?;
+    let scan_cancellation = cancellation.clone();
     let result: Result<PurgePreview, ScanError> = (|| {
         let stale_days = args
             .get_one::<u32>("stale-days")
@@ -95,14 +169,7 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
         limits
             .validate()
             .map_err(|error| ScanError::new(error.code, error.message))?;
-        let cancellation = Cancellation::default();
-        let signal = cancellation.clone();
-        ctrlc::set_handler(move || signal.cancel()).map_err(|error| {
-            ScanError::new(
-                ScanCode::Internal,
-                format!("cannot install interrupt handler: {error}"),
-            )
-        })?;
+        let cancellation = scan_cancellation;
         let report = scan::scan(&roots, &limits, &cancellation, |event| {
             if show_progress && progress_error.is_none() {
                 let written = if json {
@@ -137,6 +204,9 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
             } else {
                 write_human(&mut io::stdout().lock(), &preview)?;
             }
+            if execute {
+                return run_execution(args, &preview, &only, &cancellation);
+            }
             Ok(match preview.status {
                 purge_preview::PurgeStatus::Complete => 0,
                 purge_preview::PurgeStatus::Partial => 3,
@@ -159,6 +229,127 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
             )
         }
     }
+}
+
+/// Resolves every `--only` path against this invocation's preview: exact
+/// artifact match, no duplicates, traversal rejected. Markers are rebuilt
+/// from the preview's own binding evidence.
+fn resolve_selections(preview: &PurgePreview, only: &[PathBuf]) -> io::Result<Vec<PurgeSelection>> {
+    let mut selections = Vec::with_capacity(only.len());
+    for requested in only {
+        if requested
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "'..' traversal is not accepted in --only",
+            ));
+        }
+        let requested = std::path::absolute(requested)?;
+        if selections
+            .iter()
+            .any(|selection: &PurgeSelection| selection.artifact == requested)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("duplicate --only selection: {}", requested.display()),
+            ));
+        }
+        let mut matched = None;
+        for project in &preview.projects {
+            for artifact in &project.artifacts {
+                if artifact.path == requested {
+                    matched = Some(PurgeSelection {
+                        artifact: artifact.path.clone(),
+                        project_root: project.root.clone(),
+                        markers: artifact
+                            .markers
+                            .iter()
+                            .map(|marker| project.root.join(marker.file_name()))
+                            .collect(),
+                    });
+                }
+            }
+        }
+        selections.push(matched.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "--only names no artifact of this invocation's preview: {}",
+                    requested.display()
+                ),
+            )
+        })?);
+    }
+    Ok(selections)
+}
+
+fn run_execution(
+    args: &ArgMatches,
+    preview: &PurgePreview,
+    only: &[PathBuf],
+    cancellation: &Cancellation,
+) -> io::Result<u8> {
+    if preview.status != purge_preview::PurgeStatus::Complete {
+        // A partial scan may have missed a containing artifact; the nesting
+        // exclusion is only trustworthy on complete coverage.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "--execute requires a complete preview; status is {}",
+                preview.status.as_str()
+            ),
+        ));
+    }
+    let selections = resolve_selections(preview, only)?;
+    let mut session = PurgeSession::prepare(&selections, cancellation)?;
+    for issue in session.issues() {
+        writeln!(
+            io::stderr().lock(),
+            "candidate issue: {}: {}",
+            issue.path.display,
+            issue.message
+        )?;
+    }
+    let refusals = session.refusals();
+    if !refusals.is_empty() {
+        let mut err = io::stderr().lock();
+        writeln!(err, "refusals (nothing moved):")?;
+        for refusal in &refusals {
+            writeln!(err, "  - {}: {}", refusal.path.display, refusal.reason)?;
+        }
+        return Ok(3);
+    }
+    let count = selections.len();
+    let expected = format!("purge {count} artifacts");
+    write!(
+        io::stderr().lock(),
+        "\nType {expected:?} to move exactly these {count} artifact directories to Trash, or press Enter to cancel: "
+    )?;
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().lock().take(128).read_line(&mut answer)?;
+    if !crate::trash::confirmed(&answer, &expected) || cancellation.is_cancelled() {
+        writeln!(io::stderr().lock(), "Cancelled; nothing moved.")?;
+        return Ok(130);
+    }
+    let plan = session.preview().clone();
+    let approval = session
+        .approve(&plan)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let store = Store::open(&crate::trash::state_directory(args)?, true)?;
+    let report = session.execute(&plan, &approval, cancellation, &store)?;
+    crate::trash::print_execution_report(&report)?;
+    writeln!(
+        io::stdout().lock(),
+        "Recovery: Finder 'Put Back' per item, plus rebuild from the retained marker (markers untouched)."
+    )?;
+    writeln!(
+        io::stdout().lock(),
+        "Displayed bytes were observations, not reclaimed space; a running build tool was not detected."
+    )?;
+    Ok(report.exit_code())
 }
 
 fn write_fatal_json(out: &mut impl Write, error: ScanError) -> io::Result<()> {
@@ -298,6 +489,104 @@ fn write_human(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+
+    fn preview_with_artifacts(root: &std::path::Path) -> PurgePreview {
+        let project = root.join("app");
+        PurgePreview {
+            schema_version: 1,
+            kind: purge_preview::PURGE_KIND,
+            platform: "macos",
+            status: purge_preview::PurgeStatus::Complete,
+            complete: true,
+            effects_performed: false,
+            roots: vec![root.to_path_buf()],
+            stale_days: 30,
+            projects: vec![purge_preview::PurgeProject {
+                root: project.clone(),
+                markers: vec![purge_preview::ProjectMarker::CargoToml],
+                artifacts: vec![
+                    purge_preview::PurgeArtifact {
+                        path: project.join("target"),
+                        name: "target".into(),
+                        markers: vec![purge_preview::ProjectMarker::CargoToml],
+                        logical_bytes: Some(10),
+                        allocated_bytes: Some(10),
+                        complete: true,
+                        modified_unix_ms: Some(0),
+                        stale: Some(false),
+                    },
+                    purge_preview::PurgeArtifact {
+                        path: project.join("dist"),
+                        name: "dist".into(),
+                        markers: vec![purge_preview::ProjectMarker::CargoToml],
+                        logical_bytes: None,
+                        allocated_bytes: None,
+                        complete: false,
+                        modified_unix_ms: None,
+                        stale: None,
+                    },
+                ],
+            }],
+            counts: purge_preview::PurgeCounts::default(),
+            scan_issues: vec![],
+            scan_issues_omitted: 0,
+        }
+    }
+
+    #[test]
+    fn only_resolution_matches_artifacts_and_builds_marker_paths() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let preview = preview_with_artifacts(root.path());
+        let selections =
+            resolve_selections(&preview, &[root.path().join("app/target")]).expect("selections");
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].artifact, root.path().join("app/target"));
+        assert_eq!(selections[0].project_root, root.path().join("app"));
+        assert_eq!(
+            selections[0].markers,
+            vec![root.path().join("app/Cargo.toml")]
+        );
+    }
+
+    #[test]
+    fn only_resolution_rejects_unknown_duplicate_and_traversal() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let preview = preview_with_artifacts(root.path());
+        assert!(resolve_selections(&preview, &[root.path().join("app/other")]).is_err());
+        assert!(
+            resolve_selections(
+                &preview,
+                &[
+                    root.path().join("app/target"),
+                    root.path().join("app/target")
+                ],
+            )
+            .is_err()
+        );
+        assert!(
+            resolve_selections(&preview, &[std::path::PathBuf::from("app/../app/target")]).is_err()
+        );
+    }
+
+    #[test]
+    fn invalid_execution_arguments_exit_2_before_any_scan() {
+        for argv in [
+            vec!["sayaka", "purge", ".", "--execute"],
+            vec!["sayaka", "purge", ".", "--only", "/tmp/x"],
+            vec![
+                "sayaka",
+                "purge",
+                ".",
+                "--execute",
+                "--json",
+                "--only",
+                "/tmp/x",
+            ],
+        ] {
+            let matches = command().try_get_matches_from(argv).expect("matches");
+            assert_eq!(run(&matches).expect("run"), 2);
+        }
+    }
 
     #[test]
     fn json_preview_groups_artifacts_with_explicit_states() {
