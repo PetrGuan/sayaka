@@ -480,7 +480,7 @@ fn write_human(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
     }
     writeln!(
         out,
-        "Preview only; no directory effects exist in this slice."
+        "Preview observations only; effects require --execute with explicit --only selections."
     )?;
     out.flush()
 }
