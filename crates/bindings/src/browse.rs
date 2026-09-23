@@ -145,8 +145,20 @@ struct NodeEvidence<'a> {
     issues: Vec<wire::Issue<'a>>,
 }
 
-fn path_key(entry: &ScanEntry) -> &[u8] {
-    entry.path.as_os_str().as_encoded_bytes()
+/// Orders paths by the same native units serialized in `path.raw`.
+#[cfg(unix)]
+fn raw_path_le(left: &ScanEntry, right: &ScanEntry) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    left.path.as_os_str().as_bytes() <= right.path.as_os_str().as_bytes()
+}
+
+#[cfg(windows)]
+fn raw_path_le(left: &ScanEntry, right: &ScanEntry) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    left.path
+        .as_os_str()
+        .encode_wide()
+        .le(right.path.as_os_str().encode_wide())
 }
 
 fn node_evidence<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> NodeEvidence<'a> {
@@ -159,7 +171,7 @@ fn node_evidence<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> N
         }) {
             observed_alias_count += 1;
             // Keep only the first MAX_NODE_ALIASES paths in raw byte order.
-            let position = aliases.partition_point(|kept| path_key(kept) <= path_key(alias));
+            let position = aliases.partition_point(|kept| raw_path_le(kept, alias));
             if position < MAX_NODE_ALIASES {
                 if aliases.len() == MAX_NODE_ALIASES {
                     aliases.pop();
