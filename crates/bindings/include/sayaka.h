@@ -304,14 +304,14 @@ SAYAKA_API int32_t sayaka_installer_release_v1(uint64_t handle);
  * and a plan_digest. sayaka_purge_preview_start_profile_v1 is additive and can
  * instead request developer_caches, which reports known documented cache
  * locations at/under the granted root plus unsupported in-app external-command
- * operations. Developer-cache execution is intentionally unsupported by
- * revalidated_purge_trash_v1 because that contract is marker-bound to project
- * artifacts. Unknown size fields are JSON null. Execution accepts only a
- * same-preview projects subset plus the exact plan_digest and explicit approval
- * token; changed/missing/not-revalidated items are skipped/failed/unknown,
- * never counted as moved. Native effects are ordinary Foundation Trash only:
- * no permanent-delete fallback. The documented residual final path-replacement
- * race still applies. */
+ * operations. Complete cleanup-supported developer-cache candidates can execute
+ * under revalidated_cache_trash_v1 with the same-preview item refs, exact
+ * plan_digest, explicit "trash N caches" approval token and journal state_dir.
+ * Unknown size fields are JSON null. Project execution still uses
+ * revalidated_purge_trash_v1 and "purge N artifacts". Changed/missing/
+ * not-revalidated items are skipped/failed/unknown, never counted as moved.
+ * Native effects are ordinary Foundation Trash only: no permanent-delete
+ * fallback. The documented residual final path-replacement race still applies. */
 SAYAKA_API int32_t sayaka_purge_preview_start_v1(const SayakaPurgePreviewRequestV1 *request,
                                                uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_purge_preview_start_profile_v1(const SayakaPurgePreviewProfileRequestV1 *request,

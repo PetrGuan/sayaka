@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::{
-    BundleTrashCandidate, PurgeTrashCandidate, TrashCandidate, full_sync, has_extended_acl,
+    BundleTrashCandidate, CacheTrashCandidate, PurgeTrashCandidate, TrashCandidate, full_sync,
+    has_extended_acl,
 };
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt, symlink};
 use std::sync::{Mutex, MutexGuard};
@@ -848,6 +849,43 @@ fn protected_system_cloud_and_application_roots_are_case_insensitive() {
     assert!(!standard_protected(Path::new(
         "/Users/synthetic/project/sayaka-native-fixture-123-456/ordinary.txt"
     )));
+}
+
+#[test]
+fn cache_candidates_use_cache_specific_protection_without_weakening_ordinary_targets() {
+    let mut fixture = Fixture::new();
+    let pip = fixture.directory("Library");
+    let caches = fixture.directory("Library/Caches");
+    let pip_cache = fixture.directory("Library/Caches/pip");
+    let pip_blob = fixture.file("Library/Caches/pip/blob", b"pip");
+    let npm = fixture.directory(".npm");
+    let npm_cache = fixture.directory(".npm/_cacache");
+    let npm_blob = fixture.file(".npm/_cacache/blob", b"npm");
+    let other_cache = fixture.directory(".other-cache");
+
+    assert!(standard_protected(&pip_blob));
+    assert!(standard_protected(&npm_blob));
+    assert!(TrashCandidate::capture(&fixture.root, &pip_blob, &[]).is_err());
+    assert!(TrashCandidate::capture(&fixture.root, &npm_blob, &[]).is_err());
+
+    CacheTrashCandidate::capture(&caches, &pip_cache, &[]).expect("Library cache target");
+    CacheTrashCandidate::capture(&npm, &npm_cache, &[]).expect("dot cache target");
+    assert!(
+        CacheTrashCandidate::capture(&fixture.root, &other_cache, &[]).is_err(),
+        "cache capture still requires a documented rule suffix"
+    );
+
+    drop((
+        pip,
+        caches,
+        pip_cache,
+        pip_blob,
+        npm,
+        npm_cache,
+        npm_blob,
+        other_cache,
+    ));
+    fixture.finish();
 }
 
 #[test]
