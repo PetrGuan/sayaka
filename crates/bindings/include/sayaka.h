@@ -156,6 +156,15 @@ typedef struct SayakaPurgePreviewRequestV1 {
     uint32_t reserved; /* Must be zero. */
 } SayakaPurgePreviewRequestV1;
 
+typedef struct SayakaPurgePreviewProfileRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    SayakaPathV1 root; /* One explicit native absolute root; input copied. */
+    uint32_t stale_days; /* 0 means CLI default; otherwise 1..3650. */
+    uint32_t profile; /* 1/0 = projects, 2 = developer_caches. */
+    uint32_t reserved; /* Must be zero. */
+} SayakaPurgePreviewProfileRequestV1;
+
 typedef struct SayakaPurgeItemRefV1 {
     uint64_t preview_handle; /* Purge preview handle, never scan/installer/execution. */
     uint64_t item_id;        /* Decimal-string id from preview JSON parsed as u64. */
@@ -290,21 +299,31 @@ SAYAKA_API int32_t sayaka_installer_release_v1(uint64_t handle);
 
 /* Purge preview/execution is macOS-only. Preview scans one explicit
  * security-scoped root supplied by the host and performs no effects. Result
- * JSON groups marker-bound artifact directories by project, includes NativePath
- * {display,encoding,raw}, item references and a plan_digest. Unknown size fields
- * are JSON null. Execution accepts only a same-preview subset plus the exact
- * plan_digest and explicit approval token; changed/missing/not-revalidated
- * items are skipped/failed/unknown, never counted as moved. Native effects are
- * ordinary Foundation Trash only: no permanent-delete fallback. The documented
- * residual final path-replacement race still applies. */
+ * JSON groups marker-bound artifact directories by project for the default
+ * projects profile, includes NativePath {display,encoding,raw}, item references
+ * and a plan_digest. sayaka_purge_preview_start_profile_v1 is additive and can
+ * instead request developer_caches, which reports known documented cache
+ * locations at/under the granted root plus unsupported in-app external-command
+ * operations. Developer-cache execution is intentionally unsupported by
+ * revalidated_purge_trash_v1 because that contract is marker-bound to project
+ * artifacts. Unknown size fields are JSON null. Execution accepts only a
+ * same-preview projects subset plus the exact plan_digest and explicit approval
+ * token; changed/missing/not-revalidated items are skipped/failed/unknown,
+ * never counted as moved. Native effects are ordinary Foundation Trash only:
+ * no permanent-delete fallback. The documented residual final path-replacement
+ * race still applies. */
 SAYAKA_API int32_t sayaka_purge_preview_start_v1(const SayakaPurgePreviewRequestV1 *request,
                                                uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_purge_preview_start_profile_v1(const SayakaPurgePreviewProfileRequestV1 *request,
+                                                       uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_purge_poll_v1(uint64_t handle, SayakaPurgeSnapshotV1 *out_snapshot);
 SAYAKA_API int32_t sayaka_purge_cancel_v1(uint64_t handle);
 SAYAKA_API int32_t sayaka_purge_execute_start_v1(const SayakaPurgeExecuteRequestV1 *request,
                                                uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_purge_result_v1(uint64_t handle, uint8_t *buffer,
                                         size_t capacity, size_t *required);
+SAYAKA_API int32_t sayaka_purge_unsupported_operations_v1(uint8_t *buffer,
+                                                        size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_purge_release_v1(uint64_t handle);
 
 #ifdef __cplusplus

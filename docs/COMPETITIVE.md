@@ -355,6 +355,16 @@ disposable-fixture native evidence list is still open. None of these are
 new benchmark results, complete task-family coverage, or distribution
 evidence.
 
+The App-facing purge preview also has a `developer_caches` profile that narrows
+the pinned Mole `clean`/developer-cache gap by discovering documented cache
+locations only under explicit roots the user grants: Xcode DerivedData/cache/
+CoreSimulator cache, npm/pnpm/Yarn/pip/Cargo/Gradle caches and Homebrew
+downloads. It records rebuildability evidence and unsupported external-command
+operations (`brew cleanup`, `xcrun simctl delete`, package-manager cache-clean
+commands), excludes Xcode Archives and other user products, and is intentionally
+preview-only until a non-project cache execution contract exists. This is not
+Mole parity or a cleanup-throughput result.
+
 Potentially irreversible maintenance, directory actions, and privileged
 operations require new action-specific design gates after M3. They are not
 authorized by the initial ordinary-file trash contract. "Optimize" must name the

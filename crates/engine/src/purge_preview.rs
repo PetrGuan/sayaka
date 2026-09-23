@@ -15,13 +15,45 @@ use crate::scan::ScanStatus;
 use crate::scan::index::{Metric, ScanTree};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PurgeProfile {
+    #[default]
+    Projects,
+    DeveloperCaches,
+}
+
+impl PurgeProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Projects => "projects",
+            Self::DeveloperCaches => "developer_caches",
+        }
+    }
+
+    pub const fn from_ffi(value: u32) -> Option<Self> {
+        match value {
+            0 | 1 => Some(Self::Projects),
+            2 => Some(Self::DeveloperCaches),
+            _ => None,
+        }
+    }
+
+    pub const fn to_ffi(self) -> u32 {
+        match self {
+            Self::Projects => 1,
+            Self::DeveloperCaches => 2,
+        }
+    }
+}
 
 /// Fixed project markers; each is also the rebuild evidence for its bound
 /// artifact directory names.
@@ -86,12 +118,14 @@ impl ProjectMarker {
 #[derive(Clone, Copy, Debug)]
 pub struct PurgeOptions {
     pub stale_days: u32,
+    pub profile: PurgeProfile,
 }
 
 impl Default for PurgeOptions {
     fn default() -> Self {
         Self {
             stale_days: DEFAULT_STALE_DAYS,
+            profile: PurgeProfile::Projects,
         }
     }
 }
@@ -134,6 +168,293 @@ pub struct PurgeProject {
     pub artifacts: Vec<PurgeArtifact>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeveloperCacheActivity {
+    NotDetected,
+    LockFileObserved,
+}
+
+impl DeveloperCacheActivity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotDetected => "not_detected",
+            Self::LockFileObserved => "lock_file_observed",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DeveloperCacheCandidate {
+    pub tool: &'static str,
+    pub rule_id: &'static str,
+    pub rule_version: u32,
+    pub ruleset_revision: u32,
+    pub title: &'static str,
+    pub path: PathBuf,
+    pub location: &'static str,
+    pub location_kind: &'static str,
+    pub kind: &'static str,
+    pub rebuildability_note: &'static str,
+    pub user_product: bool,
+    pub cleanup_supported: bool,
+    pub unsupported_reason: Option<&'static str>,
+    pub logical_bytes: Option<u64>,
+    pub allocated_bytes: Option<u64>,
+    pub complete: bool,
+    pub modified_unix_ms: Option<i64>,
+    pub activity: DeveloperCacheActivity,
+    pub evidence: &'static [EvidenceSource],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnsupportedOperation {
+    pub tool: &'static str,
+    pub operation: &'static str,
+    pub reason: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DeveloperCacheRule {
+    tool: &'static str,
+    rule_id: &'static str,
+    rule_version: u32,
+    title: &'static str,
+    suffix: &'static [&'static str],
+    location: &'static str,
+    location_kind: &'static str,
+    rebuildability_note: &'static str,
+    lock_siblings: &'static [&'static str],
+    evidence: &'static [EvidenceSource],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvidenceSource {
+    pub title: &'static str,
+    pub url: &'static str,
+    pub reviewed_utc: &'static str,
+    pub license_note: &'static str,
+}
+
+// Each rule is a documented cache/download-store convention and intentionally
+// excludes Xcode Archives, CoreSimulator Devices, package-manager config, logs,
+// installed products, and other user-authored artifacts. Locations are matched
+// when the granted preview root is the cache directory itself or any ancestor.
+const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
+    DeveloperCacheRule {
+        tool: "xcode",
+        rule_id: "com.apple.xcode.derived_data",
+        rule_version: 1,
+        title: "Xcode DerivedData build data",
+        suffix: &["Library", "Developer", "Xcode", "DerivedData"],
+        location: "~/Library/Developer/Xcode/DerivedData",
+        location_kind: "directory",
+        rebuildability_note: "xcodebuild documents -derivedDataPath as the folder used for derived data during builds; Xcode can recreate build intermediates and indexes. Archives are explicitly not part of this rule.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "xcodebuild manual: -derivedDataPath",
+            url: "https://keith.github.io/xcode-man-pages/xcodebuild.1.html",
+            reviewed_utc: "2026-09-24",
+            license_note: "Apple command manual reference mirror",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "xcode",
+        rule_id: "com.apple.xcode.cache",
+        rule_version: 1,
+        title: "Xcode app cache",
+        suffix: &["Library", "Caches", "com.apple.dt.Xcode"],
+        location: "~/Library/Caches/com.apple.dt.Xcode",
+        location_kind: "directory",
+        rebuildability_note: "macOS cache directory convention for the Xcode bundle identifier; treated as application cache only, not user products.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Apple File System Programming Guide: Library/Caches",
+            url: "https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemOverview/FileSystemOverview.html",
+            reviewed_utc: "2026-09-24",
+            license_note: "Apple archived developer documentation",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "xcode",
+        rule_id: "com.apple.coresimulator.cache",
+        rule_version: 1,
+        title: "CoreSimulator cache files",
+        suffix: &["Library", "Developer", "CoreSimulator", "Caches"],
+        location: "~/Library/Developer/CoreSimulator/Caches",
+        location_kind: "directory",
+        rebuildability_note: "CoreSimulator cache directory only. Simulator Devices, runtimes, unavailable-device deletion and app data are non-targets.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Apple File System Programming Guide: Library/Caches",
+            url: "https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemOverview/FileSystemOverview.html",
+            reviewed_utc: "2026-09-24",
+            license_note: "Apple archived developer documentation",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "npm",
+        rule_id: "org.npm.cacache",
+        rule_version: 1,
+        title: "npm content-addressable package cache",
+        suffix: &[".npm", "_cacache"],
+        location: "~/.npm/_cacache",
+        location_kind: "directory",
+        rebuildability_note: "npm documents ~/.npm as the POSIX cache root and _cacache as opaque content-addressable package/HTTP cache; packages are re-fetched as needed.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "npm-cache CLI documentation",
+            url: "https://docs.npmjs.com/cli/v10/commands/npm-cache",
+            reviewed_utc: "2026-09-24",
+            license_note: "npm documentation terms",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "pnpm",
+        rule_id: "io.pnpm.store",
+        rule_version: 1,
+        title: "pnpm package store",
+        suffix: &["Library", "pnpm", "store"],
+        location: "~/Library/pnpm/store",
+        location_kind: "directory",
+        rebuildability_note: "pnpm documents the macOS store location and `pnpm store path`; missing packages are restored from registries when needed.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "pnpm store settings",
+            url: "https://pnpm.io/settings/store",
+            reviewed_utc: "2026-09-24",
+            license_note: "pnpm documentation license",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "yarn",
+        rule_id: "com.yarnpkg.classic_cache",
+        rule_version: 1,
+        title: "Yarn package cache",
+        suffix: &["Library", "Caches", "Yarn"],
+        location: "~/Library/Caches/Yarn",
+        location_kind: "directory",
+        rebuildability_note: "Yarn documents `yarn cache dir` and `yarn cache clean`; cache entries are package downloads that can be fetched again.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Yarn classic cache CLI documentation",
+            url: "https://classic.yarnpkg.com/lang/en/docs/cli/cache/",
+            reviewed_utc: "2026-09-24",
+            license_note: "Yarn documentation license",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "pip",
+        rule_id: "pypa.pip.cache",
+        rule_version: 1,
+        title: "pip HTTP and wheel cache",
+        suffix: &["Library", "Caches", "pip"],
+        location: "~/Library/Caches/pip",
+        location_kind: "directory",
+        rebuildability_note: "pip documents ~/Library/Caches/pip as the default macOS cache; HTTP responses and locally built wheels are regenerated or re-downloaded.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "pip caching documentation",
+            url: "https://pip.pypa.io/en/stable/topics/caching/",
+            reviewed_utc: "2026-09-24",
+            license_note: "pip documentation license",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "cargo",
+        rule_id: "org.rust-lang.cargo.registry_cache",
+        rule_version: 1,
+        title: "Cargo registry crate download cache",
+        suffix: &[".cargo", "registry", "cache"],
+        location: "~/.cargo/registry/cache",
+        location_kind: "directory",
+        rebuildability_note: "Cargo documents registry/cache as downloaded .crate files under CARGO_HOME; missing crates are downloaded again from registries.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "The Cargo Book: Cargo Home",
+            url: "https://doc.rust-lang.org/cargo/guide/cargo-home.html",
+            reviewed_utc: "2026-09-24",
+            license_note: "Rust documentation license",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "gradle",
+        rule_id: "org.gradle.modules_cache",
+        rule_version: 1,
+        title: "Gradle dependency artifact cache",
+        suffix: &[".gradle", "caches", "modules-2", "files-2.1"],
+        location: "~/.gradle/caches/modules-2/files-2.1",
+        location_kind: "directory",
+        rebuildability_note: "Gradle documents dependency caches under Gradle User Home and cleanup/re-download behavior for downloaded resources.",
+        lock_siblings: &["modules-2.lock"],
+        evidence: &[EvidenceSource {
+            title: "Gradle-managed directories and caches",
+            url: "https://docs.gradle.org/current/userguide/directory_layout.html",
+            reviewed_utc: "2026-09-24",
+            license_note: "Gradle documentation license",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "homebrew",
+        rule_id: "sh.homebrew.downloads_cache",
+        rule_version: 1,
+        title: "Homebrew download cache",
+        suffix: &["Library", "Caches", "Homebrew", "downloads"],
+        location: "~/Library/Caches/Homebrew/downloads",
+        location_kind: "directory",
+        rebuildability_note: "Homebrew documents its cache via `brew --cache`; the downloads subdirectory stores fetched formula/cask resources and bottles, not installed Cellar products.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Homebrew Tips and Tricks: cache",
+            url: "https://docs.brew.sh/Tips-and-Tricks",
+            reviewed_utc: "2026-09-24",
+            license_note: "Homebrew documentation license",
+        }],
+    },
+];
+
+pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
+    UnsupportedOperation {
+        tool: "homebrew",
+        operation: "brew cleanup",
+        reason: "requires launching Homebrew and applying Homebrew policy outside the app sandbox; this profile only reports file-level download cache candidates under user-granted roots",
+    },
+    UnsupportedOperation {
+        tool: "xcode",
+        operation: "xcrun simctl delete unavailable",
+        reason: "requires invoking Apple developer tools to mutate simulator device records; CoreSimulator Devices and user simulator data are not file-level cache targets",
+    },
+    UnsupportedOperation {
+        tool: "xcode",
+        operation: "delete Xcode Archives",
+        reason: "archives are user build products, not rebuildable caches, and require separate explicit confirmation outside this profile",
+    },
+    UnsupportedOperation {
+        tool: "npm",
+        operation: "npm cache clean --force",
+        reason: "requires launching npm; the app can only preview documented cache directories that the user grants",
+    },
+    UnsupportedOperation {
+        tool: "pnpm",
+        operation: "pnpm store prune",
+        reason: "requires launching pnpm and interpreting store metadata; unsupported in the sandboxed app",
+    },
+    UnsupportedOperation {
+        tool: "yarn",
+        operation: "yarn cache clean",
+        reason: "requires launching Yarn; unsupported in the sandboxed app",
+    },
+    UnsupportedOperation {
+        tool: "pip",
+        operation: "pip cache purge",
+        reason: "requires launching pip; unsupported in the sandboxed app",
+    },
+    UnsupportedOperation {
+        tool: "gradle",
+        operation: "gradle --stop / cache cleanup",
+        reason: "requires controlling Gradle daemons or Gradle cleanup policy; unsupported in the sandboxed app",
+    },
+];
+
 #[derive(Clone, Debug, Default)]
 pub struct PurgeCounts {
     pub projects: usize,
@@ -142,6 +463,8 @@ pub struct PurgeCounts {
     /// Projects or artifacts excluded because they nest inside another
     /// project's artifact, or because the artifact is a dataless placeholder.
     pub excluded: usize,
+    pub developer_caches: usize,
+    pub unsupported_operations: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,9 +494,12 @@ pub struct PurgePreview {
     pub status: PurgeStatus,
     pub complete: bool,
     pub effects_performed: bool,
+    pub profile: PurgeProfile,
     pub roots: Vec<PathBuf>,
     pub stale_days: u32,
     pub projects: Vec<PurgeProject>,
+    pub developer_caches: Vec<DeveloperCacheCandidate>,
+    pub unsupported_operations: &'static [UnsupportedOperation],
     pub counts: PurgeCounts,
     /// Scan-side issues (denied subtrees, budget limits) explaining partial
     /// or failed coverage; never filtered away.
@@ -191,12 +517,24 @@ impl PurgePreview {
         let mut hasher = Sha256::new();
         hasher.update(self.schema_version.to_le_bytes());
         hasher.update(self.kind.as_bytes());
+        hasher.update(self.profile.as_str().as_bytes());
         hasher.update(self.platform.as_bytes());
         hasher.update(self.status.as_str().as_bytes());
         hasher.update([u8::from(self.complete)]);
         hasher.update(self.stale_days.to_le_bytes());
         for root in &self.roots {
             hash_path(&mut hasher, root);
+        }
+        for cache in &self.developer_caches {
+            hasher.update(cache.rule_id.as_bytes());
+            hasher.update(cache.rule_version.to_le_bytes());
+            hash_path(&mut hasher, &cache.path);
+            hash_option_u64(&mut hasher, cache.logical_bytes);
+            hash_option_u64(&mut hasher, cache.allocated_bytes);
+            hasher.update([u8::from(cache.complete)]);
+            hash_option_i64(&mut hasher, cache.modified_unix_ms);
+            hasher.update(cache.activity.as_str().as_bytes());
+            hasher.update([0]);
         }
         for project in &self.projects {
             hash_path(&mut hasher, &project.root);
@@ -227,6 +565,7 @@ impl PurgePreview {
         hasher.update((self.counts.artifacts as u64).to_le_bytes());
         hasher.update((self.counts.stale_artifacts as u64).to_le_bytes());
         hasher.update((self.counts.excluded as u64).to_le_bytes());
+        hasher.update((self.counts.developer_caches as u64).to_le_bytes());
         let digest = hasher.finalize();
         let mut out = String::with_capacity(digest.len() * 2);
         for byte in digest {
@@ -237,6 +576,9 @@ impl PurgePreview {
     }
 
     pub fn item_count(&self) -> usize {
+        if self.profile != PurgeProfile::Projects {
+            return 0;
+        }
         self.projects
             .iter()
             .map(|project| project.artifacts.len())
@@ -292,6 +634,9 @@ pub fn resolve_selections_by_paths(
     preview: &PurgePreview,
     only: &[PathBuf],
 ) -> Result<Vec<PurgeSelection>, String> {
+    if preview.profile != PurgeProfile::Projects {
+        return Err("execution is unsupported for this purge profile".into());
+    }
     let mut selections = Vec::with_capacity(only.len());
     for requested in only {
         if requested
@@ -325,6 +670,9 @@ pub fn resolve_selections_by_ids(
     preview: &PurgePreview,
     item_ids: &[PurgeItemId],
 ) -> Result<Vec<PurgeSelection>, String> {
+    if preview.profile != PurgeProfile::Projects {
+        return Err("execution is unsupported for this purge profile".into());
+    }
     let mut seen = HashSet::new();
     let mut selections = Vec::with_capacity(item_ids.len());
     for id in item_ids {
@@ -383,6 +731,26 @@ pub fn purge_preview(
     now: SystemTime,
 ) -> Result<PurgePreview, String> {
     options.validate()?;
+    match options.profile {
+        PurgeProfile::Projects => project_purge_preview(index, options, now),
+        PurgeProfile::DeveloperCaches => developer_cache_preview(index, options),
+    }
+}
+
+fn preview_status(report: &crate::scan::ScanReport) -> PurgeStatus {
+    match report.status {
+        ScanStatus::Complete => PurgeStatus::Complete,
+        ScanStatus::Partial => PurgeStatus::Partial,
+        ScanStatus::Cancelled => PurgeStatus::Cancelled,
+        ScanStatus::Failed => PurgeStatus::Failed,
+    }
+}
+
+fn project_purge_preview(
+    index: &ScanTree,
+    options: &PurgeOptions,
+    now: SystemTime,
+) -> Result<PurgePreview, String> {
     let cutoff = Duration::from_secs(u64::from(options.stale_days) * 86_400);
     let mut projects = Vec::new();
     let mut artifact_paths: Vec<PathBuf> = Vec::new();
@@ -522,12 +890,7 @@ pub fn purge_preview(
     counts.projects = output.len();
     output.sort_by(|left, right| left.root.cmp(&right.root));
     let report = index.report();
-    let status = match report.status {
-        ScanStatus::Complete => PurgeStatus::Complete,
-        ScanStatus::Partial => PurgeStatus::Partial,
-        ScanStatus::Cancelled => PurgeStatus::Cancelled,
-        ScanStatus::Failed => PurgeStatus::Failed,
-    };
+    let status = preview_status(report);
     Ok(PurgePreview {
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,
@@ -539,13 +902,134 @@ pub fn purge_preview(
         status,
         complete: report.status == ScanStatus::Complete,
         effects_performed: false,
+        profile: options.profile,
         roots: report.roots.clone(),
         stale_days: options.stale_days,
         projects: output,
+        developer_caches: Vec::new(),
+        unsupported_operations: UNSUPPORTED_OPERATIONS,
         counts,
         scan_issues: report.issues.clone(),
         scan_issues_omitted: report.issues_omitted,
     })
+}
+
+pub fn unsupported_operations() -> &'static [UnsupportedOperation] {
+    UNSUPPORTED_OPERATIONS
+}
+
+fn developer_cache_preview(
+    index: &ScanTree,
+    options: &PurgeOptions,
+) -> Result<PurgePreview, String> {
+    let report = index.report();
+    let mut by_path = HashSet::new();
+    for entry in &report.entries {
+        by_path.insert(entry.path.clone());
+    }
+    let mut candidates = Vec::new();
+    let mut counts = PurgeCounts {
+        unsupported_operations: UNSUPPORTED_OPERATIONS.len(),
+        ..Default::default()
+    };
+    for entry in &report.entries {
+        if entry.kind != ResourceKind::Directory {
+            continue;
+        }
+        let Some(rule) = DEVELOPER_CACHE_RULES
+            .iter()
+            .find(|rule| path_has_suffix(&entry.path, rule.suffix))
+        else {
+            continue;
+        };
+        if entry.dataless {
+            counts.excluded += 1;
+            continue;
+        }
+        let activity = if lock_sibling_observed(&entry.path, rule, &by_path) {
+            DeveloperCacheActivity::LockFileObserved
+        } else {
+            DeveloperCacheActivity::NotDetected
+        };
+        let summary = index.summary(entry.id);
+        let modified_unix_ms = std::fs::symlink_metadata(&entry.path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok());
+        let active = activity == DeveloperCacheActivity::LockFileObserved;
+        candidates.push(DeveloperCacheCandidate {
+            tool: rule.tool,
+            rule_id: rule.rule_id,
+            rule_version: rule.rule_version,
+            ruleset_revision: DEVELOPER_CACHE_RULESET_REVISION,
+            title: rule.title,
+            path: entry.path.clone(),
+            location: rule.location,
+            location_kind: rule.location_kind,
+            kind: "directory",
+            rebuildability_note: rule.rebuildability_note,
+            user_product: false,
+            cleanup_supported: !active,
+            unsupported_reason: active.then_some(
+                "activity lock file was observed near this cache; preview is conservative",
+            ),
+            logical_bytes: index.size(entry.id, Metric::Logical),
+            allocated_bytes: index.size(entry.id, Metric::Allocated),
+            complete: summary.is_some_and(|summary| summary.complete),
+            modified_unix_ms,
+            activity,
+            evidence: rule.evidence,
+        });
+    }
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    counts.developer_caches = candidates.len();
+    let status = preview_status(report);
+    Ok(PurgePreview {
+        schema_version: PURGE_SCHEMA_VERSION,
+        kind: PURGE_KIND,
+        platform: if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "unsupported"
+        },
+        status,
+        complete: report.status == ScanStatus::Complete,
+        effects_performed: false,
+        profile: options.profile,
+        roots: report.roots.clone(),
+        stale_days: options.stale_days,
+        projects: Vec::new(),
+        developer_caches: candidates,
+        unsupported_operations: UNSUPPORTED_OPERATIONS,
+        counts,
+        scan_issues: report.issues.clone(),
+        scan_issues_omitted: report.issues_omitted,
+    })
+}
+
+fn path_has_suffix(path: &Path, suffix: &[&str]) -> bool {
+    let components = path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    components.ends_with(suffix)
+}
+
+fn lock_sibling_observed(
+    path: &Path,
+    rule: &DeveloperCacheRule,
+    by_path: &HashSet<PathBuf>,
+) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    rule.lock_siblings
+        .iter()
+        .any(|name| by_path.contains(&parent.join(name)))
 }
 
 #[cfg(test)]
@@ -654,13 +1138,88 @@ mod tests {
                 .all(|artifact| artifact.stale == Some(true))
         );
         assert_eq!(aged.counts.stale_artifacts, aged.counts.artifacts);
-        assert!(PurgeOptions { stale_days: 0 }.validate().is_err());
         assert!(
             PurgeOptions {
-                stale_days: MAX_STALE_DAYS + 1
+                stale_days: 0,
+                profile: PurgeProfile::Projects,
             }
             .validate()
             .is_err()
+        );
+        assert!(
+            PurgeOptions {
+                stale_days: MAX_STALE_DAYS + 1,
+                profile: PurgeProfile::Projects,
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn developer_cache_profile_matches_granted_root_or_ancestor_and_excludes_archives() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path();
+        fs::create_dir_all(
+            home.join("Library")
+                .join("Developer")
+                .join("Xcode")
+                .join("DerivedData")
+                .join("App-a1b2")
+                .join("Build"),
+        )
+        .expect("derived data");
+        fs::create_dir_all(
+            home.join("Library")
+                .join("Developer")
+                .join("Xcode")
+                .join("Archives")
+                .join("2026-09-24"),
+        )
+        .expect("archives");
+        fs::create_dir_all(home.join(".npm").join("_cacache").join("content-v2"))
+            .expect("npm cache");
+        let cancellation = Cancellation::default();
+        let report = scan(
+            &[home.to_path_buf()],
+            &ScanLimits::default(),
+            &cancellation,
+            |_| {},
+        )
+        .expect("scan");
+        let index = ScanTree::build(report, &cancellation).expect("index");
+        let preview = purge_preview(
+            &index,
+            &PurgeOptions {
+                stale_days: DEFAULT_STALE_DAYS,
+                profile: PurgeProfile::DeveloperCaches,
+            },
+            SystemTime::now(),
+        )
+        .expect("preview");
+        assert_eq!(preview.profile, PurgeProfile::DeveloperCaches);
+        let rule_ids = preview
+            .developer_caches
+            .iter()
+            .map(|cache| cache.rule_id)
+            .collect::<Vec<_>>();
+        assert!(rule_ids.contains(&"com.apple.xcode.derived_data"));
+        assert!(rule_ids.contains(&"org.npm.cacache"));
+        assert!(
+            preview
+                .developer_caches
+                .iter()
+                .all(|cache| !cache.path.to_string_lossy().contains("Archives"))
+        );
+        assert!(
+            preview
+                .developer_caches
+                .iter()
+                .all(|cache| !cache.user_product)
+        );
+        assert_eq!(
+            resolve_selections_by_ids(&preview, &[PurgeItemId(1)]).unwrap_err(),
+            "execution is unsupported for this purge profile"
         );
     }
 }
