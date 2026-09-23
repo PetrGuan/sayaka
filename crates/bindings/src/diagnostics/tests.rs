@@ -137,6 +137,7 @@ mod native {
                     task,
                     result: None,
                     tree: None,
+                    largest_files: Default::default(),
                     closed: false,
                 })),
             );

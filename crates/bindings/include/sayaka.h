@@ -164,7 +164,8 @@ SAYAKA_API int32_t sayaka_scan_result_v1(uint64_t handle, uint8_t *buffer, size_
  * NULL/0 and BUFFER_TOO_SMALL follow result's caller-buffer protocol, but use
  * SAYAKA_MAX_QUERY_BYTES_V1. No partial writes or trailing NUL. On payload limit
  * failure, reduce the page limit; required stays zero.
- * Roots/children data: {offset,total,next_offset,nodes}; node data: one detail;
+ * Roots/children data: {offset,total,next_offset,nodes}; largest-files data:
+ * {offset,total,next_offset,unmeasured,nodes}; node data: one detail;
  * node evidence data: {node,identity,depth,counted,observed_alias_count,aliases,
  * matching_issue_count,issues}. Evidence aliases/issues are capped by
  * SAYAKA_MAX_NODE_ALIASES_V1/SAYAKA_MAX_NODE_ISSUES_V1.
@@ -179,6 +180,8 @@ SAYAKA_API int32_t sayaka_scan_result_v1(uint64_t handle, uint8_t *buffer, size_
  * require a library build that exports them, not just an ABI version of 1. */
 SAYAKA_API int32_t sayaka_scan_roots_v1(uint64_t handle, const SayakaPageRequestV1 *request,
                                      uint8_t *buffer, size_t capacity, size_t *required);
+SAYAKA_API int32_t sayaka_scan_largest_files_v1(uint64_t handle, const SayakaPageRequestV1 *request,
+                                             uint8_t *buffer, size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_scan_node_v1(uint64_t handle, const SayakaNodeRefV1 *node,
                                     uint8_t *buffer, size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_scan_node_evidence_v1(uint64_t handle, const SayakaNodeRefV1 *node,

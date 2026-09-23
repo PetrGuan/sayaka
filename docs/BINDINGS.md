@@ -214,6 +214,7 @@ unchanged. No new effect, platform backend or capability to act on a path exists
 | Function | Data returned |
 | --- | --- |
 | `sayaka_scan_roots_v1(handle, page, buffer, capacity, required)` | A page of observed forest roots with node details |
+| `sayaka_scan_largest_files_v1(handle, page, buffer, capacity, required)` | A page of counted measured files across the current scan, largest first |
 | `sayaka_scan_node_v1(handle, node, buffer, capacity, required)` | One node with its observed parent, path, measurements and summary |
 | `sayaka_scan_node_evidence_v1(handle, node, buffer, capacity, required)` | One node plus bounded identity, alias and matching-issue evidence |
 | `sayaka_scan_children_v1(handle, parent, page, buffer, capacity, required)` | A page of the directory's immediate observed children, not a recursive result |
@@ -226,6 +227,16 @@ ALLOCATED_SIZE (known subtotal descending, unknown last, native path ascending
 for ties). Names are not case-folded, locale-collated or sorted by display text.
 The same options apply to roots. Keep sort fixed while advancing a page cursor;
 reset offset to zero when changing sort or starting a new task.
+
+`sayaka_scan_largest_files_v1` accepts only LOGICAL_SIZE and ALLOCATED_SIZE
+sorts; NAME is INVALID_ARGUMENT because the view is defined as a largest-first
+query. It returns only regular file entries with `counted == true` and a known
+measurement for the requested metric, so the first occurrence of a hard-linked
+identity is listed once and unmeasured files are excluded. The order is measured
+size descending, with deterministic ties by the same native units serialized in
+`path.raw`. The ordered ID list is cached lazily per metric for the task; after
+the first query, paging is O(page) serialization. The cache is still a snapshot
+of the current scan result and never re-reads the filesystem.
 
 The first query lazily builds and retains one `ScanTree` from a bounded clone
 of the terminal report. It does not scan again, parse the full JSON or change
@@ -289,6 +300,32 @@ For roots/children, `data` is:
         "complete": true
       },
       "child_count": 1,
+      "dataless": false
+    }
+  ]
+}
+```
+
+For largest-files, `data` has the same node shape and adds the count of counted
+files excluded because the requested measurement is unknown:
+
+```json
+{
+  "offset": 0,
+  "total": 2,
+  "next_offset": 1,
+  "unmeasured": 1,
+  "nodes": [
+    {
+      "reference": {"task_handle": "7", "node_id": "3"},
+      "resource_id": "123:4/3",
+      "parent": {"task_handle": "7", "node_id": "2"},
+      "path": {"display": "\"/fixture/a/shared\"", "encoding": "unix_bytes_hex", "raw": "2f666978747572652f612f736861726564"},
+      "kind": "file",
+      "logical_bytes": 11,
+      "allocated_bytes": 4096,
+      "directory_summary": null,
+      "child_count": null,
       "dataless": false
     }
   ]
