@@ -252,6 +252,7 @@ fn execution_json(
     task_handle: u64,
     preview_handle: u64,
     preview: &PurgePreview,
+    item_ids: &[PurgeItemId],
     report: sayaka_engine::execute::ExecutionReport,
 ) -> Value {
     let mut moved = 0usize;
@@ -262,7 +263,12 @@ fn execution_json(
         .record
         .items
         .iter()
-        .map(|item| {
+        .enumerate()
+        .map(|(index, item)| {
+            let item_id = item_ids
+                .get(index)
+                .copied()
+                .unwrap_or(PurgeItemId((index + 1) as u64));
             let status = match item.state {
                 journal::ItemState::Succeeded => {
                     moved += 1;
@@ -286,12 +292,14 @@ fn execution_json(
                 }
             };
             json!({
-                "path": item.path,
+                "id": item_id.0.to_string(),
+                "reference": { "preview_handle": preview_handle.to_string(), "item_id": item_id.0.to_string() },
+                "path": journal_native_path_json(&item.path),
                 "status": status,
-                "reason": item.reason,
-                "destination": item.destination,
+                "reason": item.reason.as_ref(),
+                "destination": item.destination.as_ref().map(journal_native_path_json),
                 "logical_bytes": item.logical_bytes,
-                "recovery_evidence": item.recovery_evidence,
+                "recovery_evidence": item.recovery_evidence.as_ref(),
             })
         })
         .collect::<Vec<_>>();
@@ -332,32 +340,98 @@ fn execution_json(
     })
 }
 
+struct RefusalDetails<'a> {
+    status: &'a str,
+    message: &'a str,
+    reason: &'a str,
+}
+
 fn refusal_json(
     task_handle: u64,
     preview_handle: u64,
     preview: &PurgePreview,
-    status: &str,
-    message: &str,
+    item_ids: &[PurgeItemId],
+    details: RefusalDetails<'_>,
     issues: Vec<Value>,
     refusals: Vec<Value>,
 ) -> Value {
+    let items = item_ids
+        .iter()
+        .map(|item_id| {
+            preview_item_json(preview_handle, preview, *item_id, "skipped", details.reason)
+        })
+        .collect::<Vec<_>>();
     json!({
         "schema_version": 1,
         "kind": "purge_execution",
         "task_handle": task_handle.to_string(),
         "source_preview_handle": preview_handle.to_string(),
-        "status": status,
+        "status": details.status,
         "complete": false,
         "effects_performed": false,
         "contract": "revalidated_purge_trash_v1",
         "plan_identifier": preview.plan_digest(),
         "plan_digest": preview.plan_digest(),
-        "error": { "message": message },
+        "error": { "message": details.message, "reason": details.reason },
         "issues": issues,
         "refusals": refusals,
-        "totals": { "requested": 0, "moved": 0, "skipped": 0, "failed": 0, "unknown": 0, "logical_bytes_moved": 0 },
-        "items": [],
+        "totals": { "requested": item_ids.len(), "moved": 0, "skipped": item_ids.len(), "failed": 0, "unknown": 0, "logical_bytes_moved": 0 },
+        "items": items,
         "residual_race_disclosed": true,
+    })
+}
+
+fn preview_item_json(
+    preview_handle: u64,
+    preview: &PurgePreview,
+    item_id: PurgeItemId,
+    status: &str,
+    reason: &str,
+) -> Value {
+    let mut current = 1u64;
+    for project in &preview.projects {
+        for artifact in &project.artifacts {
+            if current == item_id.0 {
+                return json!({
+                    "id": item_id.0.to_string(),
+                    "reference": { "preview_handle": preview_handle.to_string(), "item_id": item_id.0.to_string() },
+                    "path": wire::NativePath(&artifact.path),
+                    "status": status,
+                    "reason": reason,
+                    "destination": null,
+                    "logical_bytes": artifact.logical_bytes,
+                    "recovery_evidence": null,
+                });
+            }
+            current = current.saturating_add(1);
+        }
+    }
+    json!({
+        "id": item_id.0.to_string(),
+        "reference": { "preview_handle": preview_handle.to_string(), "item_id": item_id.0.to_string() },
+        "path": null,
+        "status": "unknown",
+        "reason": "selected preview item was unavailable while reporting refusal",
+        "destination": null,
+        "logical_bytes": null,
+        "recovery_evidence": null,
+    })
+}
+
+fn journal_native_path_json(path: &journal::NativePath) -> Value {
+    let raw = path
+        .bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let encoding = match path.encoding.as_str() {
+        "unix_bytes" => "unix_bytes_hex",
+        other => other,
+    };
+    json!({
+        "display": path.display.as_str(),
+        "encoding": encoding,
+        "raw": raw,
     })
 }
 
@@ -395,8 +469,12 @@ fn execution_worker(
                 task_handle,
                 preview_handle,
                 &preview,
-                "refused",
-                "native purge selection was refused; nothing moved",
+                &item_ids,
+                RefusalDetails {
+                    status: "refused",
+                    message: "native purge selection was refused; nothing moved",
+                    reason: "selection_refused_before_approval",
+                },
                 issues,
                 refusals,
             ),
@@ -405,16 +483,36 @@ fn execution_worker(
         .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
     }
     let plan = session.preview().clone();
-    let approval = session
-        .approve(&plan)
-        .map_err(|error| ScanError::new(ScanCode::InvalidLimits, error.to_string()))?;
+    let approval = match session.approve(&plan) {
+        Ok(approval) => approval,
+        Err(error) => {
+            let reason = error.to_string();
+            return bounded_json(
+                &refusal_json(
+                    task_handle,
+                    preview_handle,
+                    &preview,
+                    &item_ids,
+                    RefusalDetails {
+                        status: "refused",
+                        message: "native purge approval was refused during revalidation; nothing moved",
+                        reason: &reason,
+                    },
+                    issues,
+                    refusals,
+                ),
+                MAX_RESULT_BYTES,
+            )
+            .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
+        }
+    };
     let store = Store::open(&state_dir, true)
         .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
     let report = session
         .execute(&plan, &approval, &cancellation, &store)
         .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
     bounded_json(
-        &execution_json(task_handle, preview_handle, &preview, report),
+        &execution_json(task_handle, preview_handle, &preview, &item_ids, report),
         MAX_RESULT_BYTES,
     )
     .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)))
@@ -469,13 +567,16 @@ unsafe fn validate_approval(request: &SayakaPurgeExecuteRequestV1) -> Result<(),
     if request.approval != 1 {
         return Err(INVALID_ARGUMENT);
     }
+    let expected = format!("purge {} artifacts", request.item_count);
+    if request.approval_token_length != expected.len() {
+        return Err(INVALID_ARGUMENT);
+    }
     pointer(request.approval_token)?;
     // SAFETY: Caller provided readable approval-token bytes for the bounded length.
     let bytes = unsafe {
         std::slice::from_raw_parts(request.approval_token, request.approval_token_length)
     };
     let token = std::str::from_utf8(bytes).map_err(|_| INVALID_ARGUMENT)?;
-    let expected = format!("purge {} artifacts", request.item_count);
     if token != expected {
         return Err(INVALID_ARGUMENT);
     }
@@ -830,6 +931,153 @@ mod tests {
             unsafe { validate_approval(&request) },
             Err(INVALID_ARGUMENT)
         );
+    }
+
+    #[test]
+    fn approval_token_length_is_checked_before_reading_token() {
+        let digest = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let item = SayakaPurgeItemRefV1 {
+            preview_handle: 7,
+            item_id: 1,
+        };
+        let mut request = SayakaPurgeExecuteRequestV1 {
+            abi_version: ABI_VERSION,
+            struct_size: size_of::<SayakaPurgeExecuteRequestV1>() as u32,
+            preview_handle: 7,
+            plan_digest: digest.as_ptr(),
+            plan_digest_length: digest.len(),
+            items: &item,
+            item_count: 1,
+            approval: 1,
+            reserved: 0,
+            approval_token: std::ptr::null(),
+            approval_token_length: usize::MAX,
+            has_state_dir: 0,
+            state_dir: SayakaPathV1 {
+                encoding: 0,
+                bytes: std::ptr::null(),
+                byte_length: 0,
+            },
+        };
+        assert_eq!(
+            unsafe { validate_approval(&request) },
+            Err(INVALID_ARGUMENT)
+        );
+
+        request.approval_token_length = b"purge 1 artifacts".len();
+        assert_eq!(
+            unsafe { validate_approval(&request) },
+            Err(INVALID_ARGUMENT)
+        );
+    }
+
+    #[test]
+    fn execution_items_include_preview_reference_and_preview_path_shape() {
+        let preview = purge_preview_fixture();
+        let report = sayaka_engine::execute::ExecutionReport {
+            record: journal::Record {
+                schema_version: 5,
+                plan_schema_version: 5,
+                engine_version: 2,
+                rules_version: 1,
+                operation_id: "op".into(),
+                contract: "revalidated_purge_trash_v1".into(),
+                scope: journal::NativePath::from_path(std::path::Path::new("/repo")),
+                clean_policy: None,
+                created_unix_ms: 1,
+                items: vec![journal::ItemRecord {
+                    path: journal::NativePath::from_path(std::path::Path::new("/repo/target")),
+                    device: 1,
+                    inode: 2,
+                    logical_bytes: 42,
+                    state: journal::ItemState::Succeeded,
+                    reason: None,
+                    destination: Some(journal::NativePath::from_path(std::path::Path::new(
+                        "/Users/me/.Trash/target",
+                    ))),
+                    rule_binding: None,
+                    recovery_evidence: None,
+                    updated_unix_ms: 2,
+                }],
+            },
+            journal_error: None,
+        };
+        let value = execution_json(11, 7, &preview, &[PurgeItemId(1)], report);
+        let item = &value["items"][0];
+        assert_eq!(item["id"], "1");
+        assert_eq!(
+            item["reference"],
+            json!({"preview_handle": "7", "item_id": "1"})
+        );
+        assert_eq!(item["path"]["encoding"], "unix_bytes_hex");
+        assert_eq!(item["path"]["raw"], "2f7265706f2f746172676574");
+        assert_eq!(item["destination"]["encoding"], "unix_bytes_hex");
+        assert_eq!(
+            item["destination"]["raw"],
+            "2f55736572732f6d652f2e54726173682f746172676574"
+        );
+    }
+
+    #[test]
+    fn refusal_items_include_selected_preview_ids() {
+        let preview = purge_preview_fixture();
+        let value = refusal_json(
+            11,
+            7,
+            &preview,
+            &[PurgeItemId(1)],
+            RefusalDetails {
+                status: "refused",
+                message: "native purge approval was refused during revalidation; nothing moved",
+                reason: "resource_changed",
+            },
+            Vec::new(),
+            Vec::new(),
+        );
+        let item = &value["items"][0];
+        assert_eq!(value["effects_performed"], false);
+        assert_eq!(value["totals"]["requested"], 1);
+        assert_eq!(value["totals"]["skipped"], 1);
+        assert_eq!(item["id"], "1");
+        assert_eq!(item["status"], "skipped");
+        assert_eq!(item["reason"], "resource_changed");
+        assert_eq!(item["path"]["encoding"], "unix_bytes_hex");
+        assert_eq!(item["path"]["raw"], "2f7265706f2f746172676574");
+    }
+
+    fn purge_preview_fixture() -> PurgePreview {
+        PurgePreview {
+            schema_version: 1,
+            kind: purge_preview::PURGE_KIND,
+            platform: "macos",
+            status: PurgeStatus::Complete,
+            complete: true,
+            effects_performed: false,
+            roots: vec![std::path::PathBuf::from("/repo")],
+            stale_days: purge_preview::DEFAULT_STALE_DAYS,
+            projects: vec![purge_preview::PurgeProject {
+                root: std::path::PathBuf::from("/repo"),
+                markers: vec![purge_preview::ProjectMarker::CargoToml],
+                artifacts: vec![purge_preview::PurgeArtifact {
+                    path: std::path::PathBuf::from("/repo/target"),
+                    name: "target".into(),
+                    markers: vec![purge_preview::ProjectMarker::CargoToml],
+                    logical_bytes: Some(42),
+                    allocated_bytes: Some(64),
+                    complete: true,
+                    modified_unix_ms: Some(1),
+                    stale: Some(true),
+                }],
+            }],
+            counts: purge_preview::PurgeCounts {
+                projects: 1,
+                artifacts: 1,
+                stale_artifacts: 1,
+                excluded: 0,
+            },
+            scan_issues: Vec::new(),
+            scan_issues_omitted: 0,
+        }
     }
 
     #[test]

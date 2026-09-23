@@ -706,7 +706,8 @@ any refresh.
 - `items` with `1..32` unique `SayakaPurgeItemRefV1` entries whose
   `preview_handle` and `item_id` come from that preview;
 - `approval == 1` and an exact non-NUL approval token
-  `purge N artifacts`, where `N == item_count`;
+  `purge N artifacts`, where `N == item_count` and the token length exactly
+  matches that phrase;
 - `has_state_dir == 0` for the default journal directory or `1` plus an
   absolute `state_dir`.
 
@@ -741,10 +742,12 @@ Execution result JSON:
     "logical_bytes_moved": 123
   },
   "items": [{
-    "path": {"display": "\"/repo/app/target\"", "encoding": "unix_bytes", "bytes": [47, 114, 101, 112, 111]},
+    "id": "1",
+    "reference": {"preview_handle": "7", "item_id": "1"},
+    "path": {"display": "\"/repo/app/target\"", "encoding": "unix_bytes_hex", "raw": "2f7265706f2f6170702f746172676574"},
     "status": "moved",
     "reason": null,
-    "destination": {"display": "\"/Users/me/.Trash/target\"", "encoding": "unix_bytes", "bytes": [47]},
+    "destination": {"display": "\"/Users/me/.Trash/target\"", "encoding": "unix_bytes_hex", "raw": "2f55736572732f6d652f2e54726173682f746172676574"},
     "logical_bytes": 123,
     "recovery_evidence": null
   }],
@@ -752,14 +755,18 @@ Execution result JSON:
 }
 ```
 
-Per item, `status` is `moved`, `skipped`, `failed` or `unknown`. Missing,
-changed, cancelled, not-revalidated and policy-refused items are reported as
-skipped/failed/unknown with `reason`; unknown is never counted as moved. The
-path/destination shape in execution records is the journal `NativePath`
-(`display`, `encoding`, `bytes`) rather than the scan wire hex `raw`, matching
-the durable CLI receipt. If native preparation refuses the whole selected batch,
-the same `purge_execution` envelope has `status: "refused"`,
-`effects_performed: false`, `issues`, `refusals`, empty `items` and zero totals.
+Per item, `id` is the selected preview `item_id` and `reference` repeats the
+source preview handle plus item id so hosts can reconcile receipts to the
+approved preview subset. `status` is `moved`, `skipped`, `failed` or `unknown`.
+Missing, changed, cancelled, not-revalidated and policy-refused items are
+reported as skipped/failed/unknown with `reason`; unknown is never counted as
+moved. Execution `path` and `destination` are emitted with the same scan wire
+`NativePath` JSON shape as preview (`display`, hex `encoding`, `raw`) for host
+consistency; the durable journal record remains unchanged and still stores its
+native bytes shape internally. If native preparation or approval revalidation
+refuses the selected batch, the same bounded `purge_execution` envelope has
+`status: "refused"`, `effects_performed: false`, `error.reason`, `issues`,
+`refusals`, and one skipped item per selected preview id with no destination.
 
 ## Error and memory contract
 

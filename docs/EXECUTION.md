@@ -145,10 +145,17 @@ FFI execution never imports approval from JSON, broadens a subset, silently
 selects all candidates or falls back to permanent deletion. Unknown, changed,
 missing, not-revalidated, cancelled, policy-refused and journal-ambiguous items
 are reported per item as skipped/failed/unknown; unknown is never reported as
-success. The same residual final pathname/ancestor replacement race disclosed
-above remains present for the App: a different object can still be moved if a
-file or ancestor is replaced after the final check and before Foundation's
-Trash operation takes effect.
+success. Every execution item carries the selected preview `id` plus
+`reference: {preview_handle, item_id}` and emits `path`/`destination` in the same
+lossless scan `NativePath` shape as preview (`display`, hex `encoding`, `raw`);
+the journal's durable native-byte receipt is not changed. Whole-batch native
+preparation or approval revalidation refusal is still a successful API result:
+the bounded `purge_execution` envelope has `status: "refused"`,
+`effects_performed: false`, `error.reason`, and skipped per-selected-item
+statuses with no destinations. The same residual final pathname/ancestor
+replacement race disclosed above remains present for the App: a different object
+can still be moved if a file or ancestor is replaced after the final check and
+before Foundation's Trash operation takes effect.
 
 Without `--execute`, no target or application state is modified. `--execute`
 requires terminal stdin/stdout/stderr, shows the exact preview and risk statement,
