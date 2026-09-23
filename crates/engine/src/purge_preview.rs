@@ -982,7 +982,7 @@ fn developer_cache_preview_with_home(
         .entries
         .iter()
         .filter(|entry| entry.kind == ResourceKind::Directory)
-        .filter_map(|entry| canonical_existing_directory(&entry.path).map(|path| (entry, path)))
+        .map(|entry| (entry, entry.path.clone()))
         .collect::<Vec<_>>();
     directories.sort_by(|left, right| left.1.cmp(&right.1));
     let mut candidates = Vec::new();
@@ -992,25 +992,22 @@ fn developer_cache_preview_with_home(
         unsupported_operations: unsupported_operations.len(),
         ..Default::default()
     };
-    for (entry, canonical_path) in directories {
+    for (entry, path) in directories {
         if matched_locations
             .iter()
-            .any(|location| canonical_path.starts_with(location) && canonical_path != *location)
+            .any(|location| path.starts_with(location) && path != *location)
         {
             continue;
         }
 
         let can_contain_rule = rule_locations
             .iter()
-            .any(|location| paths_are_related(&canonical_path, &location.path));
+            .any(|location| paths_are_related(&path, &location.path));
         if !can_contain_rule {
             continue;
         }
 
-        let Some(location) = rule_locations
-            .iter()
-            .find(|location| canonical_path == location.path)
-        else {
+        let Some(location) = rule_locations.iter().find(|location| path == location.path) else {
             continue;
         };
         let rule = location.rule;
@@ -1018,7 +1015,7 @@ fn developer_cache_preview_with_home(
             counts.excluded += 1;
             continue;
         }
-        matched_locations.push(canonical_path);
+        matched_locations.push(path);
         let activity = if lock_sibling_observed(&entry.path, rule, &by_path) {
             DeveloperCacheActivity::LockFileObserved
         } else {
@@ -1099,11 +1096,7 @@ fn developer_cache_rule_locations(
     Ok(DEVELOPER_CACHE_RULES
         .iter()
         .filter_map(|rule| {
-            let target = rule
-                .suffix
-                .iter()
-                .fold(account_home.clone(), |path, component| path.join(component));
-            canonical_existing_directory(&target)
+            nofollow_existing_rule_directory(&account_home, rule)
                 .map(|path| DeveloperCacheRuleLocation { rule, path })
         })
         .collect())
@@ -1111,13 +1104,18 @@ fn developer_cache_rule_locations(
 
 pub fn revalidate_developer_cache_selection(selection: &CacheSelection) -> Result<(), String> {
     let account_home = effective_account_home()?;
-    let canonical_path = canonical_existing_directory(&selection.path)
-        .ok_or_else(|| "developer cache target is no longer a real directory".to_owned())?;
-    let locations = developer_cache_rule_locations(&account_home)?;
+    revalidate_developer_cache_selection_with_home(selection, &account_home)
+}
+
+fn revalidate_developer_cache_selection_with_home(
+    selection: &CacheSelection,
+    account_home: &Path,
+) -> Result<(), String> {
+    let locations = developer_cache_rule_locations(account_home)?;
     let location = locations
         .iter()
         .find(|location| {
-            location.rule.rule_id == selection.rule_id && location.path == canonical_path
+            location.rule.rule_id == selection.rule_id && location.path == selection.path
         })
         .ok_or_else(|| {
             "developer cache target is no longer the anchored passwd-home rule location".to_owned()
@@ -1133,12 +1131,19 @@ pub fn revalidate_developer_cache_selection(selection: &CacheSelection) -> Resul
     Ok(())
 }
 
-fn canonical_existing_directory(path: &Path) -> Option<PathBuf> {
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    if !metadata.is_dir() {
-        return None;
+fn nofollow_existing_rule_directory(
+    account_home: &Path,
+    rule: &DeveloperCacheRule,
+) -> Option<PathBuf> {
+    let mut path = account_home.to_path_buf();
+    for component in rule.suffix {
+        path = path.join(component);
+        let metadata = std::fs::symlink_metadata(&path).ok()?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return None;
+        }
     }
-    std::fs::canonicalize(path).ok()
+    Some(path)
 }
 
 fn paths_are_related(left: &Path, right: &Path) -> bool {
@@ -1485,5 +1490,53 @@ mod tests {
         let preview = developer_cache_preview_at(&home, &home);
 
         assert!(preview.developer_caches.is_empty());
+    }
+
+    #[test]
+    fn symlinked_developer_cache_intermediate_is_not_a_candidate_or_selection() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let outside_gradle = root.path().join("outside-gradle");
+        let modules = outside_gradle
+            .join("caches")
+            .join("modules-2")
+            .join("files-2.1");
+        fs::create_dir_all(&modules).expect("outside gradle cache");
+        fs::create_dir_all(&home).expect("home");
+        std::os::unix::fs::symlink(&outside_gradle, home.join(".gradle")).expect("gradle symlink");
+
+        let preview = developer_cache_preview_at(root.path(), &home);
+
+        assert!(preview.developer_caches.is_empty());
+        let identity = FileIdentity::Unix {
+            device: 0,
+            inode: 0,
+        };
+        assert!(
+            revalidate_developer_cache_selection_with_home(
+                &CacheSelection {
+                    path: modules.clone(),
+                    expected_identity: identity,
+                    rule_id: "org.gradle.modules_cache",
+                },
+                &home
+            )
+            .is_err()
+        );
+        assert!(
+            revalidate_developer_cache_selection_with_home(
+                &CacheSelection {
+                    path: home
+                        .join(".gradle")
+                        .join("caches")
+                        .join("modules-2")
+                        .join("files-2.1"),
+                    expected_identity: identity,
+                    rule_id: "org.gradle.modules_cache",
+                },
+                &home
+            )
+            .is_err()
+        );
     }
 }

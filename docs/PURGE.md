@@ -53,17 +53,20 @@ Rules are anchored to the documented absolute locations such as
 or an ancestor such as `~/Library` can report it, but an unrelated descendant
 whose components merely end in `Library/Caches/pip` never qualifies.
 
-The matcher compares canonical existing directory paths and stops considering
-descendants once a rule location is matched. Symlinked cache directories are not
-followed into their targets; they are handled like other skipped symlink nodes
-from the scan and are not developer-cache candidates.
+The matcher builds each expected rule path lexically from the canonical
+passwd-home path and the documented suffix, then stops considering descendants
+once a rule location is matched. Each component below the home, including the
+final cache directory, must be a real directory rather than a symlink; symlinked
+intermediates or cache directories are not followed into their targets and are
+not developer-cache candidates.
 
 Cache execution revalidates immediately before approval and again before each
 Trash move: the directory must still be the same device/inode and type observed
-in the preview, still a real non-symlink directory at exactly the recognized
-passwd-home rule path, and still pass the profile eligibility checks. Candidates
-with `cleanup_supported: false` (for example, a lock file was observed) are never
-approvable. Trash is the only effect; a failed Trash operation never falls back
+in the preview, every component below the home through the target must still be
+a real directory at exactly the recognized passwd-home rule path, and profile
+eligibility checks must still pass. Candidates with `cleanup_supported: false`
+(for example, a lock file was observed) are never approvable. Trash is the only
+effect; a failed Trash operation never falls back
 to permanent deletion. As with project purge, the residual final pathname or
 ancestor replacement race remains disclosed rather than claimed closed.
 

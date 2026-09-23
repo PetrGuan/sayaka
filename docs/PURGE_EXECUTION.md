@@ -239,9 +239,10 @@ destinations; malformed requests still fail at the ABI boundary as documented in
 [BINDINGS.md](BINDINGS.md).
 
 Per item, execution revalidates immediately before approval and again at the
-last native guard: the path must still canonicalize to exactly the documented
-rule location under the effective account home returned by `getpwuid_r`, must
-still be a real non-symlink directory, must still have the same Unix
+last native guard: the path must still exactly equal the documented rule
+location built from the effective account home returned by `getpwuid_r`, every
+component below that home through the final target must still be a real
+directory rather than a symlink, the target must still have the same Unix
 device/inode identity and directory type recorded by the preview, and must still
 pass profile eligibility checks. The native move is the same Foundation Trash
 mechanism used by `revalidated_purge_trash_v1`; a failed Trash call is reported

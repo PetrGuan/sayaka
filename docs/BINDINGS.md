@@ -776,9 +776,10 @@ destination. The execution worker prepares a fresh engine `PurgeSession` for
 project artifacts or `CacheSession` for developer caches. Project execution
 revalidates identity/ancestry/marker evidence. Cache execution revalidates that
 the target is still the same device/inode directory observed in the preview,
-not a symlink, still exactly the known rule location under the effective
-passwd-database home, and still cleanup-supported (for example, no activity lock
-file). Both paths journal schema 5 durable intent/outcome records and use only
+that every component below the effective passwd-database home through the target
+is a real directory rather than a symlink, still exactly the known rule
+location, and still cleanup-supported (for example, no activity lock file). Both
+paths journal schema 5 durable intent/outcome records and use only
 Foundation Trash.
 
 Execution result JSON:

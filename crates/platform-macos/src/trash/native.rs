@@ -1076,6 +1076,11 @@ impl Candidate {
     }
 
     fn check_protection(&self) -> io::Result<()> {
+        if self.shape == TargetShape::CacheDirectory && !developer_cache_rule_suffix(&self.path) {
+            return Err(refused(
+                "developer cache path is not a documented rule location",
+            ));
+        }
         for path in [&self.path, &self.target.physical, &self.scope] {
             // The bundle target's own `.app` name is the intended target, not
             // a protected package; its parent chain keeps full protection, so
@@ -1088,7 +1093,12 @@ impl Candidate {
             } else {
                 path
             };
-            if standard_protected(checked) {
+            let protected = if self.shape == TargetShape::CacheDirectory {
+                cache_directory_protected(checked)
+            } else {
+                standard_protected(checked)
+            };
+            if protected {
                 return Err(refused(
                     "system, cloud, hidden, or application-managed path",
                 ));
@@ -1755,6 +1765,14 @@ fn fold(value: &OsStr) -> Vec<u8> {
 }
 
 fn standard_protected(path: &Path) -> bool {
+    protected_path(path, false)
+}
+
+fn cache_directory_protected(path: &Path) -> bool {
+    protected_path(path, true)
+}
+
+fn protected_path(path: &Path, allow_cache_home_components: bool) -> bool {
     let parts: Vec<_> = path
         .components()
         .filter_map(|part| match part {
@@ -1794,16 +1812,12 @@ fn standard_protected(path: &Path) -> bool {
         return true;
     }
     parts.iter().any(|part| {
-        part.starts_with(b".")
+        (!allow_cache_home_components && part.starts_with(b"."))
             || matches!(
                 part.as_slice(),
-                b"library"
-                    | b"applications"
-                    | b"dropbox"
-                    | b"onedrive"
-                    | b"google drive"
-                    | b"icloud drive"
+                b"applications" | b"dropbox" | b"onedrive" | b"google drive" | b"icloud drive"
             )
+            || (!allow_cache_home_components && part.as_slice() == b"library")
             || part.starts_with(b"onedrive - ")
             || [
                 b".app".as_slice(),
@@ -1820,6 +1834,51 @@ fn standard_protected(path: &Path) -> bool {
             ]
             .iter()
             .any(|suffix| part.ends_with(suffix))
+    })
+}
+
+fn developer_cache_rule_suffix(path: &Path) -> bool {
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|part| match part {
+            Component::Normal(value) => Some(fold(value)),
+            _ => None,
+        })
+        .collect();
+    let parts = if parts.starts_with(&[b"system".to_vec(), b"volumes".to_vec(), b"data".to_vec()]) {
+        &parts[3..]
+    } else {
+        &parts[..]
+    };
+    [
+        &[
+            b"library".as_slice(),
+            b"developer",
+            b"xcode",
+            b"deriveddata",
+        ][..],
+        &[b"library".as_slice(), b"caches", b"com.apple.dt.xcode"][..],
+        &[
+            b"library".as_slice(),
+            b"developer",
+            b"coresimulator",
+            b"caches",
+        ][..],
+        &[b".npm".as_slice(), b"_cacache"][..],
+        &[b"library".as_slice(), b"pnpm", b"store"][..],
+        &[b"library".as_slice(), b"caches", b"yarn"][..],
+        &[b"library".as_slice(), b"caches", b"pip"][..],
+        &[b".cargo".as_slice(), b"registry", b"cache"][..],
+        &[b".gradle".as_slice(), b"caches", b"modules-2", b"files-2.1"][..],
+        &[b"library".as_slice(), b"caches", b"homebrew", b"downloads"][..],
+    ]
+    .iter()
+    .any(|suffix| {
+        parts.len() >= suffix.len()
+            && parts[parts.len() - suffix.len()..]
+                .iter()
+                .zip(suffix.iter())
+                .all(|(part, expected)| part.as_slice() == *expected)
     })
 }
 

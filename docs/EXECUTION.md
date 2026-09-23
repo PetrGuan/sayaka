@@ -158,12 +158,13 @@ are not emulated by the App.
 
 `revalidated_cache_trash_v1` revalidates each approved cache before approval and
 again immediately before its native call: the target must still be the same
-device/inode directory observed in the preview, still a real directory rather
-than a symlink, still exactly the recognized documented cache path under the
-effective `getpwuid_r` home, and still cleanup-supported (activity lock files or
-other profile refusal evidence fail closed). Trash is the only effect; if the
-Foundation Trash call fails, the item fails and Sayaka never retries with
-permanent deletion. The journal record reuses schema 5. The same residual final
+device/inode directory observed in the preview, every component below the
+effective `getpwuid_r` home through the final target must still be a real
+directory rather than a symlink, the path must still exactly equal the recognized
+documented cache path, and the item must still be cleanup-supported (activity
+lock files or other profile refusal evidence fail closed). Trash is the only
+effect; if the Foundation Trash call fails, the item fails and Sayaka never
+retries with permanent deletion. The journal record reuses schema 5. The same residual final
 pathname/ancestor replacement race disclosed above remains present for cache
 directories.
 
