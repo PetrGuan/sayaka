@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Narrow v1 C ABI for read-only scan and installer tasks. See include/sayaka.h.
+//! Narrow v1 C ABI for scan, installer and purge tasks. See include/sayaka.h.
 //! Foreign pointer validity is the caller's responsibility; errors cannot
-//! recover invalid memory. No callbacks, signals, CLI children or effect APIs.
+//! recover invalid memory. No callbacks, signals or CLI children.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -12,6 +12,8 @@ mod diagnostics;
 pub use diagnostics::*;
 mod installer;
 pub use installer::*;
+mod purge;
+pub use purge::*;
 
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
@@ -91,11 +93,12 @@ struct Registry {
     next_handle: u64,
     jobs: HashMap<u64, Arc<Mutex<Job>>>,
     installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
+    purges: HashMap<u64, Arc<Mutex<purge::PurgeJob>>>,
 }
 
 impl Registry {
     fn allocate_handle(&mut self) -> Result<u64, i32> {
-        if self.jobs.len() + self.installers.len() >= MAX_TASKS {
+        if self.jobs.len() + self.installers.len() + self.purges.len() >= MAX_TASKS {
             return Err(LIMIT_EXCEEDED);
         }
         let handle = self.next_handle;
@@ -111,6 +114,7 @@ fn registry() -> &'static Mutex<Registry> {
             next_handle: 1,
             jobs: HashMap::new(),
             installers: HashMap::new(),
+            purges: HashMap::new(),
         })
     })
 }
@@ -222,7 +226,7 @@ pub extern "C" fn sayaka_status_message_v1(code: i32) -> *const c_char {
         INVALID_NODE => c"unknown node or node reference belongs to another scan handle",
         NOT_DIRECTORY => c"node is not an observed directory",
         QUERY_UNAVAILABLE => c"task failed; inspect its result for details",
-        INVALID_CANDIDATE => c"unknown, duplicate, or cross-task installer candidate reference",
+        INVALID_CANDIDATE => c"unknown, duplicate, stale, or cross-task candidate/item reference",
         _ => c"unknown status code",
     }
     .as_ptr()

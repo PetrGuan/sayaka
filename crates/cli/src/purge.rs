@@ -2,7 +2,7 @@
 
 use crate::{human, output};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
-use sayaka_engine::execute::{PurgeSelection, PurgeSession};
+use sayaka_engine::execute::PurgeSession;
 use sayaka_engine::journal::Store;
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::purge_preview::{
@@ -231,60 +231,6 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     }
 }
 
-/// Resolves every `--only` path against this invocation's preview: exact
-/// artifact match, no duplicates, traversal rejected. Markers are rebuilt
-/// from the preview's own binding evidence.
-fn resolve_selections(preview: &PurgePreview, only: &[PathBuf]) -> io::Result<Vec<PurgeSelection>> {
-    let mut selections = Vec::with_capacity(only.len());
-    for requested in only {
-        if requested
-            .components()
-            .any(|part| matches!(part, std::path::Component::ParentDir))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "'..' traversal is not accepted in --only",
-            ));
-        }
-        let requested = std::path::absolute(requested)?;
-        if selections
-            .iter()
-            .any(|selection: &PurgeSelection| selection.artifact == requested)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("duplicate --only selection: {}", requested.display()),
-            ));
-        }
-        let mut matched = None;
-        for project in &preview.projects {
-            for artifact in &project.artifacts {
-                if artifact.path == requested {
-                    matched = Some(PurgeSelection {
-                        artifact: artifact.path.clone(),
-                        project_root: project.root.clone(),
-                        markers: artifact
-                            .markers
-                            .iter()
-                            .map(|marker| project.root.join(marker.file_name()))
-                            .collect(),
-                    });
-                }
-            }
-        }
-        selections.push(matched.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "--only names no artifact of this invocation's preview: {}",
-                    requested.display()
-                ),
-            )
-        })?);
-    }
-    Ok(selections)
-}
-
 fn run_execution(
     args: &ArgMatches,
     preview: &PurgePreview,
@@ -302,7 +248,8 @@ fn run_execution(
             ),
         ));
     }
-    let selections = resolve_selections(preview, only)?;
+    let selections = purge_preview::resolve_selections_by_paths(preview, only)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     let mut session = PurgeSession::prepare(&selections, cancellation)?;
     for issue in session.issues() {
         writeln!(
@@ -538,7 +485,8 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let preview = preview_with_artifacts(root.path());
         let selections =
-            resolve_selections(&preview, &[root.path().join("app/target")]).expect("selections");
+            purge_preview::resolve_selections_by_paths(&preview, &[root.path().join("app/target")])
+                .expect("selections");
         assert_eq!(selections.len(), 1);
         assert_eq!(selections[0].artifact, root.path().join("app/target"));
         assert_eq!(selections[0].project_root, root.path().join("app"));
@@ -552,9 +500,12 @@ mod tests {
     fn only_resolution_rejects_unknown_duplicate_and_traversal() {
         let root = tempfile::tempdir().expect("tempdir");
         let preview = preview_with_artifacts(root.path());
-        assert!(resolve_selections(&preview, &[root.path().join("app/other")]).is_err());
         assert!(
-            resolve_selections(
+            purge_preview::resolve_selections_by_paths(&preview, &[root.path().join("app/other")])
+                .is_err()
+        );
+        assert!(
+            purge_preview::resolve_selections_by_paths(
                 &preview,
                 &[
                     root.path().join("app/target"),
@@ -564,7 +515,11 @@ mod tests {
             .is_err()
         );
         assert!(
-            resolve_selections(&preview, &[std::path::PathBuf::from("app/../app/target")]).is_err()
+            purge_preview::resolve_selections_by_paths(
+                &preview,
+                &[std::path::PathBuf::from("app/../app/target")]
+            )
+            .is_err()
         );
     }
 

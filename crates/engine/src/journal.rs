@@ -40,6 +40,19 @@ pub const MAX_RECORD_BYTES: u64 = 1024 * 1024;
 pub const MAX_RECORDS: usize = 1024;
 pub const MAX_READ_BYTES: usize = 16 * 1024 * 1024;
 
+pub fn validate_state_directory_path(path: &Path) -> io::Result<()> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(invalid(
+            "state directory must be an absolute physical path without '..'",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Default)]
 pub(crate) struct Publication {

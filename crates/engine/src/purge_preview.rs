@@ -9,9 +9,12 @@
 //! excluded, not merged. This preview performs no effects: directory effects
 //! remain unapproved; see docs/DIRECTORY_ACTIONS.md.
 
+use crate::execute::PurgeSelection;
 use crate::model::ResourceKind;
 use crate::scan::ScanStatus;
 use crate::scan::index::{Metric, ScanTree};
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -176,6 +179,200 @@ pub struct PurgePreview {
     /// or failed coverage; never filtered away.
     pub scan_issues: Vec<crate::scan::ScanIssue>,
     pub scan_issues_omitted: usize,
+}
+
+/// Stable host-facing item reference for artifacts in a preview. Item ids are
+/// scoped to one preview/digest and intentionally have no meaning on their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PurgeItemId(pub u64);
+
+impl PurgePreview {
+    pub fn plan_digest(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.schema_version.to_le_bytes());
+        hasher.update(self.kind.as_bytes());
+        hasher.update(self.platform.as_bytes());
+        hasher.update(self.status.as_str().as_bytes());
+        hasher.update([u8::from(self.complete)]);
+        hasher.update(self.stale_days.to_le_bytes());
+        for root in &self.roots {
+            hash_path(&mut hasher, root);
+        }
+        for project in &self.projects {
+            hash_path(&mut hasher, &project.root);
+            for marker in &project.markers {
+                hasher.update(marker.as_str().as_bytes());
+                hasher.update([0]);
+            }
+            for artifact in &project.artifacts {
+                hash_path(&mut hasher, &artifact.path);
+                hasher.update(artifact.name.as_bytes());
+                hasher.update([0]);
+                for marker in &artifact.markers {
+                    hasher.update(marker.as_str().as_bytes());
+                    hasher.update([0]);
+                }
+                hash_option_u64(&mut hasher, artifact.logical_bytes);
+                hash_option_u64(&mut hasher, artifact.allocated_bytes);
+                hasher.update([u8::from(artifact.complete)]);
+                hash_option_i64(&mut hasher, artifact.modified_unix_ms);
+                hasher.update(match artifact.stale {
+                    Some(true) => [1],
+                    Some(false) => [2],
+                    None => [0],
+                });
+            }
+        }
+        hasher.update((self.counts.projects as u64).to_le_bytes());
+        hasher.update((self.counts.artifacts as u64).to_le_bytes());
+        hasher.update((self.counts.stale_artifacts as u64).to_le_bytes());
+        hasher.update((self.counts.excluded as u64).to_le_bytes());
+        let digest = hasher.finalize();
+        let mut out = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            use std::fmt::Write;
+            write!(&mut out, "{byte:02x}").expect("hex write");
+        }
+        out
+    }
+
+    pub fn item_count(&self) -> usize {
+        self.projects
+            .iter()
+            .map(|project| project.artifacts.len())
+            .sum()
+    }
+
+    pub fn item_id_for(&self, project_index: usize, artifact_index: usize) -> PurgeItemId {
+        let mut value = 1u64;
+        for project in &self.projects[..project_index] {
+            value += project.artifacts.len() as u64;
+        }
+        PurgeItemId(value + artifact_index as u64)
+    }
+}
+
+fn hash_path(hasher: &mut Sha256, path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        hasher.update(path.as_os_str().as_bytes());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        for unit in path.as_os_str().encode_wide() {
+            hasher.update(unit.to_le_bytes());
+        }
+    }
+    hasher.update([0xff]);
+}
+
+fn hash_option_u64(hasher: &mut Sha256, value: Option<u64>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            hasher.update(value.to_le_bytes());
+        }
+        None => hasher.update([0]),
+    }
+}
+
+fn hash_option_i64(hasher: &mut Sha256, value: Option<i64>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            hasher.update(value.to_le_bytes());
+        }
+        None => hasher.update([0]),
+    }
+}
+
+pub fn resolve_selections_by_paths(
+    preview: &PurgePreview,
+    only: &[PathBuf],
+) -> Result<Vec<PurgeSelection>, String> {
+    let mut selections = Vec::with_capacity(only.len());
+    for requested in only {
+        if requested
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err("'..' traversal is not accepted in purge selections".into());
+        }
+        let requested = std::path::absolute(requested)
+            .map_err(|error| format!("cannot resolve purge selection: {error}"))?;
+        if selections
+            .iter()
+            .any(|selection: &PurgeSelection| selection.artifact == requested)
+        {
+            return Err(format!(
+                "duplicate purge selection: {}",
+                requested.display()
+            ));
+        }
+        selections.push(selection_for_path(preview, &requested).ok_or_else(|| {
+            format!(
+                "selection names no artifact of this preview: {}",
+                requested.display()
+            )
+        })?);
+    }
+    Ok(selections)
+}
+
+pub fn resolve_selections_by_ids(
+    preview: &PurgePreview,
+    item_ids: &[PurgeItemId],
+) -> Result<Vec<PurgeSelection>, String> {
+    let mut seen = HashSet::new();
+    let mut selections = Vec::with_capacity(item_ids.len());
+    for id in item_ids {
+        if id.0 == 0 || !seen.insert(id.0) {
+            return Err("purge item references must be unique nonzero ids".into());
+        }
+        selections.push(
+            selection_for_id(preview, *id)
+                .ok_or_else(|| format!("purge item id {} is not in this preview", id.0))?,
+        );
+    }
+    Ok(selections)
+}
+
+fn selection_for_id(preview: &PurgePreview, id: PurgeItemId) -> Option<PurgeSelection> {
+    let mut current = 1u64;
+    for project in &preview.projects {
+        for artifact in &project.artifacts {
+            if current == id.0 {
+                return Some(selection_from_parts(project, artifact));
+            }
+            current = current.checked_add(1)?;
+        }
+    }
+    None
+}
+
+fn selection_for_path(preview: &PurgePreview, path: &std::path::Path) -> Option<PurgeSelection> {
+    for project in &preview.projects {
+        for artifact in &project.artifacts {
+            if artifact.path == path {
+                return Some(selection_from_parts(project, artifact));
+            }
+        }
+    }
+    None
+}
+
+fn selection_from_parts(project: &PurgeProject, artifact: &PurgeArtifact) -> PurgeSelection {
+    PurgeSelection {
+        artifact: artifact.path.clone(),
+        project_root: project.root.clone(),
+        markers: artifact
+            .markers
+            .iter()
+            .map(|marker| project.root.join(marker.file_name()))
+            .collect(),
+    }
 }
 
 /// Builds the read-only purge preview from one finished scan index.

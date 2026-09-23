@@ -128,6 +128,35 @@ read-only action envelope. See [installer files](INSTALLER_PREVIEW.md).
 Installer outcomes reuse ordinary-file records; recognition is not a durable
 rule authorization, and no new journal/schema or recovery guarantee is implied.
 
+The native bindings expose the project-artifact purge frontend as an asynchronous
+C ABI in `sayaka_purge_*_v1`; see [BINDINGS.md](BINDINGS.md#purge-preview-and-revalidated-trash-execution).
+Preview accepts one explicit security-scoped root supplied by the host and the
+same staleness option as the CLI. It returns marker-bound artifact candidates
+grouped by project with lossless scan `NativePath` JSON, null for unknown sizes,
+reasons/evidence, stable preview-scoped item references and a SHA-256
+`plan_digest`. Execution requires that preview handle, the exact digest, a
+nonempty unique subset of item ids and an explicit approval token
+`purge N artifacts`. The binding prepares the existing engine `PurgeSession`
+from that subset, revalidates identity/ancestry/marker evidence, journals through
+`Store` as the CLI does, and moves only through the native Trash contract
+`revalidated_purge_trash_v1`.
+
+FFI execution never imports approval from JSON, broadens a subset, silently
+selects all candidates or falls back to permanent deletion. Unknown, changed,
+missing, not-revalidated, cancelled, policy-refused and journal-ambiguous items
+are reported per item as skipped/failed/unknown; unknown is never reported as
+success. Every execution item carries the selected preview `id` plus
+`reference: {preview_handle, item_id}` and emits `path`/`destination` in the same
+lossless scan `NativePath` shape as preview (`display`, hex `encoding`, `raw`);
+the journal's durable native-byte receipt is not changed. Whole-batch native
+preparation or approval revalidation refusal is still a successful API result:
+the bounded `purge_execution` envelope has `status: "refused"`,
+`effects_performed: false`, `error.reason`, and skipped per-selected-item
+statuses with no destinations. The same residual final pathname/ancestor
+replacement race disclosed above remains present for the App: a different object
+can still be moved if a file or ancestor is replaced after the final check and
+before Foundation's Trash operation takes effect.
+
 Without `--execute`, no target or application state is modified. `--execute`
 requires terminal stdin/stdout/stderr, shows the exact preview and risk statement,
 and requires the exact phrase `trash N`. Blank input, EOF or another phrase
