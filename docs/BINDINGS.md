@@ -307,7 +307,8 @@ digits, whereas scan input uses little-endian bytes. Do not confuse the two.
 
 For files, `logical_bytes`/`allocated_bytes` retain their individual observations.
 For directories they are **known subtotals**, not necessarily complete sizes:
-always consult the summary's unknown counts and `complete`. Wholly unmeasured
+always consult the summary's unknown counts and `complete`, which is scoped to
+the directory's subtree as described in [BROWSING.md](BROWSING.md). Wholly unmeasured
 directories and incomplete directories with no observed files return null,
 whereas a completely scanned empty directory returns zero. Links and other
 non-file objects have null payload sizes. The two measurements stay independent.

@@ -265,7 +265,8 @@ pub fn assess_directory<'a>(
     } else if policy.protects(&target.path) {
         assessment.block(DirectoryBlockerCode::ProtectedLocation, target.id);
     }
-    if !assessment.summary().complete {
+    // Any gap in the scan blocks, even outside the selected subtree.
+    if !tree.complete() || !assessment.summary().complete {
         assessment.block(DirectoryBlockerCode::IncompleteScan, target.id);
     }
     if assessment.summary().logical_bytes_unknown_files > 0
