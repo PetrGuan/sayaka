@@ -238,7 +238,8 @@ pub struct EvidenceSource {
 // Each rule is a documented cache/download-store convention and intentionally
 // excludes Xcode Archives, CoreSimulator Devices, package-manager config, logs,
 // installed products, and other user-authored artifacts. Locations are matched
-// when the granted preview root is the cache directory itself or any ancestor.
+// only at their documented account-home-anchored absolute paths; the granted
+// preview root may be that cache directory itself or any ancestor.
 const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
     DeveloperCacheRule {
         tool: "xcode",
@@ -922,30 +923,61 @@ fn developer_cache_preview(
     index: &ScanTree,
     options: &PurgeOptions,
 ) -> Result<PurgePreview, String> {
+    let account_home = effective_account_home()?;
+    developer_cache_preview_with_home(index, options, &account_home)
+}
+
+fn developer_cache_preview_with_home(
+    index: &ScanTree,
+    options: &PurgeOptions,
+    account_home: &Path,
+) -> Result<PurgePreview, String> {
     let report = index.report();
     let mut by_path = HashSet::new();
     for entry in &report.entries {
         by_path.insert(entry.path.clone());
     }
+    let rule_locations = developer_cache_rule_locations(account_home)?;
+    let mut directories = report
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == ResourceKind::Directory)
+        .filter_map(|entry| canonical_existing_directory(&entry.path).map(|path| (entry, path)))
+        .collect::<Vec<_>>();
+    directories.sort_by(|left, right| left.1.cmp(&right.1));
     let mut candidates = Vec::new();
+    let mut matched_locations: Vec<PathBuf> = Vec::new();
     let mut counts = PurgeCounts {
         unsupported_operations: UNSUPPORTED_OPERATIONS.len(),
         ..Default::default()
     };
-    for entry in &report.entries {
-        if entry.kind != ResourceKind::Directory {
+    for (entry, canonical_path) in directories {
+        if matched_locations
+            .iter()
+            .any(|location| canonical_path.starts_with(location) && canonical_path != *location)
+        {
             continue;
         }
-        let Some(rule) = DEVELOPER_CACHE_RULES
+
+        let can_contain_rule = rule_locations
             .iter()
-            .find(|rule| path_has_suffix(&entry.path, rule.suffix))
+            .any(|location| paths_are_related(&canonical_path, &location.path));
+        if !can_contain_rule {
+            continue;
+        }
+
+        let Some(location) = rule_locations
+            .iter()
+            .find(|location| canonical_path == location.path)
         else {
             continue;
         };
+        let rule = location.rule;
         if entry.dataless {
             counts.excluded += 1;
             continue;
         }
+        matched_locations.push(canonical_path);
         let activity = if lock_sibling_observed(&entry.path, rule, &by_path) {
             DeveloperCacheActivity::LockFileObserved
         } else {
@@ -1008,15 +1040,55 @@ fn developer_cache_preview(
     })
 }
 
-fn path_has_suffix(path: &Path, suffix: &[&str]) -> bool {
-    let components = path
-        .components()
-        .filter_map(|component| match component {
-            std::path::Component::Normal(value) => value.to_str(),
-            _ => None,
+struct DeveloperCacheRuleLocation<'a> {
+    rule: &'a DeveloperCacheRule,
+    path: PathBuf,
+}
+
+fn developer_cache_rule_locations(
+    account_home: &Path,
+) -> Result<Vec<DeveloperCacheRuleLocation<'static>>, String> {
+    let account_home = std::fs::canonicalize(account_home).map_err(|error| {
+        format!(
+            "failed to canonicalize passwd account home {}: {error}",
+            account_home.display()
+        )
+    })?;
+    Ok(DEVELOPER_CACHE_RULES
+        .iter()
+        .filter_map(|rule| {
+            let target = rule
+                .suffix
+                .iter()
+                .fold(account_home.clone(), |path, component| path.join(component));
+            canonical_existing_directory(&target)
+                .map(|path| DeveloperCacheRuleLocation { rule, path })
         })
-        .collect::<Vec<_>>();
-    components.ends_with(suffix)
+        .collect())
+}
+
+fn canonical_existing_directory(path: &Path) -> Option<PathBuf> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_dir() {
+        return None;
+    }
+    std::fs::canonicalize(path).ok()
+}
+
+fn paths_are_related(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}
+
+#[cfg(target_os = "macos")]
+fn effective_account_home() -> Result<PathBuf, String> {
+    sayaka_platform_macos::effective_account_home().map_err(|error| {
+        format!("failed to resolve effective account home from passwd database: {error}")
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn effective_account_home() -> Result<PathBuf, String> {
+    Err("developer cache profile is only supported on macOS account homes".into())
 }
 
 fn lock_sibling_observed(
@@ -1073,6 +1145,30 @@ mod tests {
         .expect("scan");
         let index = ScanTree::build(report, &cancellation).expect("index");
         purge_preview(&index, &PurgeOptions::default(), now).expect("preview")
+    }
+
+    fn developer_cache_preview_at(
+        root: &std::path::Path,
+        account_home: &std::path::Path,
+    ) -> PurgePreview {
+        let cancellation = Cancellation::default();
+        let report = scan(
+            &[root.to_path_buf()],
+            &ScanLimits::default(),
+            &cancellation,
+            |_| {},
+        )
+        .expect("scan");
+        let index = ScanTree::build(report, &cancellation).expect("index");
+        developer_cache_preview_with_home(
+            &index,
+            &PurgeOptions {
+                stale_days: DEFAULT_STALE_DAYS,
+                profile: PurgeProfile::DeveloperCaches,
+            },
+            account_home,
+        )
+        .expect("preview")
     }
 
     #[test]
@@ -1157,7 +1253,7 @@ mod tests {
     }
 
     #[test]
-    fn developer_cache_profile_matches_granted_root_or_ancestor_and_excludes_archives() {
+    fn developer_cache_profile_matches_account_home_location_and_excludes_archives() {
         let root = tempfile::tempdir().expect("tempdir");
         let home = root.path();
         fs::create_dir_all(
@@ -1179,24 +1275,7 @@ mod tests {
         .expect("archives");
         fs::create_dir_all(home.join(".npm").join("_cacache").join("content-v2"))
             .expect("npm cache");
-        let cancellation = Cancellation::default();
-        let report = scan(
-            &[home.to_path_buf()],
-            &ScanLimits::default(),
-            &cancellation,
-            |_| {},
-        )
-        .expect("scan");
-        let index = ScanTree::build(report, &cancellation).expect("index");
-        let preview = purge_preview(
-            &index,
-            &PurgeOptions {
-                stale_days: DEFAULT_STALE_DAYS,
-                profile: PurgeProfile::DeveloperCaches,
-            },
-            SystemTime::now(),
-        )
-        .expect("preview");
+        let preview = developer_cache_preview_at(home, home);
         assert_eq!(preview.profile, PurgeProfile::DeveloperCaches);
         let rule_ids = preview
             .developer_caches
@@ -1221,5 +1300,89 @@ mod tests {
             resolve_selections_by_ids(&preview, &[PurgeItemId(1)]).unwrap_err(),
             "execution is unsupported for this purge profile"
         );
+    }
+
+    #[test]
+    fn developer_cache_profile_rejects_suffix_false_positive() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let real_pip = home.join("Library").join("Caches").join("pip");
+        let false_pip = root
+            .path()
+            .join("Downloads")
+            .join("fixture")
+            .join("Library")
+            .join("Caches")
+            .join("pip");
+        fs::create_dir_all(real_pip.join("http-v2")).expect("real pip cache");
+        fs::create_dir_all(false_pip.join("http-v2")).expect("false pip cache");
+
+        let preview = developer_cache_preview_at(root.path(), &home);
+        let paths = preview
+            .developer_caches
+            .iter()
+            .map(|cache| cache.path.as_path())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&real_pip.as_path()));
+        assert!(!paths.contains(&false_pip.as_path()));
+    }
+
+    #[test]
+    fn developer_cache_profile_matches_when_root_is_cache_directory() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let pip = home.join("Library").join("Caches").join("pip");
+        fs::create_dir_all(pip.join("http-v2")).expect("pip cache");
+
+        let preview = developer_cache_preview_at(&pip, &home);
+
+        assert_eq!(preview.developer_caches.len(), 1);
+        assert_eq!(preview.developer_caches[0].rule_id, "pypa.pip.cache");
+        assert_eq!(preview.developer_caches[0].path, pip);
+    }
+
+    #[test]
+    fn developer_cache_profile_matches_when_root_is_ancestor() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let caches = home.join("Library").join("Caches");
+        let pip = caches.join("pip");
+        fs::create_dir_all(pip.join("http-v2")).expect("pip cache");
+
+        let preview = developer_cache_preview_at(&caches, &home);
+
+        assert_eq!(preview.developer_caches.len(), 1);
+        assert_eq!(preview.developer_caches[0].rule_id, "pypa.pip.cache");
+        assert_eq!(preview.developer_caches[0].path, pip);
+    }
+
+    #[test]
+    fn developer_cache_profile_matches_when_root_is_home() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let pip = home.join("Library").join("Caches").join("pip");
+        fs::create_dir_all(pip.join("http-v2")).expect("pip cache");
+
+        let preview = developer_cache_preview_at(&home, &home);
+
+        assert_eq!(preview.developer_caches.len(), 1);
+        assert_eq!(preview.developer_caches[0].rule_id, "pypa.pip.cache");
+        assert_eq!(preview.developer_caches[0].path, pip);
+    }
+
+    #[test]
+    fn symlinked_developer_cache_location_is_not_a_candidate() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let outside = root.path().join("outside-pip");
+        let pip = home.join("Library").join("Caches").join("pip");
+        fs::create_dir_all(&outside).expect("outside cache");
+        fs::create_dir_all(pip.parent().expect("pip parent")).expect("pip parent");
+        std::os::unix::fs::symlink(&outside, &pip).expect("pip symlink");
+
+        let preview = developer_cache_preview_at(&home, &home);
+
+        assert!(preview.developer_caches.is_empty());
     }
 }

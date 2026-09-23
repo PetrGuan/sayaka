@@ -147,20 +147,21 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     let signal = cancellation.clone();
     ctrlc::set_handler(move || signal.cancel()).map_err(io::Error::other)?;
     let scan_cancellation = cancellation.clone();
+    let requested_profile = match args
+        .get_one::<String>("profile")
+        .map(String::as_str)
+        .unwrap_or("projects")
+    {
+        "projects" => PurgeProfile::Projects,
+        "developer-caches" => PurgeProfile::DeveloperCaches,
+        _ => unreachable!("clap value_parser enforces profile values"),
+    };
     let result: Result<PurgePreview, ScanError> = (|| {
         let stale_days = args
             .get_one::<u32>("stale-days")
             .copied()
             .unwrap_or(DEFAULT_STALE_DAYS);
-        let profile = match args
-            .get_one::<String>("profile")
-            .map(String::as_str)
-            .unwrap_or("projects")
-        {
-            "projects" => PurgeProfile::Projects,
-            "developer-caches" => PurgeProfile::DeveloperCaches,
-            _ => unreachable!("clap value_parser enforces profile values"),
-        };
+        let profile = requested_profile;
         if execute && profile != PurgeProfile::Projects {
             return Err(ScanError::new(
                 ScanCode::InvalidLimits,
@@ -218,6 +219,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         if json {
             write_fatal_json(
                 &mut io::stdout().lock(),
+                requested_profile,
                 ScanError::new(ScanCode::Io, format!("progress output failed: {error}")),
             )?;
         }
@@ -242,7 +244,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         }
         Err(error) => {
             if json {
-                write_fatal_json(&mut io::stdout().lock(), error.clone())?;
+                write_fatal_json(&mut io::stdout().lock(), requested_profile, error.clone())?;
             } else {
                 human::fatal(&mut io::stderr().lock(), &error, style)?;
             }
@@ -325,7 +327,11 @@ fn run_execution(
     Ok(report.exit_code())
 }
 
-fn write_fatal_json(out: &mut impl Write, error: ScanError) -> io::Result<()> {
+fn write_fatal_json(
+    out: &mut impl Write,
+    profile: PurgeProfile,
+    error: ScanError,
+) -> io::Result<()> {
     let value = serde_json::json!({
         "schema_version": purge_preview::PURGE_SCHEMA_VERSION,
         "kind": purge_preview::PURGE_KIND,
@@ -333,7 +339,7 @@ fn write_fatal_json(out: &mut impl Write, error: ScanError) -> io::Result<()> {
         "status": "failed",
         "complete": false,
         "effects_performed": false,
-        "profile": "projects",
+        "profile": profile.as_str(),
         "roots": [],
         "stale_days": serde_json::Value::Null,
         "projects": [],
@@ -684,6 +690,7 @@ mod tests {
         let mut out = Vec::new();
         write_fatal_json(
             &mut out,
+            PurgeProfile::DeveloperCaches,
             ScanError::new(ScanCode::InvalidRoot, "test refusal"),
         )
         .expect("fatal json");
@@ -692,6 +699,7 @@ mod tests {
         assert_eq!(value["kind"], purge_preview::PURGE_KIND);
         assert_eq!(value["status"], "failed");
         assert_eq!(value["effects_performed"], false);
+        assert_eq!(value["profile"], "developer_caches");
         assert!(value["projects"].as_array().expect("projects").is_empty());
         assert_eq!(value["issues"][0]["code"], "invalid_root");
         assert_eq!(value["issues"][0]["message"], "test refusal");

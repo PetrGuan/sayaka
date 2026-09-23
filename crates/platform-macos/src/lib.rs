@@ -7,6 +7,7 @@
 
 use std::io;
 use std::marker::PhantomData;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 #[cfg(target_os = "macos")]
@@ -39,6 +40,73 @@ pub fn diagnostic_monotonic_ns() -> io::Result<u64> {
     let ticks = unsafe { mach_absolute_time() };
     u64::try_from(u128::from(ticks) * u128::from(scale.numer) / u128::from(scale.denom))
         .map_err(|_| io::Error::other("monotonic time conversion overflow"))
+}
+
+/// Returns the effective user's passwd-database home directory.
+#[cfg(target_os = "macos")]
+pub fn effective_account_home() -> io::Result<PathBuf> {
+    use std::ffi::CStr;
+    use std::mem::MaybeUninit;
+
+    // SAFETY: `geteuid` takes no arguments and returns the effective uid.
+    let uid = unsafe { libc::geteuid() };
+    let mut pwd = MaybeUninit::<libc::passwd>::uninit();
+    let mut result = std::ptr::null_mut();
+    // SAFETY: `sysconf` takes a constant selector and has no memory safety preconditions.
+    let suggested = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let buffer_len = if suggested > 0 {
+        suggested as usize
+    } else {
+        16 * 1024
+    };
+    let mut buffer = vec![0; buffer_len];
+    // SAFETY: `pwd` points to writable storage, `buffer` is valid for `buffer.len()` bytes,
+    // and `result` is a valid out-pointer for this synchronous call.
+    let status = unsafe {
+        libc::getpwuid_r(
+            uid,
+            pwd.as_mut_ptr(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::from_raw_os_error(status));
+    }
+    if result.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("passwd database has no entry for effective uid {uid}"),
+        ));
+    }
+    // SAFETY: `getpwuid_r` succeeded and returned a non-null result pointing at `pwd`.
+    let pwd = unsafe { pwd.assume_init() };
+    if pwd.pw_dir.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "passwd database returned an empty account home",
+        ));
+    }
+    // SAFETY: POSIX passwd entries expose `pw_dir` as a null-terminated C string.
+    let home = unsafe { CStr::from_ptr(pwd.pw_dir) }
+        .to_str()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if home.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "passwd database returned an empty account home",
+        ));
+    }
+    Ok(PathBuf::from(home))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn effective_account_home() -> io::Result<PathBuf> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "passwd account home lookup is only available on macOS",
+    ))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -12,6 +12,7 @@ select-all flag, no staleness auto-selection and no permanent deletion.
 sayaka purge .
 sayaka purge . --stale-days 60
 sayaka purge . --json
+sayaka purge ~/Library --profile developer-caches --json
 sayaka purge . --execute --only ./app/target
 ```
 
@@ -37,6 +38,21 @@ observation, not proof of disuse**; a "stale" artifact may still be wanted,
 and a "fresh" one may be disposable. Sizes are deduplicated within each
 artifact subtree; sibling totals can overlap through hard links and are not
 additive, and no displayed byte count is guaranteed reclaimable.
+
+## Developer cache profile
+
+`--profile developer-caches` is a read-only preview for known developer-tool
+cache locations under the effective account's passwd-database home directory
+(not `$HOME`, which may point at an app container in the macOS App Sandbox).
+Rules are anchored to the documented absolute locations such as
+`~/Library/Caches/pip`: granting that cache directory itself, the account home,
+or an ancestor such as `~/Library` can report it, but an unrelated descendant
+whose components merely end in `Library/Caches/pip` never qualifies.
+
+The matcher compares canonical existing directory paths and stops considering
+descendants once a rule location is matched. Symlinked cache directories are not
+followed into their targets; they are handled like other skipped symlink nodes
+from the scan and are not developer-cache candidates.
 
 ## Output and exit codes
 
