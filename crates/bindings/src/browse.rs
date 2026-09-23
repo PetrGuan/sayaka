@@ -8,6 +8,8 @@ use serde::Serialize;
 
 pub const MAX_PAGE_NODES: u32 = 256;
 pub const MAX_QUERY_BYTES: usize = 1024 * 1024;
+const MAX_NODE_ALIASES: usize = 16;
+const MAX_NODE_ISSUES: usize = 8;
 pub const SORT_NAME: u32 = 1;
 pub const SORT_LOGICAL_SIZE: u32 = 2;
 pub const SORT_ALLOCATED_SIZE: u32 = 3;
@@ -121,6 +123,90 @@ fn node<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> Node<'a> {
         directory_summary: tree.summary(entry.id),
         child_count: tree.children(entry.id).map(<[u64]>::len),
         dataless: entry.dataless,
+    }
+}
+
+#[derive(Serialize)]
+struct Alias<'a> {
+    resource_id: String,
+    path: wire::NativePath<'a>,
+    counted: bool,
+}
+
+#[derive(Serialize)]
+struct NodeEvidence<'a> {
+    node: Node<'a>,
+    identity: wire::Identity,
+    depth: usize,
+    counted: bool,
+    observed_alias_count: usize,
+    aliases: Vec<Alias<'a>>,
+    matching_issue_count: usize,
+    issues: Vec<wire::Issue<'a>>,
+}
+
+/// Orders paths by the same native units serialized in `path.raw`.
+#[cfg(unix)]
+fn raw_path_le(left: &ScanEntry, right: &ScanEntry) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    left.path.as_os_str().as_bytes() <= right.path.as_os_str().as_bytes()
+}
+
+#[cfg(windows)]
+fn raw_path_le(left: &ScanEntry, right: &ScanEntry) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    left.path
+        .as_os_str()
+        .encode_wide()
+        .le(right.path.as_os_str().encode_wide())
+}
+
+fn node_evidence<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> NodeEvidence<'a> {
+    let report = tree.report();
+    let mut observed_alias_count = 0;
+    let mut aliases: Vec<&ScanEntry> = Vec::with_capacity(MAX_NODE_ALIASES);
+    if entry.kind == ResourceKind::File {
+        for alias in report.entries.iter().filter(|candidate| {
+            candidate.kind == ResourceKind::File && candidate.identity == entry.identity
+        }) {
+            observed_alias_count += 1;
+            // Keep only the first MAX_NODE_ALIASES paths in raw byte order.
+            let position = aliases.partition_point(|kept| raw_path_le(kept, alias));
+            if position < MAX_NODE_ALIASES {
+                if aliases.len() == MAX_NODE_ALIASES {
+                    aliases.pop();
+                }
+                aliases.insert(position, alias);
+            }
+        }
+    }
+    let aliases = aliases
+        .into_iter()
+        .map(|alias| Alias {
+            resource_id: format!("{}/{}", report.task_id, alias.id),
+            path: wire::NativePath(&alias.path),
+            counted: alias.counted,
+        })
+        .collect();
+    let mut matching_issue_count = 0;
+    let mut issues = Vec::new();
+    for issue in &report.issues {
+        if issue.path.as_deref() == Some(entry.path.as_path()) {
+            matching_issue_count += 1;
+            if issues.len() < MAX_NODE_ISSUES {
+                issues.push(wire::Issue::from(issue));
+            }
+        }
+    }
+    NodeEvidence {
+        node: node(tree, handle, entry),
+        identity: wire::Identity::from(entry.identity),
+        depth: entry.depth,
+        counted: entry.counted,
+        observed_alias_count,
+        aliases,
+        matching_issue_count,
+        issues,
     }
 }
 
@@ -257,6 +343,33 @@ pub unsafe extern "C" fn sayaka_scan_node_v1(
         let tree = tree(&mut job)?;
         let entry = tree.entry(id).ok_or(INVALID_NODE)?;
         let bytes = serialize(tree, handle, node(tree, handle, entry))?;
+        // SAFETY: Output was validated above; bytes are privately owned.
+        unsafe { copy_output(&bytes, buffer, capacity, required) }
+    })
+}
+
+/// Returns one observed node's bounded evidence; references are bound to their handle.
+///
+/// # Safety
+/// node is readable/aligned. Output follows sayaka_scan_roots_v1's contract.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_scan_node_evidence_v1(
+    handle: u64,
+    node_ref: *const SayakaNodeRefV1,
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        // SAFETY: Caller supplies valid non-overlapping input/output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_QUERY_BYTES)? };
+        let id = unsafe { read_reference(handle, node_ref)? };
+        let slot = get(handle)?;
+        let mut job = lock_job(&slot)?;
+        ensure_open(&job)?;
+        let tree = tree(&mut job)?;
+        let entry = tree.entry(id).ok_or(INVALID_NODE)?;
+        let bytes = serialize(tree, handle, node_evidence(tree, handle, entry))?;
         // SAFETY: Output was validated above; bytes are privately owned.
         unsafe { copy_output(&bytes, buffer, capacity, required) }
     })

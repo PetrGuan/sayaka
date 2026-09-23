@@ -21,6 +21,8 @@ extern "C" {
 #define SAYAKA_MAX_QUERY_BYTES_V1 1048576u
 #define SAYAKA_MAX_PAGE_NODES_V1 256u
 #define SAYAKA_MAX_PAGE_ISSUES_V1 128u
+#define SAYAKA_MAX_NODE_ALIASES_V1 16u
+#define SAYAKA_MAX_NODE_ISSUES_V1 8u
 #define SAYAKA_MAX_INSTALLER_CANDIDATES_V1 512u
 #define SAYAKA_MAX_INSTALLER_SELECTIONS_V1 32u
 #define SAYAKA_PATH_UNIX_BYTES_V1 1u
@@ -162,7 +164,10 @@ SAYAKA_API int32_t sayaka_scan_result_v1(uint64_t handle, uint8_t *buffer, size_
  * NULL/0 and BUFFER_TOO_SMALL follow result's caller-buffer protocol, but use
  * SAYAKA_MAX_QUERY_BYTES_V1. No partial writes or trailing NUL. On payload limit
  * failure, reduce the page limit; required stays zero.
- * Roots/children data: {offset,total,next_offset,nodes}; node data: one detail.
+ * Roots/children data: {offset,total,next_offset,nodes}; node data: one detail;
+ * node evidence data: {node,identity,depth,counted,observed_alias_count,aliases,
+ * matching_issue_count,issues}. Evidence aliases/issues are capped by
+ * SAYAKA_MAX_NODE_ALIASES_V1/SAYAKA_MAX_NODE_ISSUES_V1.
  * Each response carries schema/task/scan status; inspect incomplete/unknown
  * summaries, not only API status. Details/paths use docs/BINDINGS.md's schema.
  * References encode task_handle/node_id as decimal JSON strings. Pass BOTH
@@ -176,6 +181,8 @@ SAYAKA_API int32_t sayaka_scan_roots_v1(uint64_t handle, const SayakaPageRequest
                                      uint8_t *buffer, size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_scan_node_v1(uint64_t handle, const SayakaNodeRefV1 *node,
                                     uint8_t *buffer, size_t capacity, size_t *required);
+SAYAKA_API int32_t sayaka_scan_node_evidence_v1(uint64_t handle, const SayakaNodeRefV1 *node,
+                                             uint8_t *buffer, size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_scan_children_v1(uint64_t handle, const SayakaNodeRefV1 *parent,
                                         const SayakaPageRequestV1 *request,
                                         uint8_t *buffer, size_t capacity, size_t *required);

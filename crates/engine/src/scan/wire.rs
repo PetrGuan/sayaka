@@ -57,7 +57,7 @@ impl Serialize for Roots<'_> {
 
 #[derive(Serialize)]
 #[serde(tag = "variant", rename_all = "snake_case")]
-enum Identity {
+pub enum Identity {
     Unix {
         device: u64,
         inode: u64,
@@ -66,6 +66,21 @@ enum Identity {
         volume_serial: u64,
         file_id: [u8; 16],
     },
+}
+
+impl From<FileIdentity> for Identity {
+    fn from(identity: FileIdentity) -> Self {
+        match identity {
+            FileIdentity::Unix { device, inode } => Self::Unix { device, inode },
+            FileIdentity::Windows {
+                volume_serial,
+                file_id,
+            } => Self::Windows {
+                volume_serial,
+                file_id,
+            },
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -99,16 +114,7 @@ impl Serialize for Entries<'_> {
                     ResourceKind::Link => "link",
                     ResourceKind::Other => "other",
                 },
-                identity: match entry.identity {
-                    FileIdentity::Unix { device, inode } => Identity::Unix { device, inode },
-                    FileIdentity::Windows {
-                        volume_serial,
-                        file_id,
-                    } => Identity::Windows {
-                        volume_serial,
-                        file_id,
-                    },
-                },
+                identity: Identity::from(entry.identity),
                 logical_bytes: entry.logical_bytes,
                 allocated_bytes: entry.allocated_bytes,
                 dataless: entry.dataless,
