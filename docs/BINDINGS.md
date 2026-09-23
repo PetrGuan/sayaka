@@ -611,22 +611,27 @@ materialized or file moved/deleted by these APIs.
 
 ## Purge preview and revalidated Trash execution
 
-Purge is the first effect-capable binding slice and is macOS-only. It reuses
-the CLI purge policy and engine `PurgeSession`: preview scans one explicit
-host-supplied root, identifies marker-bound rebuildable artifact directories,
-and execution moves only an explicitly approved same-preview subset to Trash.
-There is no permanent-delete fallback, no imported JSON approval, no implicit
-select-all path and no attempt to claim the final native operation is race-free.
-The residual pathname/ancestor replacement race described in
-[EXECUTION.md](EXECUTION.md) applies to App callers as well.
+Purge is the first effect-capable binding slice and is macOS-only. The default
+`projects` profile reuses the CLI purge policy and engine `PurgeSession`:
+preview scans one explicit host-supplied root, identifies marker-bound
+rebuildable artifact directories, and execution moves only an explicitly
+approved same-preview subset to Trash. The additive `developer_caches` profile
+is preview-only: it answers which documented developer-tool cache locations
+exist at or under the granted root and reports why external-command cleanup is
+unsupported in the sandboxed App. There is no permanent-delete fallback, no
+imported JSON approval, no implicit select-all path and no attempt to claim the
+final native operation is race-free. The residual pathname/ancestor replacement
+race described in [EXECUTION.md](EXECUTION.md) applies to App callers as well.
 
 | Function | Purpose |
 | --- | --- |
 | `sayaka_purge_preview_start_v1(request, out_handle)` | Copy one root and start a read-only purge preview |
+| `sayaka_purge_preview_start_profile_v1(request, out_handle)` | Copy one root and start a read-only purge preview for `projects` or `developer_caches` |
 | `sayaka_purge_poll_v1(handle, out_snapshot)` | Read coalesced preview/execution lifecycle state |
 | `sayaka_purge_cancel_v1(handle)` | Request cooperative cancellation |
 | `sayaka_purge_execute_start_v1(request, out_handle)` | Start revalidated Trash execution for an approved subset |
 | `sayaka_purge_result_v1(handle, buffer, capacity, required)` | Copy terminal preview/execution JSON |
+| `sayaka_purge_unsupported_operations_v1(buffer, capacity, required)` | Copy static unsupported-operation JSON for the developer-cache UI |
 | `sayaka_purge_release_v1(handle)` | Cancel active work, return BUSY until stopped, then invalidate |
 
 `SayakaPurgePreviewRequestV1` contains ABI version 1, exact `struct_size`, one
@@ -634,8 +639,10 @@ The residual pathname/ancestor replacement race described in
 `1..=3650`) and zero `reserved`. The root must be an absolute native path; the
 host is responsible for acquiring any security-scoped access before calling.
 Preview uses the same bounded scanner as `sayaka_scan_start_v1` and performs no
-effects. Poll state values reuse `SayakaScanStateV1`; snapshot kind is
-`SAYAKA_PURGE_PREVIEW`.
+effects. This existing request always uses the `projects` profile.
+`SayakaPurgePreviewProfileRequestV1` adds `profile` (`0`/`1` = `projects`,
+`2` = `developer_caches`) without changing the existing struct layout. Poll
+state values reuse `SayakaScanStateV1`; snapshot kind is `SAYAKA_PURGE_PREVIEW`.
 
 Preview result JSON is capped by `SAYAKA_MAX_RESULT_BYTES_V1` and has no NUL:
 
@@ -649,6 +656,7 @@ Preview result JSON is capped by `SAYAKA_MAX_RESULT_BYTES_V1` and has no NUL:
   "effects_performed": false,
   "execution_authority": false,
   "contract": "revalidated_purge_trash_v1",
+  "profile": "projects",
   "plan_identifier": "64 lowercase hex sha256",
   "plan_digest": "64 lowercase hex sha256",
   "roots": [{"display": "\"/repo\"", "encoding": "unix_bytes_hex", "raw": "2f7265706f"}],
@@ -658,6 +666,8 @@ Preview result JSON is capped by `SAYAKA_MAX_RESULT_BYTES_V1` and has no NUL:
     "items": 1,
     "stale_items": 1,
     "excluded": 0,
+    "developer_caches": 0,
+    "unsupported_operations": 0,
     "logical_bytes": 123,
     "allocated_bytes": null
   },
@@ -686,6 +696,8 @@ Preview result JSON is capped by `SAYAKA_MAX_RESULT_BYTES_V1` and has no NUL:
       }
     }]
   }],
+  "developer_caches": [],
+  "unsupported_operations": [],
   "scan_issues": [],
   "scan_issues_omitted": 0
 }
@@ -695,7 +707,42 @@ Unknown logical/allocated sizes are JSON `null`, never `0`. Item IDs are local
 to this preview/digest. `plan_identifier` and `plan_digest` currently carry the
 same SHA-256 text over the preview's root/options/item evidence; hosts must pass
 the exact `plan_digest` bytes back to execution and discard stale UI state after
-any refresh.
+any refresh. In every profile, `totals.unsupported_operations` is the length of
+the top-level `unsupported_operations` array.
+
+For `profile: "developer_caches"`, `projects` is empty,
+`developer_caches` contains preview-only candidates, and
+`unsupported_operations` contains the developer-cache-specific external-command
+cleanup operations that this profile deliberately does not perform. Each
+candidate exposes
+`tool`, `rule_id`, `rule_version`, `ruleset_revision`, `title`, `path`,
+documented `location`, `location_kind`, `kind`, `rebuildability_note`,
+`user_product` (always `false` for this profile), `cleanup_supported`,
+`unsupported_reason`, `sizes.logical`, `sizes.allocated`, `complete`,
+`modified_unix_ms`, `activity`, `evidence`, `execution_supported: false`, and
+`execution_unsupported_reason`. The initial rule set is deliberately limited to
+documented rebuildable cache/download-store locations:
+
+| Tool | Rule ID | Location |
+| --- | --- | --- |
+| Xcode | `com.apple.xcode.derived_data` | `~/Library/Developer/Xcode/DerivedData` |
+| Xcode | `com.apple.xcode.cache` | `~/Library/Caches/com.apple.dt.Xcode` |
+| CoreSimulator | `com.apple.coresimulator.cache` | `~/Library/Developer/CoreSimulator/Caches` |
+| npm | `org.npm.cacache` | `~/.npm/_cacache` |
+| pnpm | `io.pnpm.store` | `~/Library/pnpm/store` |
+| Yarn | `com.yarnpkg.classic_cache` | `~/Library/Caches/Yarn` |
+| pip | `pypa.pip.cache` | `~/Library/Caches/pip` |
+| Cargo | `org.rust-lang.cargo.registry_cache` | `~/.cargo/registry/cache` |
+| Gradle | `org.gradle.modules_cache` | `~/.gradle/caches/modules-2/files-2.1` |
+| Homebrew | `sh.homebrew.downloads_cache` | `~/Library/Caches/Homebrew/downloads` |
+
+The profile matches a cache when the granted root is the cache directory itself
+or an ancestor, which supports sandboxed App flows where the user grants
+`~/Library/Caches`, `~/Library/Developer/Xcode/DerivedData`, `~/.npm`, or a
+specific cache directory. Xcode Archives, CoreSimulator Devices, Homebrew
+Cellar, package-manager configuration and logs, and simulator/app user data are
+non-targets. `sayaka_purge_unsupported_operations_v1` returns the same static
+`unsupported_operations` array without starting a scan.
 
 `SayakaPurgeExecuteRequestV1` requires:
 
@@ -711,7 +758,7 @@ any refresh.
 - `has_state_dir == 0` for the default journal directory or `1` plus an
   absolute `state_dir`.
 
-Missing approval, malformed token, or empty/over-limit item references fail with
+Missing approval, malformed token, developer-cache previews, or empty/over-limit item references fail with
 `INVALID_ARGUMENT`. Duplicate, cross-preview or unknown item references fail
 with `INVALID_CANDIDATE` and do not launch a task. A partial/cancelled/failed
 preview cannot execute.

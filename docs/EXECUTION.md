@@ -141,6 +141,19 @@ from that subset, revalidates identity/ancestry/marker evidence, journals throug
 `Store` as the CLI does, and moves only through the native Trash contract
 `revalidated_purge_trash_v1`.
 
+The same preview surface now has an additive `developer_caches` profile for the
+Mac App Store sandbox flow. It scans only the explicit user-granted root and
+reports documented rebuildable developer-tool cache locations at or below that
+root (Xcode DerivedData/cache/CoreSimulator cache, npm/pnpm/Yarn/pip/Cargo/
+Gradle caches and Homebrew downloads). This profile is preview-only. It never
+targets Xcode Archives, CoreSimulator Devices, installed products, simulator/app
+user data, package-manager configuration/logs, or Homebrew Cellar entries.
+External-command operations such as `brew cleanup`, `xcrun simctl delete
+unavailable`, package-manager cache-clean commands and Gradle daemon/cache
+commands are reported as unsupported with reasons. They are not emulated by the
+App and cannot enter `revalidated_purge_trash_v1`, whose native revalidation is
+marker-bound to project artifacts.
+
 FFI execution never imports approval from JSON, broadens a subset, silently
 selects all candidates or falls back to permanent deletion. Unknown, changed,
 missing, not-revalidated, cancelled, policy-refused and journal-ambiguous items

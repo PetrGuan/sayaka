@@ -4,7 +4,9 @@ use super::*;
 use sayaka_engine::execute::PurgeSession;
 use sayaka_engine::journal::{self, Store};
 use sayaka_engine::model::Cancellation;
-use sayaka_engine::purge_preview::{self, PurgeItemId, PurgeOptions, PurgePreview, PurgeStatus};
+use sayaka_engine::purge_preview::{
+    self, PurgeItemId, PurgeOptions, PurgePreview, PurgeProfile, PurgeStatus,
+};
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
 use sayaka_engine::scan::{ScanCode, ScanError, ScanLimits, wire};
@@ -20,6 +22,18 @@ pub struct SayakaPurgePreviewRequestV1 {
     pub struct_size: u32,
     pub root: SayakaPathV1,
     pub stale_days: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+pub struct SayakaPurgePreviewProfileRequestV1 {
+    pub abi_version: u32,
+    pub struct_size: u32,
+    pub root: SayakaPathV1,
+    pub stale_days: u32,
+    /// 1 = projects, 2 = developer_caches. 0 is accepted as projects for
+    /// callers that zero-initialize optional fields.
+    pub profile: u32,
     pub reserved: u32,
 }
 
@@ -149,6 +163,7 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
         "effects_performed": false,
         "execution_authority": false,
         "contract": "revalidated_purge_trash_v1",
+        "profile": preview.profile.as_str(),
         "plan_identifier": digest,
         "plan_digest": digest,
         "roots": preview.roots.iter().map(|path| wire::NativePath(path)).collect::<Vec<_>>(),
@@ -158,6 +173,8 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
             "items": preview.counts.artifacts,
             "stale_items": preview.counts.stale_artifacts,
             "excluded": preview.counts.excluded,
+            "developer_caches": preview.counts.developer_caches,
+            "unsupported_operations": preview.counts.unsupported_operations,
             "logical_bytes": sum_known(preview, true),
             "allocated_bytes": sum_known(preview, false),
         },
@@ -196,6 +213,8 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
             });
             value
         }).collect::<Vec<_>>(),
+        "developer_caches": developer_cache_items_json(preview),
+        "unsupported_operations": unsupported_operations_json(preview.unsupported_operations),
         "scan_issues": preview.scan_issues.iter().map(|issue| json!({
             "path": issue.path.as_deref().map(wire::NativePath),
             "code": issue.code.as_str(),
@@ -204,6 +223,64 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
         })).collect::<Vec<_>>(),
         "scan_issues_omitted": preview.scan_issues_omitted,
     })
+}
+
+fn developer_cache_items_json(preview: &PurgePreview) -> Vec<Value> {
+    preview
+        .developer_caches
+        .iter()
+        .enumerate()
+        .map(|(index, cache)| {
+            let id = index + 1;
+            json!({
+                "id": id.to_string(),
+                "reference": Value::Null,
+                "tool": cache.tool,
+                "rule_id": cache.rule_id,
+                "rule_version": cache.rule_version,
+                "ruleset_revision": cache.ruleset_revision,
+                "title": cache.title,
+                "path": wire::NativePath(&cache.path),
+                "location": cache.location,
+                "location_kind": cache.location_kind,
+                "kind": cache.kind,
+                "rebuildability_note": cache.rebuildability_note,
+                "user_product": cache.user_product,
+                "cleanup_supported": cache.cleanup_supported,
+                "unsupported_reason": cache.unsupported_reason,
+                "sizes": {
+                    "logical": cache.logical_bytes,
+                    "allocated": cache.allocated_bytes,
+                },
+                "complete": cache.complete,
+                "modified_unix_ms": cache.modified_unix_ms,
+                "activity": cache.activity.as_str(),
+                "evidence": cache.evidence.iter().map(|source| json!({
+                    "title": source.title,
+                    "url": source.url,
+                    "reviewed_utc": source.reviewed_utc,
+                    "license_note": source.license_note,
+                })).collect::<Vec<_>>(),
+                "execution_supported": false,
+                "execution_unsupported_reason": "developer cache cleanup needs a separate non-project cache revalidation contract; revalidated_purge_trash_v1 is marker-bound to project artifacts",
+            })
+        })
+        .collect()
+}
+
+fn unsupported_operations_json(
+    operations: &[sayaka_engine::purge_preview::UnsupportedOperation],
+) -> Vec<Value> {
+    operations
+        .iter()
+        .map(|operation| {
+            json!({
+                "tool": operation.tool,
+                "operation": operation.operation,
+                "reason": operation.reason,
+            })
+        })
+        .collect()
 }
 
 fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
@@ -217,6 +294,14 @@ fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
             artifact.logical_bytes
         } else {
             artifact.allocated_bytes
+        }?;
+        total = total.checked_add(value)?;
+    }
+    for cache in &preview.developer_caches {
+        let value = if logical {
+            cache.logical_bytes
+        } else {
+            cache.allocated_bytes
         }?;
         total = total.checked_add(value)?;
     }
@@ -608,6 +693,31 @@ unsafe fn read_item_ids(
     Ok(ids)
 }
 
+fn start_preview(
+    root: std::path::PathBuf,
+    options: PurgeOptions,
+    out_handle: *mut u64,
+) -> Result<(), i32> {
+    options.validate().map_err(|_| INVALID_ARGUMENT)?;
+    let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
+    let handle = registry.allocate_handle()?;
+    let task = ScanTask::start(vec![root], ScanLimits::default())
+        .map_err(|error| scan_error_code(&error))?;
+    registry.purges.insert(
+        handle,
+        Arc::new(Mutex::new(PurgeJob::Preview(Box::new(PurgePreviewJob {
+            task,
+            options,
+            preview: None,
+            result: None,
+            closed: false,
+        })))),
+    );
+    // SAFETY: The caller provided writable storage for this call.
+    unsafe { out_handle.write(handle) };
+    Ok(())
+}
+
 /// Starts a read-only purge preview for one explicit native root.
 ///
 /// # Safety
@@ -639,24 +749,50 @@ pub unsafe extern "C" fn sayaka_purge_preview_start_v1(
             } else {
                 request.stale_days
             },
+            profile: PurgeProfile::Projects,
         };
-        options.validate().map_err(|_| INVALID_ARGUMENT)?;
         let root = unsafe { decode_path(request.root)? };
-        let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
-        let handle = registry.allocate_handle()?;
-        let task = ScanTask::start(vec![root], ScanLimits::default())
-            .map_err(|error| scan_error_code(&error))?;
-        registry.purges.insert(
-            handle,
-            Arc::new(Mutex::new(PurgeJob::Preview(Box::new(PurgePreviewJob {
-                task,
-                options,
-                preview: None,
-                result: None,
-                closed: false,
-            })))),
-        );
-        unsafe { out_handle.write(handle) };
+        start_preview(root, options, out_handle)?;
+        Ok(())
+    })
+}
+
+/// Starts a read-only purge preview for one explicit native root and profile.
+///
+/// # Safety
+/// request/root bytes are readable/aligned; out_handle is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_preview_start_profile_v1(
+    request: *const SayakaPurgePreviewProfileRequestV1,
+    out_handle: *mut u64,
+) -> i32 {
+    boundary(|| {
+        pointer(out_handle)?;
+        // SAFETY: Caller supplies a writable output slot.
+        unsafe { out_handle.write(0) };
+        pointer(request)?;
+        // SAFETY: Caller supplies a readable request structure.
+        let request = unsafe { &*request };
+        if request.abi_version != ABI_VERSION
+            || request.struct_size as usize != size_of::<SayakaPurgePreviewProfileRequestV1>()
+            || request.reserved != 0
+        {
+            return Err(UNSUPPORTED_VERSION);
+        }
+        if !cfg!(target_os = "macos") {
+            return Err(UNSUPPORTED_PLATFORM);
+        }
+        let profile = PurgeProfile::from_ffi(request.profile).ok_or(INVALID_ARGUMENT)?;
+        let options = PurgeOptions {
+            stale_days: if request.stale_days == 0 {
+                purge_preview::DEFAULT_STALE_DAYS
+            } else {
+                request.stale_days
+            },
+            profile,
+        };
+        let root = unsafe { decode_path(request.root)? };
+        start_preview(root, options, out_handle)?;
         Ok(())
     })
 }
@@ -780,6 +916,9 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
                     if preview.status != PurgeStatus::Complete {
                         return Err(INVALID_ARGUMENT);
                     }
+                    if preview.profile != PurgeProfile::Projects {
+                        return Err(INVALID_ARGUMENT);
+                    }
                     if preview.plan_digest() != requested_digest {
                         return Err(INVALID_CANDIDATE);
                     }
@@ -823,6 +962,31 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
         // SAFETY: Output remains valid through this call.
         unsafe { out_handle.write(handle) };
         Ok(())
+    })
+}
+
+/// Copies static unsupported in-app purge operations JSON, with no trailing NUL.
+///
+/// # Safety
+/// Outputs follow sayaka_scan_result_v1's caller-owned buffer contract and cap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_unsupported_operations_v1(
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        // SAFETY: Caller supplies valid non-overlapping output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_RESULT_BYTES)? };
+        let value = json!({
+            "schema_version": 1,
+            "kind": "purge_unsupported_operations",
+            "profile": "developer_caches",
+            "operations": unsupported_operations_json(purge_preview::unsupported_operations()),
+        });
+        let bytes = bounded_json(&value, MAX_RESULT_BYTES)?;
+        // SAFETY: Output storage was validated above.
+        unsafe { copy_output(&bytes, buffer, capacity, required) }
     })
 }
 
@@ -1054,6 +1218,7 @@ mod tests {
             status: PurgeStatus::Complete,
             complete: true,
             effects_performed: false,
+            profile: purge_preview::PurgeProfile::Projects,
             roots: vec![std::path::PathBuf::from("/repo")],
             stale_days: purge_preview::DEFAULT_STALE_DAYS,
             projects: vec![purge_preview::PurgeProject {
@@ -1075,7 +1240,13 @@ mod tests {
                 artifacts: 1,
                 stale_artifacts: 1,
                 excluded: 0,
+                developer_caches: 0,
+                unsupported_operations: 0,
             },
+            developer_caches: Vec::new(),
+            unsupported_operations: purge_preview::profile_unsupported_operations(
+                purge_preview::PurgeProfile::Projects,
+            ),
             scan_issues: Vec::new(),
             scan_issues_omitted: 0,
         }

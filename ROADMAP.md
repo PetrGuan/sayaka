@@ -45,7 +45,7 @@ but the named milestone's wider outcome is incomplete.
 | M6 | Partial, read-only ABI | Scan/directory/diagnostic queries, macOS installer discovery/selection checks and local C/Swift hosts | Native Windows linking/runtime, App integration, broader APIs and distribution |
 | C0 | Partial evidence | Pinned Mole ledger, constrained direct-analyzer comparison, corrected collector and scan diagnostics | Full installed footprint, wider equivalent workloads, cancellation and real-user usability evidence |
 | M7 / T7 | Partial | macOS terminal browser/menu, filters/navigation, file selection and shared approval entries | Full task-family/UX acceptance and broader platform support |
-| M8 / T8 | Partial | Two-rule `clean`, persisted clean exclusions, installer-file selection/approval and controlled native round-trip evidence | Broad clean/purge catalog; directory effects are not approved or implemented |
+| M8 / T8 | Partial | Two-rule `clean`, persisted clean exclusions, installer-file selection/approval, project-artifact purge execution and developer-cache location preview | Broad clean/purge catalog; non-project cache execution and broader directory effects need separate contracts |
 | M9 / T9 | Partial, read-only | macOS `apps` inventory and `apps-related` association preview | Running/shared/multi-copy ownership, supported uninstall flows and native effects |
 | M10 / T10 | Not implemented | No system-maintenance action or privilege helper | Specific operations, authorization/recovery contracts and native evidence |
 | M11 / T11 | Partial | macOS native status, JSON/watch panel, freshness/alerts and opt-in process top | Numeric temperature/GPU, Windows sampler and broader metric/host coverage |
@@ -183,6 +183,12 @@ The current catalog contains two implemented rule families: CPython source-backe
 cache files and same-directory `javac` class files. `clean` wraps those rules
 with explicit selection and persisted exclusions; it is not a general purge
 engine or permission to remove whole build directories.
+The purge preview catalog also includes a `developer_caches` profile for
+documented rebuildable cache/download-store locations under explicit user-granted
+roots: Xcode DerivedData/cache/CoreSimulator cache, npm/pnpm/Yarn/pip/Cargo/
+Gradle caches and Homebrew downloads. It excludes Xcode Archives and other user
+products. This is App-reusable discovery and unsupported-operation reporting,
+not approved execution for non-project caches.
 
 ### M6: integrate without duplicating policy
 

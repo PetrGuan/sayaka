@@ -6,7 +6,7 @@ use sayaka_engine::execute::PurgeSession;
 use sayaka_engine::journal::Store;
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::purge_preview::{
-    self, DEFAULT_STALE_DAYS, MAX_STALE_DAYS, PurgeOptions, PurgePreview,
+    self, DEFAULT_STALE_DAYS, MAX_STALE_DAYS, PurgeOptions, PurgePreview, PurgeProfile,
 };
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::{self, ScanCode, ScanError};
@@ -17,6 +17,14 @@ use std::time::SystemTime;
 pub fn command() -> Command {
     Command::new("purge")
         .about("Preview rebuildable project artifacts, or Trash the explicitly selected ones")
+        .arg(
+            Arg::new("profile")
+                .long("profile")
+                .value_name("PROFILE")
+                .default_value("projects")
+                .value_parser(["projects", "developer-caches"])
+                .help("Preview profile: marker-bound project artifacts or known developer cache locations"),
+        )
         .arg(
             Arg::new("roots")
                 .value_name("ROOT")
@@ -139,12 +147,31 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     let signal = cancellation.clone();
     ctrlc::set_handler(move || signal.cancel()).map_err(io::Error::other)?;
     let scan_cancellation = cancellation.clone();
+    let requested_profile = match args
+        .get_one::<String>("profile")
+        .map(String::as_str)
+        .unwrap_or("projects")
+    {
+        "projects" => PurgeProfile::Projects,
+        "developer-caches" => PurgeProfile::DeveloperCaches,
+        _ => unreachable!("clap value_parser enforces profile values"),
+    };
     let result: Result<PurgePreview, ScanError> = (|| {
         let stale_days = args
             .get_one::<u32>("stale-days")
             .copied()
             .unwrap_or(DEFAULT_STALE_DAYS);
-        let options = PurgeOptions { stale_days };
+        let profile = requested_profile;
+        if execute && profile != PurgeProfile::Projects {
+            return Err(ScanError::new(
+                ScanCode::InvalidLimits,
+                "--execute is unsupported for --profile developer-caches; this profile is preview-only until a non-project cache revalidation contract exists",
+            ));
+        }
+        let options = PurgeOptions {
+            stale_days,
+            profile,
+        };
         options
             .validate()
             .map_err(|message| ScanError::new(ScanCode::InvalidLimits, message))?;
@@ -192,6 +219,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         if json {
             write_fatal_json(
                 &mut io::stdout().lock(),
+                requested_profile,
                 ScanError::new(ScanCode::Io, format!("progress output failed: {error}")),
             )?;
         }
@@ -216,7 +244,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         }
         Err(error) => {
             if json {
-                write_fatal_json(&mut io::stdout().lock(), error.clone())?;
+                write_fatal_json(&mut io::stdout().lock(), requested_profile, error.clone())?;
             } else {
                 human::fatal(&mut io::stderr().lock(), &error, style)?;
             }
@@ -299,7 +327,12 @@ fn run_execution(
     Ok(report.exit_code())
 }
 
-fn write_fatal_json(out: &mut impl Write, error: ScanError) -> io::Result<()> {
+fn write_fatal_json(
+    out: &mut impl Write,
+    profile: PurgeProfile,
+    error: ScanError,
+) -> io::Result<()> {
+    let unsupported_operations = purge_preview::profile_unsupported_operations(profile);
     let value = serde_json::json!({
         "schema_version": purge_preview::PURGE_SCHEMA_VERSION,
         "kind": purge_preview::PURGE_KIND,
@@ -307,14 +340,23 @@ fn write_fatal_json(out: &mut impl Write, error: ScanError) -> io::Result<()> {
         "status": "failed",
         "complete": false,
         "effects_performed": false,
+        "profile": profile.as_str(),
         "roots": [],
         "stale_days": serde_json::Value::Null,
         "projects": [],
+        "developer_caches": [],
+        "unsupported_operations": unsupported_operations.iter().map(|operation| serde_json::json!({
+            "tool": operation.tool,
+            "operation": operation.operation,
+            "reason": operation.reason,
+        })).collect::<Vec<_>>(),
         "counts": {
             "projects": 0,
             "artifacts": 0,
             "stale_artifacts": 0,
             "excluded": 0,
+            "developer_caches": 0,
+            "unsupported_operations": unsupported_operations.len(),
         },
         "issues": [{
             "code": error.code.as_str(),
@@ -340,6 +382,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
         "status": preview.status.as_str(),
         "complete": preview.complete,
         "effects_performed": false,
+        "profile": preview.profile.as_str(),
         "roots": preview.roots.iter().map(|path| crate::apps::write_native_path(path)).collect::<Vec<_>>(),
         "stale_days": preview.stale_days,
         "projects": preview.projects.iter().map(|project| serde_json::json!({
@@ -356,11 +399,46 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                 "stale": artifact.stale,
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
+        "developer_caches": preview.developer_caches.iter().map(|cache| serde_json::json!({
+            "tool": cache.tool,
+            "rule_id": cache.rule_id,
+            "rule_version": cache.rule_version,
+            "ruleset_revision": cache.ruleset_revision,
+            "title": cache.title,
+            "path": crate::apps::write_native_path(&cache.path),
+            "location": cache.location,
+            "location_kind": cache.location_kind,
+            "kind": cache.kind,
+            "rebuildability_note": cache.rebuildability_note,
+            "user_product": cache.user_product,
+            "cleanup_supported": cache.cleanup_supported,
+            "unsupported_reason": cache.unsupported_reason,
+            "sizes": {
+                "logical": cache.logical_bytes,
+                "allocated": cache.allocated_bytes,
+            },
+            "complete": cache.complete,
+            "modified_unix_ms": cache.modified_unix_ms,
+            "activity": cache.activity.as_str(),
+            "evidence": cache.evidence.iter().map(|source| serde_json::json!({
+                "title": source.title,
+                "url": source.url,
+                "reviewed_utc": source.reviewed_utc,
+                "license_note": source.license_note,
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "unsupported_operations": preview.unsupported_operations.iter().map(|operation| serde_json::json!({
+            "tool": operation.tool,
+            "operation": operation.operation,
+            "reason": operation.reason,
+        })).collect::<Vec<_>>(),
         "counts": {
             "projects": preview.counts.projects,
             "artifacts": preview.counts.artifacts,
             "stale_artifacts": preview.counts.stale_artifacts,
             "excluded": preview.counts.excluded,
+            "developer_caches": preview.counts.developer_caches,
+            "unsupported_operations": preview.counts.unsupported_operations,
         },
         "scan_issues": preview.scan_issues.iter().map(|issue| serde_json::json!({
             "path": issue.path.as_deref().map(crate::apps::write_native_path),
@@ -385,7 +463,36 @@ fn write_human(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
     writeln!(out, "status: {}", preview.status.as_str())?;
     writeln!(out, "complete: {}", preview.complete)?;
     writeln!(out, "effects_performed: false")?;
+    writeln!(out, "profile: {}", preview.profile.as_str())?;
     writeln!(out, "stale_days: {}", preview.stale_days)?;
+    if preview.profile == PurgeProfile::DeveloperCaches {
+        writeln!(out, "developer caches:")?;
+        for cache in &preview.developer_caches {
+            let size = cache
+                .logical_bytes
+                .map(crate::human::size)
+                .unwrap_or_else(|| "unknown".into());
+            writeln!(
+                out,
+                "  - {} [{}] ({size}, activity: {}, cleanup_supported: {})",
+                sayaka_engine::scan::display_path(&cache.path),
+                cache.tool,
+                cache.activity.as_str(),
+                cache.cleanup_supported
+            )?;
+            writeln!(out, "    rule: {}", cache.rule_id)?;
+            writeln!(out, "    note: {}", cache.rebuildability_note)?;
+        }
+        writeln!(out, "unsupported in-app operations:")?;
+        for operation in preview.unsupported_operations {
+            writeln!(
+                out,
+                "  - {} {}: {}",
+                operation.tool, operation.operation, operation.reason
+            )?;
+        }
+        return out.flush();
+    }
     writeln!(out, "projects:")?;
     for project in &preview.projects {
         let markers = project
@@ -446,6 +553,7 @@ mod tests {
             status: purge_preview::PurgeStatus::Complete,
             complete: true,
             effects_performed: false,
+            profile: purge_preview::PurgeProfile::Projects,
             roots: vec![root.to_path_buf()],
             stale_days: 30,
             projects: vec![purge_preview::PurgeProject {
@@ -474,6 +582,10 @@ mod tests {
                     },
                 ],
             }],
+            developer_caches: vec![],
+            unsupported_operations: purge_preview::profile_unsupported_operations(
+                purge_preview::PurgeProfile::Projects,
+            ),
             counts: purge_preview::PurgeCounts::default(),
             scan_issues: vec![],
             scan_issues_omitted: 0,
@@ -568,6 +680,7 @@ mod tests {
         assert_eq!(value["schema_version"], 1);
         assert_eq!(value["kind"], purge_preview::PURGE_KIND);
         assert_eq!(value["effects_performed"], false);
+        assert_eq!(value["profile"], "projects");
         assert_eq!(value["counts"]["projects"], 1);
         assert_eq!(value["projects"][0]["markers"][0], "cargo");
         assert_eq!(value["projects"][0]["artifacts"][0]["name"], "target");
@@ -580,6 +693,7 @@ mod tests {
         let mut out = Vec::new();
         write_fatal_json(
             &mut out,
+            PurgeProfile::DeveloperCaches,
             ScanError::new(ScanCode::InvalidRoot, "test refusal"),
         )
         .expect("fatal json");
@@ -588,6 +702,7 @@ mod tests {
         assert_eq!(value["kind"], purge_preview::PURGE_KIND);
         assert_eq!(value["status"], "failed");
         assert_eq!(value["effects_performed"], false);
+        assert_eq!(value["profile"], "developer_caches");
         assert!(value["projects"].as_array().expect("projects").is_empty());
         assert_eq!(value["issues"][0]["code"], "invalid_root");
         assert_eq!(value["issues"][0]["message"], "test refusal");
