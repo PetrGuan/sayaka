@@ -770,6 +770,7 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
         } else {
             return Err(INVALID_ARGUMENT);
         };
+        journal::validate_state_directory_path(&state_dir).map_err(|_| INVALID_ARGUMENT)?;
         let preview = {
             let slot = get_purge(request.preview_handle)?;
             let mut job = lock_job(&slot)?;

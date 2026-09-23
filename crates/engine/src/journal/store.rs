@@ -29,15 +29,7 @@ impl Store {
     /// Readers take the same lock, so Started cannot be called interrupted while
     /// another Sayaka process still owns the execution session.
     pub fn open(path: &Path, create: bool) -> io::Result<Self> {
-        if !path.is_absolute()
-            || path
-                .components()
-                .any(|part| matches!(part, std::path::Component::ParentDir))
-        {
-            return Err(invalid(
-                "state directory must be an absolute physical path without '..'",
-            ));
-        }
+        validate_state_directory_path(path)?;
         if create {
             let parent = path
                 .parent()

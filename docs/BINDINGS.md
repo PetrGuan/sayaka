@@ -711,9 +711,10 @@ any refresh.
 - `has_state_dir == 0` for the default journal directory or `1` plus an
   absolute `state_dir`.
 
-Missing approval or malformed token fails with `INVALID_ARGUMENT`. Empty,
-duplicate, cross-preview or unknown item references fail with `INVALID_CANDIDATE`
-and do not launch a task. A partial/cancelled/failed preview cannot execute.
+Missing approval, malformed token, or empty/over-limit item references fail with
+`INVALID_ARGUMENT`. Duplicate, cross-preview or unknown item references fail
+with `INVALID_CANDIDATE` and do not launch a task. A partial/cancelled/failed
+preview cannot execute.
 The execution worker prepares a fresh engine `PurgeSession`, revalidates every
 selected item's identity/ancestry/marker evidence before each Foundation Trash
 call, and journals the same durable intent/outcome record as the CLI.
