@@ -667,7 +667,7 @@ Preview result JSON is capped by `SAYAKA_MAX_RESULT_BYTES_V1` and has no NUL:
     "stale_items": 1,
     "excluded": 0,
     "developer_caches": 0,
-    "unsupported_operations": 8,
+    "unsupported_operations": 0,
     "logical_bytes": 123,
     "allocated_bytes": null
   },
@@ -697,11 +697,7 @@ Preview result JSON is capped by `SAYAKA_MAX_RESULT_BYTES_V1` and has no NUL:
     }]
   }],
   "developer_caches": [],
-  "unsupported_operations": [{
-    "tool": "homebrew",
-    "operation": "brew cleanup",
-    "reason": "requires launching Homebrew and applying Homebrew policy outside the app sandbox; this profile only reports file-level download cache candidates under user-granted roots"
-  }],
+  "unsupported_operations": [],
   "scan_issues": [],
   "scan_issues_omitted": 0
 }
@@ -711,10 +707,14 @@ Unknown logical/allocated sizes are JSON `null`, never `0`. Item IDs are local
 to this preview/digest. `plan_identifier` and `plan_digest` currently carry the
 same SHA-256 text over the preview's root/options/item evidence; hosts must pass
 the exact `plan_digest` bytes back to execution and discard stale UI state after
-any refresh.
+any refresh. In every profile, `totals.unsupported_operations` is the length of
+the top-level `unsupported_operations` array.
 
-For `profile: "developer_caches"`, `projects` is empty and
-`developer_caches` contains preview-only candidates. Each candidate exposes
+For `profile: "developer_caches"`, `projects` is empty,
+`developer_caches` contains preview-only candidates, and
+`unsupported_operations` contains the developer-cache-specific external-command
+cleanup operations that this profile deliberately does not perform. Each
+candidate exposes
 `tool`, `rule_id`, `rule_version`, `ruleset_revision`, `title`, `path`,
 documented `location`, `location_kind`, `kind`, `rebuildability_note`,
 `user_product` (always `false` for this profile), `cleanup_supported`,

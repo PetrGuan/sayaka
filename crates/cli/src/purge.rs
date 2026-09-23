@@ -332,6 +332,7 @@ fn write_fatal_json(
     profile: PurgeProfile,
     error: ScanError,
 ) -> io::Result<()> {
+    let unsupported_operations = purge_preview::profile_unsupported_operations(profile);
     let value = serde_json::json!({
         "schema_version": purge_preview::PURGE_SCHEMA_VERSION,
         "kind": purge_preview::PURGE_KIND,
@@ -344,7 +345,7 @@ fn write_fatal_json(
         "stale_days": serde_json::Value::Null,
         "projects": [],
         "developer_caches": [],
-        "unsupported_operations": purge_preview::unsupported_operations().iter().map(|operation| serde_json::json!({
+        "unsupported_operations": unsupported_operations.iter().map(|operation| serde_json::json!({
             "tool": operation.tool,
             "operation": operation.operation,
             "reason": operation.reason,
@@ -355,7 +356,7 @@ fn write_fatal_json(
             "stale_artifacts": 0,
             "excluded": 0,
             "developer_caches": 0,
-            "unsupported_operations": purge_preview::unsupported_operations().len(),
+            "unsupported_operations": unsupported_operations.len(),
         },
         "issues": [{
             "code": error.code.as_str(),
@@ -582,7 +583,9 @@ mod tests {
                 ],
             }],
             developer_caches: vec![],
-            unsupported_operations: purge_preview::unsupported_operations(),
+            unsupported_operations: purge_preview::profile_unsupported_operations(
+                purge_preview::PurgeProfile::Projects,
+            ),
             counts: purge_preview::PurgeCounts::default(),
             scan_issues: vec![],
             scan_issues_omitted: 0,

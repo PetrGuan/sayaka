@@ -1241,10 +1241,12 @@ mod tests {
                 stale_artifacts: 1,
                 excluded: 0,
                 developer_caches: 0,
-                unsupported_operations: purge_preview::unsupported_operations().len(),
+                unsupported_operations: 0,
             },
             developer_caches: Vec::new(),
-            unsupported_operations: purge_preview::unsupported_operations(),
+            unsupported_operations: purge_preview::profile_unsupported_operations(
+                purge_preview::PurgeProfile::Projects,
+            ),
             scan_issues: Vec::new(),
             scan_issues_omitted: 0,
         }

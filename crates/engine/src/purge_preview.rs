@@ -908,7 +908,7 @@ fn project_purge_preview(
         stale_days: options.stale_days,
         projects: output,
         developer_caches: Vec::new(),
-        unsupported_operations: UNSUPPORTED_OPERATIONS,
+        unsupported_operations: profile_unsupported_operations(PurgeProfile::Projects),
         counts,
         scan_issues: report.issues.clone(),
         scan_issues_omitted: report.issues_omitted,
@@ -917,6 +917,13 @@ fn project_purge_preview(
 
 pub fn unsupported_operations() -> &'static [UnsupportedOperation] {
     UNSUPPORTED_OPERATIONS
+}
+
+pub fn profile_unsupported_operations(profile: PurgeProfile) -> &'static [UnsupportedOperation] {
+    match profile {
+        PurgeProfile::Projects => &[],
+        PurgeProfile::DeveloperCaches => UNSUPPORTED_OPERATIONS,
+    }
 }
 
 fn developer_cache_preview(
@@ -947,8 +954,9 @@ fn developer_cache_preview_with_home(
     directories.sort_by(|left, right| left.1.cmp(&right.1));
     let mut candidates = Vec::new();
     let mut matched_locations: Vec<PathBuf> = Vec::new();
+    let unsupported_operations = profile_unsupported_operations(options.profile);
     let mut counts = PurgeCounts {
-        unsupported_operations: UNSUPPORTED_OPERATIONS.len(),
+        unsupported_operations: unsupported_operations.len(),
         ..Default::default()
     };
     for (entry, canonical_path) in directories {
@@ -1033,7 +1041,7 @@ fn developer_cache_preview_with_home(
         stale_days: options.stale_days,
         projects: Vec::new(),
         developer_caches: candidates,
-        unsupported_operations: UNSUPPORTED_OPERATIONS,
+        unsupported_operations,
         counts,
         scan_issues: report.issues.clone(),
         scan_issues_omitted: report.issues_omitted,
