@@ -334,7 +334,7 @@ Node-evidence `data` wraps that same node object and bounded per-node evidence:
 `device`/`inode`, or `variant: "windows"` with `volume_serial`/`file_id`).
 Aliases are populated only for file nodes. `observed_alias_count` counts all
 retained file entries with the same identity, including the selected node, while
-`aliases` contains at most 16 of them in native path ascending order. Each alias
+`aliases` contains at most 16 of them in ascending raw native path byte order. Each alias
 contains only `resource_id`, lossless `path` and `counted`. Non-file nodes use
 count zero and an empty list. `matching_issue_count` counts retained issues whose
 optional path exactly equals the node path, and `issues` contains at most 8 in

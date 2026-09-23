@@ -145,19 +145,28 @@ struct NodeEvidence<'a> {
     issues: Vec<wire::Issue<'a>>,
 }
 
+fn path_key(entry: &ScanEntry) -> &[u8] {
+    entry.path.as_os_str().as_encoded_bytes()
+}
+
 fn node_evidence<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> NodeEvidence<'a> {
     let report = tree.report();
     let mut observed_alias_count = 0;
-    let mut aliases = Vec::new();
+    let mut aliases: Vec<&ScanEntry> = Vec::with_capacity(MAX_NODE_ALIASES);
     if entry.kind == ResourceKind::File {
         for alias in report.entries.iter().filter(|candidate| {
             candidate.kind == ResourceKind::File && candidate.identity == entry.identity
         }) {
             observed_alias_count += 1;
-            aliases.push(alias);
+            // Keep only the first MAX_NODE_ALIASES paths in raw byte order.
+            let position = aliases.partition_point(|kept| path_key(kept) <= path_key(alias));
+            if position < MAX_NODE_ALIASES {
+                if aliases.len() == MAX_NODE_ALIASES {
+                    aliases.pop();
+                }
+                aliases.insert(position, alias);
+            }
         }
-        aliases.sort_unstable_by(|left, right| left.path.cmp(&right.path));
-        aliases.truncate(MAX_NODE_ALIASES);
     }
     let aliases = aliases
         .into_iter()
