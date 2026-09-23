@@ -74,6 +74,24 @@ fn query_layout_arguments_and_error_outputs_are_explicit() {
             INVALID_ARGUMENT
         );
         assert_eq!(
+            sayaka_scan_node_evidence_v1(
+                0,
+                &reference,
+                ptr::null_mut(),
+                MAX_QUERY_BYTES + 1,
+                &mut required
+            ),
+            INVALID_ARGUMENT
+        );
+        assert_eq!(
+            sayaka_scan_node_evidence_v1(1, &reference, ptr::null_mut(), 0, &mut required),
+            INVALID_NODE
+        );
+        assert_eq!(
+            sayaka_scan_node_evidence_v1(0, ptr::null(), ptr::null_mut(), 0, &mut required),
+            INVALID_ARGUMENT
+        );
+        assert_eq!(
             sayaka_scan_children_v1(0, &reference, &valid, ptr::null_mut(), 0, &mut required),
             INVALID_HANDLE
         );
@@ -248,6 +266,11 @@ mod native {
         assert_eq!(empty["data"]["nodes"], serde_json::json!([]));
         let detail = query(|b, c, r| unsafe { sayaka_scan_node_v1(first.0, &root_ref, b, c, r) });
         assert_eq!(detail["data"], *root_node);
+        let root_evidence =
+            query(|b, c, r| unsafe { sayaka_scan_node_evidence_v1(first.0, &root_ref, b, c, r) });
+        assert_eq!(root_evidence["data"]["node"], *root_node);
+        assert_eq!(root_evidence["data"]["observed_alias_count"], 0);
+        assert_eq!(root_evidence["data"]["aliases"], serde_json::json!([]));
         let end = query(|b, c, r| unsafe {
             sayaka_scan_children_v1(first.0, &root_ref, &request(3, 1, SORT_NAME), b, c, r)
         });
@@ -272,6 +295,21 @@ mod native {
             sayaka_scan_children_v1(first.0, &a_ref, &request(0, 1, SORT_NAME), b, c, r)
         });
         let file_ref = node_ref(&children["data"]["nodes"][0]);
+        let file_evidence =
+            query(|b, c, r| unsafe { sayaka_scan_node_evidence_v1(first.0, &file_ref, b, c, r) });
+        assert_eq!(file_evidence["data"]["observed_alias_count"], 2);
+        assert_eq!(
+            file_evidence["data"]["aliases"].as_array().unwrap().len(),
+            2
+        );
+        assert!(
+            file_evidence["data"]["aliases"][0]["path"]["raw"]
+                .as_str()
+                .unwrap()
+                < file_evidence["data"]["aliases"][1]["path"]["raw"]
+                    .as_str()
+                    .unwrap()
+        );
         assert_eq!(
             unsafe {
                 sayaka_scan_children_v1(
@@ -293,6 +331,12 @@ mod native {
             unsafe { sayaka_scan_node_v1(first.0, &missing, ptr::null_mut(), 0, &mut required) },
             INVALID_NODE
         );
+        assert_eq!(
+            unsafe {
+                sayaka_scan_node_evidence_v1(first.0, &missing, ptr::null_mut(), 0, &mut required)
+            },
+            INVALID_NODE
+        );
         // Queries are cached observations, not filesystem re-enumeration.
         std::fs::write(root.join("new"), [9; 20]).unwrap();
         assert_eq!(
@@ -309,6 +353,18 @@ mod native {
         assert_eq!(
             unsafe {
                 sayaka_scan_node_v1(refreshed.0, &root_ref, ptr::null_mut(), 0, &mut required)
+            },
+            INVALID_NODE
+        );
+        assert_eq!(
+            unsafe {
+                sayaka_scan_node_evidence_v1(
+                    refreshed.0,
+                    &root_ref,
+                    ptr::null_mut(),
+                    0,
+                    &mut required,
+                )
             },
             INVALID_NODE
         );
@@ -457,5 +513,78 @@ mod native {
         assert_eq!(small["data"]["total"], MAX_PAGE_NODES);
         assert_eq!(small["data"]["nodes"].as_array().unwrap().len(), 1);
         assert_eq!(small["data"]["next_offset"], 1);
+
+        let mut report = tree.report().clone();
+        report.entries.truncate(1);
+        let root = report.entries[0].clone();
+        let selected_id = root_id + 1;
+        for index in (0..20).rev() {
+            report.entries.push(ScanEntry {
+                id: root_id + 1 + index,
+                path: root.path.join(format!("{index:02}-alias")),
+                kind: ResourceKind::File,
+                logical_bytes: Some(1),
+                allocated_bytes: Some(1),
+                counted: index == 0,
+                depth: root.depth + 1,
+                ..root.clone()
+            });
+        }
+        let selected_path = report
+            .entries
+            .iter()
+            .find(|entry| entry.id == selected_id)
+            .unwrap()
+            .path
+            .clone();
+        for index in 0..10 {
+            report.issues.push(sayaka_engine::scan::ScanIssue {
+                path: Some(selected_path.clone()),
+                code: ScanCode::PermissionDenied,
+                message: format!("denied {index}"),
+                os_code: Some(13),
+            });
+        }
+        report.issues.push(sayaka_engine::scan::ScanIssue {
+            path: Some(root.path.join("unrelated")),
+            code: ScanCode::NotFound,
+            message: "missing".to_string(),
+            os_code: None,
+        });
+        let tree = ScanTree::build(report, &Cancellation::default()).unwrap();
+        let selected = tree.entry(selected_id).unwrap();
+        let evidence: Value = serde_json::from_slice(
+            &serialize(&tree, 7, node_evidence(&tree, 7, selected)).unwrap(),
+        )
+        .unwrap();
+        let data = &evidence["data"];
+        assert_eq!(
+            data["node"]["reference"]["node_id"],
+            selected_id.to_string()
+        );
+        assert_eq!(data["identity"]["variant"], "unix");
+        assert_eq!(data["depth"], root.depth + 1);
+        assert_eq!(data["observed_alias_count"], 20);
+        assert_eq!(data["aliases"].as_array().unwrap().len(), MAX_NODE_ALIASES);
+        let aliases = data["aliases"].as_array().unwrap();
+        assert!(aliases.windows(2).all(|pair| {
+            pair[0]["path"]["raw"].as_str().unwrap() < pair[1]["path"]["raw"].as_str().unwrap()
+        }));
+        assert!(
+            aliases[0]["path"]["display"]
+                .as_str()
+                .unwrap()
+                .contains("00-alias")
+        );
+        assert!(
+            aliases[15]["path"]["display"]
+                .as_str()
+                .unwrap()
+                .contains("15-alias")
+        );
+        assert_eq!(data["matching_issue_count"], 10);
+        assert_eq!(data["issues"].as_array().unwrap().len(), MAX_NODE_ISSUES);
+        assert_eq!(data["issues"][0]["message"], "denied 0");
+        assert_eq!(data["issues"][7]["message"], "denied 7");
     }
 }

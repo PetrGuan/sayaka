@@ -215,6 +215,7 @@ unchanged. No new effect, platform backend or capability to act on a path exists
 | --- | --- |
 | `sayaka_scan_roots_v1(handle, page, buffer, capacity, required)` | A page of observed forest roots with node details |
 | `sayaka_scan_node_v1(handle, node, buffer, capacity, required)` | One node with its observed parent, path, measurements and summary |
+| `sayaka_scan_node_evidence_v1(handle, node, buffer, capacity, required)` | One node plus bounded identity, alias and matching-issue evidence |
 | `sayaka_scan_children_v1(handle, parent, page, buffer, capacity, required)` | A page of the directory's immediate observed children, not a recursive result |
 
 Initialize `SayakaPageRequestV1` with ABI version 1 and exact `sizeof`.
@@ -295,6 +296,53 @@ For roots/children, `data` is:
 ```
 
 `next_offset` is null at the end. Single-node `data` is the node object directly.
+Node-evidence `data` wraps that same node object and bounded per-node evidence:
+
+```json
+{
+  "node": {
+    "reference": {"task_handle": "7", "node_id": "3"},
+    "resource_id": "123:4/3",
+    "parent": {"task_handle": "7", "node_id": "2"},
+    "path": {"display": "\"/fixture/a/shared\"", "encoding": "unix_bytes_hex", "raw": "2f666978747572652f612f736861726564"},
+    "kind": "file",
+    "logical_bytes": 11,
+    "allocated_bytes": 4096,
+    "directory_summary": null,
+    "child_count": null,
+    "dataless": false
+  },
+  "identity": {"variant": "unix", "device": 16777220, "inode": 12345},
+  "depth": 2,
+  "counted": true,
+  "observed_alias_count": 2,
+  "aliases": [
+    {
+      "resource_id": "123:4/3",
+      "path": {"display": "\"/fixture/a/shared\"", "encoding": "unix_bytes_hex", "raw": "2f666978747572652f612f736861726564"},
+      "counted": true
+    }
+  ],
+  "matching_issue_count": 1,
+  "issues": [
+    {"path": {"display": "\"/fixture/a/shared\"", "encoding": "unix_bytes_hex", "raw": "2f666978747572652f612f736861726564"}, "code": "permission_denied", "message": "Denied", "os_code": 13}
+  ]
+}
+```
+
+`identity` uses the full report's tagged shape (`variant: "unix"` with
+`device`/`inode`, or `variant: "windows"` with `volume_serial`/`file_id`).
+Aliases are populated only for file nodes. `observed_alias_count` counts all
+retained file entries with the same identity, including the selected node, while
+`aliases` contains at most 16 of them in native path ascending order. Each alias
+contains only `resource_id`, lossless `path` and `counted`. Non-file nodes use
+count zero and an empty list. `matching_issue_count` counts retained issues whose
+optional path exactly equals the node path, and `issues` contains at most 8 in
+report order using the shared issue serializer. The response envelope still
+carries total retained/omitted issue counts for the whole scan. This query does
+not copy or parse the full report JSON; it reuses the same cached `ScanTree` and
+serializes only this bounded payload under `SAYAKA_MAX_QUERY_BYTES_V1`.
+
 `reference` always includes both the task handle and local ID; parse decimal
 strings as unsigned 64-bit integers, not floating point, to fill
 `SayakaNodeRefV1`. `resource_id` matches the full scan report's entry ID and is
