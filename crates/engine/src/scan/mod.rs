@@ -220,6 +220,24 @@ impl ScanCode {
         }
     }
 
+    /// Gap whose missing observations lie at or below the reported path.
+    /// Budget stops, internal failures and root-volume refusals are excluded
+    /// because their effect is not bounded by that path.
+    pub const fn is_subtree_gap(self) -> bool {
+        matches!(
+            self,
+            Self::PermissionDenied
+                | Self::Busy
+                | Self::NotFound
+                | Self::MountBoundary
+                | Self::CloudDirectorySkipped
+                | Self::ChangedEntry
+                | Self::Io
+                | Self::DepthLimit
+                | Self::OpenHandleLimit
+        )
+    }
+
     pub const fn is_gap(self) -> bool {
         !matches!(
             self,

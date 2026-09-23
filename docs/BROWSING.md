@@ -76,7 +76,13 @@ Their corresponding unknown counts remain explicit. Directories, links and other
 non-file objects do not contribute file-payload bytes.
 
 `*` labels incomplete coverage; `+?` indicates unknown measurements alongside a
-known subtotal. A wholly unmeasured or uncovered directory says unknown rather
+known subtotal. Coverage is per subtree: in a partial scan, a directory stays
+complete only when every gap is retained, carries a path, and is bounded to that
+path (permission, busy, not-found, mount, cloud, change, I/O, depth or handle
+skips outside the directory). Traversal-wide stops, budget exhaustion, path-less
+or omitted issues, and gaps on observed non-directory entries (hard-linked
+measurements can be shared) leave every directory incomplete. Directory
+actions still block on any gap anywhere in the scan. A wholly unmeasured or uncovered directory says unknown rather
 than appearing as an empty zero-byte directory. These observations are neither
 an atomic snapshot nor reclaimable/free-space measurements.
 

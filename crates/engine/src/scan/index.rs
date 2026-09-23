@@ -29,7 +29,9 @@ pub struct DirectorySummary {
     pub logical_bytes_unknown_files: u64,
     pub allocated_bytes_known: u64,
     pub allocated_bytes_unknown_files: u64,
-    /// Traversal coverage, independent of whether measurements are known.
+    /// Traversal coverage of this subtree, independent of whether measurements
+    /// are known. A partial scan may still cover a subtree that has no
+    /// path-bounded gap; traversal-wide stops or omitted issues leave none complete.
     pub complete: bool,
 }
 
@@ -48,6 +50,7 @@ pub struct ScanTree {
     nodes: Vec<Node>,
     roots: Vec<u64>,
     root_size_orders: [Vec<u64>; 2],
+    complete: bool,
 }
 
 impl ScanTree {
@@ -136,10 +139,37 @@ impl ScanTree {
 
         let mut complete =
             report.complete && report.status == ScanStatus::Complete && report.issues_omitted == 0;
+        // A partial report can still prove coverage for unrelated subtrees when
+        // every gap is retained, path-bearing and bounded to that path. Anything
+        // else, including traversal-wide stops, leaves every directory incomplete.
+        let mut localized = report.status == ScanStatus::Partial && report.issues_omitted == 0;
+        let mut incomplete_paths = HashSet::new();
         for issue in &report.issues {
             check_cancelled(cancellation)?;
-            complete &= !issue.code.is_gap();
+            if !issue.code.is_gap() {
+                continue;
+            }
+            complete = false;
+            let bounded = issue.code.is_subtree_gap()
+                && issue.path.as_deref().is_some_and(|path| {
+                    valid_absolute_path(path)
+                        && paths.get(path).is_none_or(|&position| {
+                            report.entries[position].kind == ResourceKind::Directory
+                        })
+                });
+            if !localized || !bounded {
+                localized = false;
+                continue;
+            }
+            let path = issue.path.as_deref().expect("bounded gap has a path");
+            for ancestor in path.ancestors() {
+                check_cancelled(cancellation)?;
+                if !incomplete_paths.insert(ancestor) {
+                    break;
+                }
+            }
         }
+        localized &= !complete && !incomplete_paths.is_empty();
         // An absent requested root needs a reported intentional deduplication;
         // otherwise even a malformed success-shaped report has missing coverage.
         for root in &report.roots {
@@ -154,6 +184,7 @@ impl ScanTree {
                 })
             {
                 complete = false;
+                localized = false;
             }
         }
 
@@ -173,7 +204,8 @@ impl ScanTree {
                 ResourceKind::Directory => {
                     let bag = bags[position].take().unwrap_or_default();
                     let mut summary = bag.summary.clone();
-                    summary.complete = complete;
+                    summary.complete =
+                        complete || (localized && !incomplete_paths.contains(entry.path.as_path()));
                     nodes[position].summary = Some(summary);
                     if let Some(parent) = parent {
                         bags[parent]
@@ -185,6 +217,7 @@ impl ScanTree {
             }
         }
         check_cancelled(cancellation)?;
+        drop(incomplete_paths);
         drop(paths);
         drop(explicit_roots);
         let mut tree = Self {
@@ -193,6 +226,7 @@ impl ScanTree {
             nodes,
             roots,
             root_size_orders: Default::default(),
+            complete,
         };
         for position in 0..tree.nodes.len() {
             check_cancelled(cancellation)?;
@@ -211,6 +245,12 @@ impl ScanTree {
         self.positions
             .get(&id)
             .map(|&index| &self.report.entries[index])
+    }
+
+    /// Whole-scan coverage: no gap anywhere. Subtree summaries can be
+    /// complete while this is false.
+    pub fn complete(&self) -> bool {
+        self.complete
     }
 
     /// Observed forest roots, in native path order.

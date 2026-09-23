@@ -384,6 +384,132 @@ fn all_gap_codes_mark_coverage_incomplete() {
     }
 }
 
+fn partial(entries: Vec<ScanEntry>, issues: Vec<ScanIssue>) -> ScanReport {
+    let mut report = report(entries);
+    report.status = ScanStatus::Partial;
+    report.complete = false;
+    report.issues = issues;
+    report
+}
+
+fn located(code: ScanCode, relative: &str) -> ScanIssue {
+    ScanIssue {
+        path: Some(path(relative)),
+        ..issue(code)
+    }
+}
+
+fn coverage_tree() -> Vec<ScanEntry> {
+    vec![
+        directory(1, ""),
+        directory(2, "clean"),
+        directory(3, "clean/nested"),
+        directory(4, "mixed"),
+        directory(5, "mixed/denied"),
+        directory(6, "mixed/sibling"),
+        file(7, "mixed/sibling/file", 1, Some(1), Some(1)),
+    ]
+}
+
+#[test]
+fn bounded_gaps_only_mark_their_path_and_ancestors_incomplete() {
+    for code in [
+        ScanCode::PermissionDenied,
+        ScanCode::Busy,
+        ScanCode::NotFound,
+        ScanCode::MountBoundary,
+        ScanCode::CloudDirectorySkipped,
+        ScanCode::ChangedEntry,
+        ScanCode::Io,
+        ScanCode::DepthLimit,
+        ScanCode::OpenHandleLimit,
+    ] {
+        let report = partial(
+            coverage_tree(),
+            vec![
+                located(code, "mixed/denied"),
+                located(ScanCode::LinkSkipped, "clean/link"),
+            ],
+        );
+        let tree = ScanTree::build(report, &Cancellation::default()).unwrap();
+        for (id, complete) in [
+            (1, false),
+            (2, true),
+            (3, true),
+            (4, false),
+            (5, false),
+            (6, true),
+        ] {
+            assert_eq!(
+                tree.summary(id).unwrap().complete,
+                complete,
+                "{code:?} {id}"
+            );
+        }
+    }
+
+    // A missing child entry is bounded by its own path below the parent.
+    let report = partial(
+        coverage_tree(),
+        vec![located(ScanCode::Io, "clean/nested/gone")],
+    );
+    let tree = ScanTree::build(report, &Cancellation::default()).unwrap();
+    for (id, complete) in [(1, false), (2, false), (3, false), (4, true), (6, true)] {
+        assert_eq!(tree.summary(id).unwrap().complete, complete, "{id}");
+    }
+}
+
+#[test]
+fn unbounded_gaps_keep_every_directory_incomplete() {
+    let bounded = || located(ScanCode::PermissionDenied, "mixed/denied");
+    let mut cases = Vec::new();
+    for code in [
+        ScanCode::EntryLimit,
+        ScanCode::PathBytesLimit,
+        ScanCode::DurationLimit,
+        ScanCode::Cancelled,
+        ScanCode::Overflow,
+        ScanCode::PolicyFailure,
+        ScanCode::Internal,
+        ScanCode::WorkerPanic,
+    ] {
+        cases.push(partial(
+            coverage_tree(),
+            vec![bounded(), located(code, "mixed/denied")],
+        ));
+    }
+    // Path-less, hard-linked file, omitted, and non-partial reports.
+    cases.push(partial(
+        coverage_tree(),
+        vec![bounded(), issue(ScanCode::Io)],
+    ));
+    cases.push(partial(
+        coverage_tree(),
+        vec![located(ScanCode::ChangedEntry, "mixed/sibling/file")],
+    ));
+    let mut omitted = partial(coverage_tree(), vec![bounded()]);
+    omitted.issues_omitted = 1;
+    cases.push(omitted);
+    for status in [ScanStatus::Cancelled, ScanStatus::Failed] {
+        let mut report = partial(coverage_tree(), vec![bounded()]);
+        report.status = status;
+        cases.push(report);
+    }
+    let mut missing_root = partial(coverage_tree(), vec![bounded()]);
+    missing_root.roots.push(path("missing"));
+    cases.push(missing_root);
+    cases.push(partial(coverage_tree(), Vec::new()));
+    for (index, report) in cases.into_iter().enumerate() {
+        let tree = ScanTree::build(report, &Cancellation::default()).unwrap();
+        for id in 1..=6 {
+            assert!(
+                !tree.summary(id).unwrap().complete,
+                "case {index} node {id}"
+            );
+        }
+    }
+}
+
 #[test]
 fn hierarchy_uses_paths_not_depth_or_ids_and_order_is_deterministic() {
     let mut entries = vec![

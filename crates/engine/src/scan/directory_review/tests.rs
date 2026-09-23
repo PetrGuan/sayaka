@@ -250,6 +250,22 @@ fn partial_failed_cancelled_and_omitted_coverage_stay_blocked() {
             assess_directory(&tree, selection(&tree, 2), &[], &Cancellation::default()).unwrap();
         assert!(has(&review, DirectoryBlockerCode::IncompleteScan));
     }
+    // A partial scan whose only gap lies outside the selection still blocks.
+    let mut input = report(fixture());
+    input.status = ScanStatus::Partial;
+    input.complete = false;
+    input.issues.push(ScanIssue {
+        path: Some(path("unread")),
+        code: ScanCode::PermissionDenied,
+        message: "synthetic coverage gap".into(),
+        os_code: None,
+    });
+    let tree = ScanTree::build(input, &Cancellation::default()).unwrap();
+    assert!(tree.summary(2).unwrap().complete);
+    assert!(has(
+        &assess_directory(&tree, selection(&tree, 2), &[], &Cancellation::default()).unwrap(),
+        DirectoryBlockerCode::IncompleteScan
+    ));
     for omitted in [false, true] {
         let mut input = report(fixture());
         if omitted {
