@@ -25,6 +25,7 @@ extern "C" {
 #define SAYAKA_MAX_NODE_ISSUES_V1 8u
 #define SAYAKA_MAX_INSTALLER_CANDIDATES_V1 512u
 #define SAYAKA_MAX_INSTALLER_SELECTIONS_V1 32u
+#define SAYAKA_MAX_PURGE_SELECTIONS_V1 32u
 #define SAYAKA_PATH_UNIX_BYTES_V1 1u
 #define SAYAKA_PATH_WINDOWS_UTF16LE_V1 2u
 
@@ -147,6 +148,57 @@ typedef struct SayakaInstallerSnapshotV1 {
     uint64_t elapsed_ms;
 } SayakaInstallerSnapshotV1;
 
+typedef struct SayakaPurgePreviewRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    SayakaPathV1 root; /* One explicit native absolute root; input copied. */
+    uint32_t stale_days; /* 0 means CLI default; otherwise 1..3650. */
+    uint32_t reserved; /* Must be zero. */
+} SayakaPurgePreviewRequestV1;
+
+typedef struct SayakaPurgeItemRefV1 {
+    uint64_t preview_handle; /* Purge preview handle, never scan/installer/execution. */
+    uint64_t item_id;        /* Decimal-string id from preview JSON parsed as u64. */
+} SayakaPurgeItemRefV1;
+
+typedef struct SayakaPurgeExecuteRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t preview_handle;
+    const uint8_t *plan_digest; /* 64 ASCII hex bytes from preview JSON, no NUL. */
+    size_t plan_digest_length;
+    const SayakaPurgeItemRefV1 *items; /* 1..SAYAKA_MAX_PURGE_SELECTIONS_V1 unique subset. */
+    size_t item_count;
+    uint32_t approval; /* Must be 1. */
+    uint32_t reserved; /* Must be zero. */
+    const uint8_t *approval_token; /* Exact "purge N artifacts", no NUL. */
+    size_t approval_token_length;
+    uint32_t has_state_dir; /* 0 = default journal dir, 1 = state_dir present. */
+    SayakaPathV1 state_dir;
+} SayakaPurgeExecuteRequestV1;
+
+enum SayakaPurgeTaskKindV1 {
+    SAYAKA_PURGE_PREVIEW = 1,
+    SAYAKA_PURGE_EXECUTION = 2
+};
+
+typedef struct SayakaPurgeSnapshotV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t kind;
+    uint32_t state; /* SayakaScanStateV1. */
+    uint32_t cancellation_requested;
+    uint32_t has_progress;
+    uint32_t reserved;
+    uint64_t progress_sequence;
+    uint64_t observed_entries;
+    uint64_t unique_files;
+    uint64_t logical_bytes_known;
+    uint64_t total_items;
+    uint64_t completed_items;
+    uint64_t elapsed_ms;
+} SayakaPurgeSnapshotV1;
+
 /* Caller pointers must be valid, correctly aligned and non-overlapping.
  * Null/alignment checks cannot validate arbitrary foreign memory.
  * No Rust allocation is returned for the caller to free. */
@@ -235,6 +287,25 @@ SAYAKA_API int32_t sayaka_installer_selection_start_v1(uint64_t discovery_handle
  * Inspect data.status and issues even when the copy returns OK. */
 SAYAKA_API int32_t sayaka_installer_result_v1(uint64_t handle, uint8_t *buffer, size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_installer_release_v1(uint64_t handle);
+
+/* Purge preview/execution is macOS-only. Preview scans one explicit
+ * security-scoped root supplied by the host and performs no effects. Result
+ * JSON groups marker-bound artifact directories by project, includes NativePath
+ * {display,encoding,raw}, item references and a plan_digest. Unknown size fields
+ * are JSON null. Execution accepts only a same-preview subset plus the exact
+ * plan_digest and explicit approval token; changed/missing/not-revalidated
+ * items are skipped/failed/unknown, never counted as moved. Native effects are
+ * ordinary Foundation Trash only: no permanent-delete fallback. The documented
+ * residual final path-replacement race still applies. */
+SAYAKA_API int32_t sayaka_purge_preview_start_v1(const SayakaPurgePreviewRequestV1 *request,
+                                               uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_purge_poll_v1(uint64_t handle, SayakaPurgeSnapshotV1 *out_snapshot);
+SAYAKA_API int32_t sayaka_purge_cancel_v1(uint64_t handle);
+SAYAKA_API int32_t sayaka_purge_execute_start_v1(const SayakaPurgeExecuteRequestV1 *request,
+                                               uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_purge_result_v1(uint64_t handle, uint8_t *buffer,
+                                        size_t capacity, size_t *required);
+SAYAKA_API int32_t sayaka_purge_release_v1(uint64_t handle);
 
 #ifdef __cplusplus
 }

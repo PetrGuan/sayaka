@@ -1,0 +1,870 @@
+// SPDX-License-Identifier: MPL-2.0
+
+use super::*;
+use sayaka_engine::execute::PurgeSession;
+use sayaka_engine::journal::{self, Store};
+use sayaka_engine::model::Cancellation;
+use sayaka_engine::purge_preview::{self, PurgeItemId, PurgeOptions, PurgePreview, PurgeStatus};
+use sayaka_engine::scan::index::ScanTree;
+use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
+use sayaka_engine::scan::{ScanCode, ScanError, ScanLimits, wire};
+use serde_json::{Value, json};
+use std::thread::JoinHandle;
+use std::time::SystemTime;
+
+pub const MAX_PURGE_SELECTIONS: usize = journal::MAX_ITEMS;
+
+#[repr(C)]
+pub struct SayakaPurgePreviewRequestV1 {
+    pub abi_version: u32,
+    pub struct_size: u32,
+    pub root: SayakaPathV1,
+    pub stale_days: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SayakaPurgeItemRefV1 {
+    pub preview_handle: u64,
+    pub item_id: u64,
+}
+
+#[repr(C)]
+pub struct SayakaPurgeExecuteRequestV1 {
+    pub abi_version: u32,
+    pub struct_size: u32,
+    pub preview_handle: u64,
+    pub plan_digest: *const u8,
+    pub plan_digest_length: usize,
+    pub items: *const SayakaPurgeItemRefV1,
+    pub item_count: usize,
+    pub approval: u32,
+    pub reserved: u32,
+    pub approval_token: *const u8,
+    pub approval_token_length: usize,
+    pub has_state_dir: u32,
+    pub state_dir: SayakaPathV1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SayakaPurgeSnapshotV1 {
+    pub abi_version: u32,
+    pub struct_size: u32,
+    pub kind: u32,
+    pub state: u32,
+    pub cancellation_requested: u32,
+    pub has_progress: u32,
+    pub reserved: u32,
+    pub progress_sequence: u64,
+    pub observed_entries: u64,
+    pub unique_files: u64,
+    pub logical_bytes_known: u64,
+    pub total_items: u64,
+    pub completed_items: u64,
+    pub elapsed_ms: u64,
+}
+
+pub(super) struct PurgePreviewJob {
+    task: ScanTask,
+    options: PurgeOptions,
+    preview: Option<Result<Arc<PurgePreview>, i32>>,
+    result: Option<Result<Vec<u8>, i32>>,
+    closed: bool,
+}
+
+pub(super) struct PurgeExecutionJob {
+    cancel: Cancellation,
+    worker: Option<JoinHandle<Result<Vec<u8>, ScanError>>>,
+    result: Option<Result<Vec<u8>, i32>>,
+    closed: bool,
+}
+
+pub(super) enum PurgeJob {
+    Preview(Box<PurgePreviewJob>),
+    Execution(Box<PurgeExecutionJob>),
+}
+
+impl PurgeJob {
+    fn ensure_open(&self) -> Result<(), i32> {
+        let closed = match self {
+            Self::Preview(job) => job.closed,
+            Self::Execution(job) => job.closed,
+        };
+        if closed { Err(INVALID_HANDLE) } else { Ok(()) }
+    }
+}
+
+fn get_purge(handle: u64) -> Result<Arc<Mutex<PurgeJob>>, i32> {
+    registry()
+        .lock()
+        .map_err(|_| INTERNAL_ERROR)?
+        .purges
+        .get(&handle)
+        .cloned()
+        .ok_or(INVALID_HANDLE)
+}
+
+fn scan_error_code(error: &ScanError) -> i32 {
+    match error.code {
+        ScanCode::InvalidRoot | ScanCode::InvalidLimits => INVALID_ARGUMENT,
+        ScanCode::UnsupportedPlatform => UNSUPPORTED_PLATFORM,
+        ScanCode::EntryLimit | ScanCode::PathBytesLimit | ScanCode::Overflow => LIMIT_EXCEEDED,
+        _ => INTERNAL_ERROR,
+    }
+}
+
+fn ensure_preview(job: &mut PurgePreviewJob) -> Result<Arc<PurgePreview>, i32> {
+    if job.preview.is_none() {
+        let report = job.task.result().ok_or(NOT_READY)?;
+        let preview = match report {
+            Ok(report) => {
+                let cancellation = Cancellation::default();
+                let index = ScanTree::build(report.clone(), &cancellation)
+                    .map_err(|error| scan_error_code(&error))?;
+                purge_preview::purge_preview(&index, &job.options, SystemTime::now())
+                    .map_err(|_| INVALID_ARGUMENT)
+                    .map(Arc::new)
+            }
+            Err(error) => Err(scan_error_code(error)),
+        };
+        job.preview = Some(preview);
+    }
+    job.preview
+        .as_ref()
+        .expect("initialized purge preview")
+        .clone()
+}
+
+fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
+    let digest = preview.plan_digest();
+    let mut next_id = 1u64;
+    json!({
+        "schema_version": preview.schema_version,
+        "kind": "purge_preview",
+        "task_handle": handle.to_string(),
+        "status": preview.status.as_str(),
+        "complete": preview.complete,
+        "effects_performed": false,
+        "execution_authority": false,
+        "contract": "revalidated_purge_trash_v1",
+        "plan_identifier": digest,
+        "plan_digest": digest,
+        "roots": preview.roots.iter().map(|path| wire::NativePath(path)).collect::<Vec<_>>(),
+        "stale_days": preview.stale_days,
+        "totals": {
+            "projects": preview.counts.projects,
+            "items": preview.counts.artifacts,
+            "stale_items": preview.counts.stale_artifacts,
+            "excluded": preview.counts.excluded,
+            "logical_bytes": sum_known(preview, true),
+            "allocated_bytes": sum_known(preview, false),
+        },
+        "projects": preview.projects.iter().map(|project| {
+            let value = json!({
+                "root": wire::NativePath(&project.root),
+                "markers": project.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
+                "items": project.artifacts.iter().map(|artifact| {
+                    let id = next_id;
+                    next_id += 1;
+                    json!({
+                        "id": id.to_string(),
+                        "reference": { "preview_handle": handle.to_string(), "item_id": id.to_string() },
+                        "path": wire::NativePath(&artifact.path),
+                        "name": artifact.name,
+                        "kind": "directory",
+                        "rule": "marker_bound_project_artifact_v1",
+                        "markers": artifact.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
+                        "sizes": {
+                            "logical": artifact.logical_bytes,
+                            "allocated": artifact.allocated_bytes,
+                        },
+                        "complete": artifact.complete,
+                        "modified_unix_ms": artifact.modified_unix_ms,
+                        "stale": artifact.stale,
+                        "reasons": reasons(artifact),
+                        "evidence": {
+                            "project_markers": artifact.markers.iter().map(|marker| json!({
+                                "kind": marker.as_str(),
+                                "path": wire::NativePath(&project.root.join(marker.file_name())),
+                            })).collect::<Vec<_>>(),
+                            "residual_race_disclosed": true,
+                        },
+                    })
+                }).collect::<Vec<_>>(),
+            });
+            value
+        }).collect::<Vec<_>>(),
+        "scan_issues": preview.scan_issues.iter().map(|issue| json!({
+            "path": issue.path.as_deref().map(wire::NativePath),
+            "code": issue.code.as_str(),
+            "message": issue.message,
+            "os_code": issue.os_code,
+        })).collect::<Vec<_>>(),
+        "scan_issues_omitted": preview.scan_issues_omitted,
+    })
+}
+
+fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
+    let mut total = 0u64;
+    for artifact in preview
+        .projects
+        .iter()
+        .flat_map(|project| &project.artifacts)
+    {
+        let value = if logical {
+            artifact.logical_bytes
+        } else {
+            artifact.allocated_bytes
+        }?;
+        total = total.checked_add(value)?;
+    }
+    Some(total)
+}
+
+fn reasons(artifact: &purge_preview::PurgeArtifact) -> Vec<&'static str> {
+    let mut reasons = vec!["project_marker_bound"];
+    reasons.push(match artifact.stale {
+        Some(true) => "stale",
+        Some(false) => "not_stale",
+        None => "mtime_unknown",
+    });
+    if !artifact.complete {
+        reasons.push("partial_coverage");
+    }
+    reasons
+}
+
+fn preview_result_bytes(job: &mut PurgePreviewJob, handle: u64) -> Result<&[u8], i32> {
+    if job.result.is_none() {
+        let data = ensure_preview(job).map(|preview| preview_json(&preview, handle));
+        job.result = Some(data.and_then(|data| bounded_json(&data, MAX_RESULT_BYTES)));
+    }
+    job.result
+        .as_ref()
+        .expect("initialized purge preview result")
+        .as_deref()
+        .map_err(|code| *code)
+}
+
+fn execution_json(
+    task_handle: u64,
+    preview_handle: u64,
+    preview: &PurgePreview,
+    report: sayaka_engine::execute::ExecutionReport,
+) -> Value {
+    let mut moved = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+    let mut unknown = 0usize;
+    let items = report
+        .record
+        .items
+        .iter()
+        .map(|item| {
+            let status = match item.state {
+                journal::ItemState::Succeeded => {
+                    moved += 1;
+                    "moved"
+                }
+                journal::ItemState::Skipped => {
+                    skipped += 1;
+                    "skipped"
+                }
+                journal::ItemState::Failed => {
+                    failed += 1;
+                    "failed"
+                }
+                journal::ItemState::Unknown => {
+                    unknown += 1;
+                    "unknown"
+                }
+                journal::ItemState::Planned | journal::ItemState::Started => {
+                    unknown += 1;
+                    "unknown"
+                }
+            };
+            json!({
+                "path": item.path,
+                "status": status,
+                "reason": item.reason,
+                "destination": item.destination,
+                "logical_bytes": item.logical_bytes,
+                "recovery_evidence": item.recovery_evidence,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "schema_version": 1,
+        "kind": "purge_execution",
+        "task_handle": task_handle.to_string(),
+        "source_preview_handle": preview_handle.to_string(),
+        "status": if report.journal_error.is_some() || unknown > 0 {
+            "failed"
+        } else if failed > 0 || skipped > 0 {
+            "partial"
+        } else {
+            "complete"
+        },
+        "complete": report.journal_error.is_none() && unknown == 0 && failed == 0,
+        "effects_performed": moved > 0,
+        "contract": report.record.contract,
+        "plan_identifier": preview.plan_digest(),
+        "plan_digest": preview.plan_digest(),
+        "journal": {
+            "operation_id": report.record.operation_id,
+            "schema_version": report.record.schema_version,
+            "error": report.journal_error,
+        },
+        "totals": {
+            "requested": report.record.items.len(),
+            "moved": moved,
+            "skipped": skipped,
+            "failed": failed,
+            "unknown": unknown,
+            "logical_bytes_moved": report.record.items.iter()
+                .filter(|item| item.state == journal::ItemState::Succeeded)
+                .try_fold(0u64, |sum, item| sum.checked_add(item.logical_bytes)),
+        },
+        "items": items,
+        "residual_race_disclosed": true,
+    })
+}
+
+fn refusal_json(
+    task_handle: u64,
+    preview_handle: u64,
+    preview: &PurgePreview,
+    status: &str,
+    message: &str,
+    issues: Vec<Value>,
+    refusals: Vec<Value>,
+) -> Value {
+    json!({
+        "schema_version": 1,
+        "kind": "purge_execution",
+        "task_handle": task_handle.to_string(),
+        "source_preview_handle": preview_handle.to_string(),
+        "status": status,
+        "complete": false,
+        "effects_performed": false,
+        "contract": "revalidated_purge_trash_v1",
+        "plan_identifier": preview.plan_digest(),
+        "plan_digest": preview.plan_digest(),
+        "error": { "message": message },
+        "issues": issues,
+        "refusals": refusals,
+        "totals": { "requested": 0, "moved": 0, "skipped": 0, "failed": 0, "unknown": 0, "logical_bytes_moved": 0 },
+        "items": [],
+        "residual_race_disclosed": true,
+    })
+}
+
+fn execution_worker(
+    task_handle: u64,
+    preview_handle: u64,
+    preview: Arc<PurgePreview>,
+    item_ids: Vec<PurgeItemId>,
+    state_dir: std::path::PathBuf,
+    cancellation: Cancellation,
+) -> Result<Vec<u8>, ScanError> {
+    let selections = purge_preview::resolve_selections_by_ids(&preview, &item_ids)
+        .map_err(|message| ScanError::new(ScanCode::InvalidLimits, message))?;
+    let mut session = PurgeSession::prepare(&selections, &cancellation)
+        .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
+    let issues = session
+        .issues()
+        .iter()
+        .map(|issue| {
+            serde_json::to_value(issue)
+                .unwrap_or_else(|_| json!({"message":"issue serialization failed"}))
+        })
+        .collect::<Vec<_>>();
+    let refusals = session
+        .refusals()
+        .iter()
+        .map(|refusal| {
+            serde_json::to_value(refusal)
+                .unwrap_or_else(|_| json!({"reason":"refusal serialization failed"}))
+        })
+        .collect::<Vec<_>>();
+    if !issues.is_empty() || !refusals.is_empty() {
+        return bounded_json(
+            &refusal_json(
+                task_handle,
+                preview_handle,
+                &preview,
+                "refused",
+                "native purge selection was refused; nothing moved",
+                issues,
+                refusals,
+            ),
+            MAX_RESULT_BYTES,
+        )
+        .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
+    }
+    let plan = session.preview().clone();
+    let approval = session
+        .approve(&plan)
+        .map_err(|error| ScanError::new(ScanCode::InvalidLimits, error.to_string()))?;
+    let store = Store::open(&state_dir, true)
+        .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
+    let report = session
+        .execute(&plan, &approval, &cancellation, &store)
+        .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
+    bounded_json(
+        &execution_json(task_handle, preview_handle, &preview, report),
+        MAX_RESULT_BYTES,
+    )
+    .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)))
+}
+
+fn sayaka_status_text(code: i32) -> String {
+    // SAFETY: Status messages are static NUL-terminated strings.
+    unsafe {
+        std::ffi::CStr::from_ptr(sayaka_status_message_v1(code))
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+fn collect_execution(job: &mut PurgeExecutionJob) {
+    if job.worker.as_ref().is_some_and(JoinHandle::is_finished)
+        && let Some(worker) = job.worker.take()
+    {
+        job.result = Some(match worker.join() {
+            Ok(Ok(bytes)) => Ok(bytes),
+            Ok(Err(error)) => Err(scan_error_code(&error)),
+            Err(_) => Err(PANIC),
+        });
+    }
+}
+
+fn execution_result_bytes(job: &mut PurgeExecutionJob) -> Result<&[u8], i32> {
+    collect_execution(job);
+    job.result
+        .as_ref()
+        .ok_or(NOT_READY)?
+        .as_deref()
+        .map_err(|code| *code)
+}
+
+unsafe fn read_plan_digest(request: &SayakaPurgeExecuteRequestV1) -> Result<String, i32> {
+    if request.plan_digest_length != 64 {
+        return Err(INVALID_ARGUMENT);
+    }
+    pointer(request.plan_digest)?;
+    // SAFETY: Caller provided readable digest bytes for the bounded length.
+    let bytes =
+        unsafe { std::slice::from_raw_parts(request.plan_digest, request.plan_digest_length) };
+    let text = std::str::from_utf8(bytes).map_err(|_| INVALID_ARGUMENT)?;
+    if !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(INVALID_ARGUMENT);
+    }
+    Ok(text.to_owned())
+}
+
+unsafe fn validate_approval(request: &SayakaPurgeExecuteRequestV1) -> Result<(), i32> {
+    if request.approval != 1 {
+        return Err(INVALID_ARGUMENT);
+    }
+    pointer(request.approval_token)?;
+    // SAFETY: Caller provided readable approval-token bytes for the bounded length.
+    let bytes = unsafe {
+        std::slice::from_raw_parts(request.approval_token, request.approval_token_length)
+    };
+    let token = std::str::from_utf8(bytes).map_err(|_| INVALID_ARGUMENT)?;
+    let expected = format!("purge {} artifacts", request.item_count);
+    if token != expected {
+        return Err(INVALID_ARGUMENT);
+    }
+    Ok(())
+}
+
+unsafe fn read_item_ids(
+    preview_handle: u64,
+    items: *const SayakaPurgeItemRefV1,
+    count: usize,
+) -> Result<Vec<PurgeItemId>, i32> {
+    if count == 0 || count > MAX_PURGE_SELECTIONS {
+        return Err(INVALID_ARGUMENT);
+    }
+    pointer(items)?;
+    // SAFETY: Count is bounded and caller supplies this many references.
+    let refs = unsafe { std::slice::from_raw_parts(items, count) };
+    let mut ids = Vec::with_capacity(count);
+    let mut seen = std::collections::HashSet::new();
+    for reference in refs {
+        if reference.preview_handle != preview_handle
+            || reference.item_id == 0
+            || !seen.insert(reference.item_id)
+        {
+            return Err(INVALID_CANDIDATE);
+        }
+        ids.push(PurgeItemId(reference.item_id));
+    }
+    Ok(ids)
+}
+
+/// Starts a read-only purge preview for one explicit native root.
+///
+/// # Safety
+/// request/root bytes are readable/aligned; out_handle is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_preview_start_v1(
+    request: *const SayakaPurgePreviewRequestV1,
+    out_handle: *mut u64,
+) -> i32 {
+    boundary(|| {
+        pointer(out_handle)?;
+        // SAFETY: Caller supplies a writable output slot.
+        unsafe { out_handle.write(0) };
+        pointer(request)?;
+        // SAFETY: Caller supplies a readable request structure.
+        let request = unsafe { &*request };
+        if request.abi_version != ABI_VERSION
+            || request.struct_size as usize != size_of::<SayakaPurgePreviewRequestV1>()
+            || request.reserved != 0
+        {
+            return Err(UNSUPPORTED_VERSION);
+        }
+        if !cfg!(target_os = "macos") {
+            return Err(UNSUPPORTED_PLATFORM);
+        }
+        let options = PurgeOptions {
+            stale_days: if request.stale_days == 0 {
+                purge_preview::DEFAULT_STALE_DAYS
+            } else {
+                request.stale_days
+            },
+        };
+        options.validate().map_err(|_| INVALID_ARGUMENT)?;
+        let root = unsafe { decode_path(request.root)? };
+        let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
+        let handle = registry.allocate_handle()?;
+        let task = ScanTask::start(vec![root], ScanLimits::default())
+            .map_err(|error| scan_error_code(&error))?;
+        registry.purges.insert(
+            handle,
+            Arc::new(Mutex::new(PurgeJob::Preview(Box::new(PurgePreviewJob {
+                task,
+                options,
+                preview: None,
+                result: None,
+                closed: false,
+            })))),
+        );
+        unsafe { out_handle.write(handle) };
+        Ok(())
+    })
+}
+
+/// Returns purge preview/execution lifecycle progress.
+///
+/// # Safety
+/// out_snapshot is aligned writable v1 storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_poll_v1(
+    handle: u64,
+    out_snapshot: *mut SayakaPurgeSnapshotV1,
+) -> i32 {
+    boundary(|| {
+        pointer(out_snapshot)?;
+        // SAFETY: Caller supplies aligned writable snapshot storage.
+        unsafe { out_snapshot.write(SayakaPurgeSnapshotV1::default()) };
+        let slot = get_purge(handle)?;
+        let mut job = lock_job(&slot)?;
+        job.ensure_open()?;
+        let mut out = SayakaPurgeSnapshotV1 {
+            abi_version: ABI_VERSION,
+            struct_size: size_of::<SayakaPurgeSnapshotV1>() as u32,
+            ..Default::default()
+        };
+        match &mut *job {
+            PurgeJob::Preview(job) => {
+                out.kind = 1;
+                let snapshot = job.task.poll().map_err(|_| INTERNAL_ERROR)?;
+                out.state = match snapshot.state {
+                    ScanTaskState::Running => 1,
+                    ScanTaskState::Complete => 2,
+                    ScanTaskState::Partial => 3,
+                    ScanTaskState::Cancelled => 4,
+                    ScanTaskState::Failed => 5,
+                };
+                out.cancellation_requested = u32::from(snapshot.cancellation_requested);
+                out.progress_sequence = snapshot.progress_sequence;
+                if let Some(progress) = snapshot.progress {
+                    out.has_progress = 1;
+                    out.observed_entries = progress.entries as u64;
+                    out.unique_files = progress.unique_files;
+                    out.logical_bytes_known = progress.logical_bytes_known;
+                    out.elapsed_ms = progress.elapsed_ms;
+                }
+            }
+            PurgeJob::Execution(job) => {
+                collect_execution(job);
+                out.kind = 2;
+                out.state = match &job.result {
+                    None => 1,
+                    Some(Ok(_)) => 2,
+                    Some(Err(_)) => 5,
+                };
+                out.cancellation_requested = u32::from(job.cancel.is_cancelled());
+            }
+        }
+        // SAFETY: Caller owns writable output for this call.
+        unsafe { out_snapshot.write(out) };
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sayaka_purge_cancel_v1(handle: u64) -> i32 {
+    boundary(|| {
+        let slot = get_purge(handle)?;
+        let job = lock_job(&slot)?;
+        job.ensure_open()?;
+        match &*job {
+            PurgeJob::Preview(job) => job.task.cancel(),
+            PurgeJob::Execution(job) => job.cancel.cancel(),
+        }
+        Ok(())
+    })
+}
+
+/// Starts revalidated Trash execution for an approved subset of preview items.
+///
+/// # Safety
+/// request, item refs and token/digest bytes are readable; out_handle writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
+    request: *const SayakaPurgeExecuteRequestV1,
+    out_handle: *mut u64,
+) -> i32 {
+    boundary(|| {
+        pointer(out_handle)?;
+        // SAFETY: Caller supplies writable output.
+        unsafe { out_handle.write(0) };
+        pointer(request)?;
+        // SAFETY: Caller supplies a readable request structure.
+        let request = unsafe { &*request };
+        if request.abi_version != ABI_VERSION
+            || request.struct_size as usize != size_of::<SayakaPurgeExecuteRequestV1>()
+            || request.reserved != 0
+        {
+            return Err(UNSUPPORTED_VERSION);
+        }
+        if !cfg!(target_os = "macos") {
+            return Err(UNSUPPORTED_PLATFORM);
+        }
+        let requested_digest = unsafe { read_plan_digest(request)? };
+        unsafe { validate_approval(request)? };
+        let item_ids =
+            unsafe { read_item_ids(request.preview_handle, request.items, request.item_count)? };
+        let state_dir = if request.has_state_dir == 0 {
+            journal::default_directory().map_err(|_| INVALID_ARGUMENT)?
+        } else if request.has_state_dir == 1 {
+            unsafe { decode_path(request.state_dir)? }
+        } else {
+            return Err(INVALID_ARGUMENT);
+        };
+        let preview = {
+            let slot = get_purge(request.preview_handle)?;
+            let mut job = lock_job(&slot)?;
+            match &mut *job {
+                PurgeJob::Preview(job) => {
+                    let preview = ensure_preview(job)?;
+                    if preview.status != PurgeStatus::Complete {
+                        return Err(INVALID_ARGUMENT);
+                    }
+                    if preview.plan_digest() != requested_digest {
+                        return Err(INVALID_CANDIDATE);
+                    }
+                    if purge_preview::resolve_selections_by_ids(&preview, &item_ids).is_err() {
+                        return Err(INVALID_CANDIDATE);
+                    }
+                    preview
+                }
+                PurgeJob::Execution(_) => return Err(INVALID_HANDLE),
+            }
+        };
+        let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
+        let handle = registry.allocate_handle()?;
+        let cancellation = Cancellation::default();
+        let worker_cancel = cancellation.clone();
+        let preview_handle = request.preview_handle;
+        let worker = std::thread::Builder::new()
+            .name("sayaka-host-purge-execute".into())
+            .spawn(move || {
+                execution_worker(
+                    handle,
+                    preview_handle,
+                    preview,
+                    item_ids,
+                    state_dir,
+                    worker_cancel,
+                )
+            })
+            .map_err(|_| INTERNAL_ERROR)?;
+        registry.purges.insert(
+            handle,
+            Arc::new(Mutex::new(PurgeJob::Execution(Box::new(
+                PurgeExecutionJob {
+                    cancel: cancellation,
+                    worker: Some(worker),
+                    result: None,
+                    closed: false,
+                },
+            )))),
+        );
+        // SAFETY: Output remains valid through this call.
+        unsafe { out_handle.write(handle) };
+        Ok(())
+    })
+}
+
+/// Copies terminal purge preview/execution JSON, with no trailing NUL.
+///
+/// # Safety
+/// Outputs follow sayaka_scan_result_v1's caller-owned buffer contract and cap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_result_v1(
+    handle: u64,
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        // SAFETY: Caller supplies valid non-overlapping output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_RESULT_BYTES)? };
+        let slot = get_purge(handle)?;
+        let mut job = lock_job(&slot)?;
+        job.ensure_open()?;
+        let bytes = match &mut *job {
+            PurgeJob::Preview(job) => preview_result_bytes(job, handle)?,
+            PurgeJob::Execution(job) => execution_result_bytes(job)?,
+        };
+        // SAFETY: Output storage was validated above.
+        unsafe { copy_output(bytes, buffer, capacity, required) }
+    })
+}
+
+/// Requests cancellation while active and returns BUSY until owned work exits.
+#[unsafe(no_mangle)]
+pub extern "C" fn sayaka_purge_release_v1(handle: u64) -> i32 {
+    boundary(|| {
+        let slot = get_purge(handle)?;
+        let mut job = match slot.try_lock() {
+            Ok(job) => job,
+            Err(TryLockError::WouldBlock) => return Err(BUSY),
+            Err(TryLockError::Poisoned(poison)) => poison.into_inner(),
+        };
+        job.ensure_open()?;
+        let finished = match &mut *job {
+            PurgeJob::Preview(job) => {
+                if !job.task.is_finished() {
+                    job.task.cancel();
+                    false
+                } else {
+                    job.task.result();
+                    job.closed = true;
+                    true
+                }
+            }
+            PurgeJob::Execution(job) => {
+                collect_execution(job);
+                if job.worker.is_some() {
+                    job.cancel.cancel();
+                    false
+                } else {
+                    job.closed = true;
+                    true
+                }
+            }
+        };
+        if !finished {
+            return Err(BUSY);
+        }
+        registry()
+            .lock()
+            .map_err(|_| INTERNAL_ERROR)?
+            .purges
+            .remove(&handle)
+            .ok_or(INVALID_HANDLE)?;
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_request_requires_explicit_approval_token() {
+        let digest = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let item = SayakaPurgeItemRefV1 {
+            preview_handle: 7,
+            item_id: 1,
+        };
+        let request = SayakaPurgeExecuteRequestV1 {
+            abi_version: ABI_VERSION,
+            struct_size: size_of::<SayakaPurgeExecuteRequestV1>() as u32,
+            preview_handle: 7,
+            plan_digest: digest.as_ptr(),
+            plan_digest_length: digest.len(),
+            items: &item,
+            item_count: 1,
+            approval: 0,
+            reserved: 0,
+            approval_token: b"purge 1 artifacts".as_ptr(),
+            approval_token_length: b"purge 1 artifacts".len(),
+            has_state_dir: 0,
+            state_dir: SayakaPathV1 {
+                encoding: 0,
+                bytes: std::ptr::null(),
+                byte_length: 0,
+            },
+        };
+        assert_eq!(
+            unsafe { validate_approval(&request) },
+            Err(INVALID_ARGUMENT)
+        );
+    }
+
+    #[test]
+    fn item_refs_reject_cross_preview_duplicate_and_empty_subset() {
+        assert_eq!(
+            unsafe { read_item_ids(7, std::ptr::null(), 0) },
+            Err(INVALID_ARGUMENT)
+        );
+        let refs = [
+            SayakaPurgeItemRefV1 {
+                preview_handle: 7,
+                item_id: 1,
+            },
+            SayakaPurgeItemRefV1 {
+                preview_handle: 8,
+                item_id: 2,
+            },
+        ];
+        assert_eq!(
+            unsafe { read_item_ids(7, refs.as_ptr(), refs.len()) },
+            Err(INVALID_CANDIDATE)
+        );
+        let refs = [
+            SayakaPurgeItemRefV1 {
+                preview_handle: 7,
+                item_id: 1,
+            },
+            SayakaPurgeItemRefV1 {
+                preview_handle: 7,
+                item_id: 1,
+            },
+        ];
+        assert_eq!(
+            unsafe { read_item_ids(7, refs.as_ptr(), refs.len()) },
+            Err(INVALID_CANDIDATE)
+        );
+    }
+}

@@ -1,15 +1,17 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 
-# Native read-only ABI v1
+# Native ABI v1
 
-Status: a narrow, in-process, read-only C ABI with local macOS C/Swift host
-evidence. It is not a full SDK, native App UI, release/signing contract, or
-permission to perform cleanup. The Windows x64 Rust branch has cross-target
+Status: a narrow, in-process C ABI with read-only scan/installer surfaces and
+a macOS-only, explicitly approved purge-to-Trash surface. It is not a full SDK,
+native App UI, release/signing contract, or permission to perform unsupervised
+cleanup. The Windows x64 Rust branch has cross-target
 type-check evidence only; Windows linking/host execution is not certified here.
 The directory-query additions reuse the engine's immutable `ScanTree`, including
 the same size ordering and accounting used by the terminal browser.
 Installer discovery and explicit-selection checks also have a read-only native
-interface, backed by the existing engine inspection/admission contracts.
+interface, backed by the existing engine inspection/admission contracts. Purge
+execution reuses the engine's revalidated Trash contract and journal.
 
 ## Build and consumers
 
@@ -23,7 +25,7 @@ is `target/debug/libsayaka_bindings.dylib`; Windows builds produce the platform'
 DLL/import-library artifacts when built with a suitable native linker/toolchain.
 The checked-in [C header](../crates/bindings/include/sayaka.h) is the v1 layout.
 Versioned symbol names permit later ABI versions without changing v1 structures.
-The directory-query, diagnostic-page and installer symbols are additive: existing v1 layouts and scan
+The directory-query, diagnostic-page, installer and purge symbols are additive: existing v1 layouts and scan
 JSON have not changed. A host using queries must ship/load a library build
 exporting those symbols; the original scan-only library also reports version 1.
 Use the normal C calling convention (C# callers would specify Cdecl).
@@ -606,6 +608,158 @@ claim and no durable/replayable approval token.
 Recognition does not mean trusted, safe, installed, unused or disposable.
 No image is mounted, package installed/executed, cloud content implicitly
 materialized or file moved/deleted by these APIs.
+
+## Purge preview and revalidated Trash execution
+
+Purge is the first effect-capable binding slice and is macOS-only. It reuses
+the CLI purge policy and engine `PurgeSession`: preview scans one explicit
+host-supplied root, identifies marker-bound rebuildable artifact directories,
+and execution moves only an explicitly approved same-preview subset to Trash.
+There is no permanent-delete fallback, no imported JSON approval, no implicit
+select-all path and no attempt to claim the final native operation is race-free.
+The residual pathname/ancestor replacement race described in
+[EXECUTION.md](EXECUTION.md) applies to App callers as well.
+
+| Function | Purpose |
+| --- | --- |
+| `sayaka_purge_preview_start_v1(request, out_handle)` | Copy one root and start a read-only purge preview |
+| `sayaka_purge_poll_v1(handle, out_snapshot)` | Read coalesced preview/execution lifecycle state |
+| `sayaka_purge_cancel_v1(handle)` | Request cooperative cancellation |
+| `sayaka_purge_execute_start_v1(request, out_handle)` | Start revalidated Trash execution for an approved subset |
+| `sayaka_purge_result_v1(handle, buffer, capacity, required)` | Copy terminal preview/execution JSON |
+| `sayaka_purge_release_v1(handle)` | Cancel active work, return BUSY until stopped, then invalidate |
+
+`SayakaPurgePreviewRequestV1` contains ABI version 1, exact `struct_size`, one
+`SayakaPathV1 root`, `stale_days` (`0` for the CLI default, otherwise
+`1..=3650`) and zero `reserved`. The root must be an absolute native path; the
+host is responsible for acquiring any security-scoped access before calling.
+Preview uses the same bounded scanner as `sayaka_scan_start_v1` and performs no
+effects. Poll state values reuse `SayakaScanStateV1`; snapshot kind is
+`SAYAKA_PURGE_PREVIEW`.
+
+Preview result JSON is capped by `SAYAKA_MAX_RESULT_BYTES_V1` and has no NUL:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "purge_preview",
+  "task_handle": "7",
+  "status": "complete",
+  "complete": true,
+  "effects_performed": false,
+  "execution_authority": false,
+  "contract": "revalidated_purge_trash_v1",
+  "plan_identifier": "64 lowercase hex sha256",
+  "plan_digest": "64 lowercase hex sha256",
+  "roots": [{"display": "\"/repo\"", "encoding": "unix_bytes_hex", "raw": "2f7265706f"}],
+  "stale_days": 30,
+  "totals": {
+    "projects": 1,
+    "items": 1,
+    "stale_items": 1,
+    "excluded": 0,
+    "logical_bytes": 123,
+    "allocated_bytes": null
+  },
+  "projects": [{
+    "root": {"display": "\"/repo/app\"", "encoding": "unix_bytes_hex", "raw": "2f7265706f2f617070"},
+    "markers": ["cargo"],
+    "items": [{
+      "id": "1",
+      "reference": {"preview_handle": "7", "item_id": "1"},
+      "path": {"display": "\"/repo/app/target\"", "encoding": "unix_bytes_hex", "raw": "2f7265706f2f6170702f746172676574"},
+      "name": "target",
+      "kind": "directory",
+      "rule": "marker_bound_project_artifact_v1",
+      "markers": ["cargo"],
+      "sizes": {"logical": 123, "allocated": null},
+      "complete": true,
+      "modified_unix_ms": 1700000000000,
+      "stale": true,
+      "reasons": ["project_marker_bound", "stale"],
+      "evidence": {
+        "project_markers": [{
+          "kind": "cargo",
+          "path": {"display": "\"/repo/app/Cargo.toml\"", "encoding": "unix_bytes_hex", "raw": "2f7265706f2f6170702f436172676f2e746f6d6c"}
+        }],
+        "residual_race_disclosed": true
+      }
+    }]
+  }],
+  "scan_issues": [],
+  "scan_issues_omitted": 0
+}
+```
+
+Unknown logical/allocated sizes are JSON `null`, never `0`. Item IDs are local
+to this preview/digest. `plan_identifier` and `plan_digest` currently carry the
+same SHA-256 text over the preview's root/options/item evidence; hosts must pass
+the exact `plan_digest` bytes back to execution and discard stale UI state after
+any refresh.
+
+`SayakaPurgeExecuteRequestV1` requires:
+
+- `preview_handle` naming a terminal complete purge preview still retained in
+  this library instance;
+- `plan_digest`/`plan_digest_length` equal to the 64 ASCII hex bytes returned by
+  that preview;
+- `items` with `1..32` unique `SayakaPurgeItemRefV1` entries whose
+  `preview_handle` and `item_id` come from that preview;
+- `approval == 1` and an exact non-NUL approval token
+  `purge N artifacts`, where `N == item_count`;
+- `has_state_dir == 0` for the default journal directory or `1` plus an
+  absolute `state_dir`.
+
+Missing approval or malformed token fails with `INVALID_ARGUMENT`. Empty,
+duplicate, cross-preview or unknown item references fail with `INVALID_CANDIDATE`
+and do not launch a task. A partial/cancelled/failed preview cannot execute.
+The execution worker prepares a fresh engine `PurgeSession`, revalidates every
+selected item's identity/ancestry/marker evidence before each Foundation Trash
+call, and journals the same durable intent/outcome record as the CLI.
+
+Execution result JSON:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "purge_execution",
+  "task_handle": "8",
+  "source_preview_handle": "7",
+  "status": "complete",
+  "complete": true,
+  "effects_performed": true,
+  "contract": "revalidated_purge_trash_v1",
+  "plan_identifier": "64 lowercase hex sha256",
+  "plan_digest": "64 lowercase hex sha256",
+  "journal": {"operation_id": "01...", "schema_version": 5, "error": null},
+  "totals": {
+    "requested": 1,
+    "moved": 1,
+    "skipped": 0,
+    "failed": 0,
+    "unknown": 0,
+    "logical_bytes_moved": 123
+  },
+  "items": [{
+    "path": {"display": "\"/repo/app/target\"", "encoding": "unix_bytes", "bytes": [47, 114, 101, 112, 111]},
+    "status": "moved",
+    "reason": null,
+    "destination": {"display": "\"/Users/me/.Trash/target\"", "encoding": "unix_bytes", "bytes": [47]},
+    "logical_bytes": 123,
+    "recovery_evidence": null
+  }],
+  "residual_race_disclosed": true
+}
+```
+
+Per item, `status` is `moved`, `skipped`, `failed` or `unknown`. Missing,
+changed, cancelled, not-revalidated and policy-refused items are reported as
+skipped/failed/unknown with `reason`; unknown is never counted as moved. The
+path/destination shape in execution records is the journal `NativePath`
+(`display`, `encoding`, `bytes`) rather than the scan wire hex `raw`, matching
+the durable CLI receipt. If native preparation refuses the whole selected batch,
+the same `purge_execution` envelope has `status: "refused"`,
+`effects_performed: false`, `issues`, `refusals`, empty `items` and zero totals.
 
 ## Error and memory contract
 
