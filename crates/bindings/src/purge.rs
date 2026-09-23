@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use sayaka_engine::execute::PurgeSession;
+use sayaka_engine::execute::{CacheSession, PurgeSession};
 use sayaka_engine::journal::{self, Store};
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::purge_preview::{
@@ -162,7 +162,10 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
         "complete": preview.complete,
         "effects_performed": false,
         "execution_authority": false,
-        "contract": "revalidated_purge_trash_v1",
+        "contract": match preview.profile {
+            PurgeProfile::Projects => "revalidated_purge_trash_v1",
+            PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
+        },
         "profile": preview.profile.as_str(),
         "plan_identifier": digest,
         "plan_digest": digest,
@@ -213,7 +216,7 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
             });
             value
         }).collect::<Vec<_>>(),
-        "developer_caches": developer_cache_items_json(preview),
+        "developer_caches": developer_cache_items_json(preview, handle),
         "unsupported_operations": unsupported_operations_json(preview.unsupported_operations),
         "scan_issues": preview.scan_issues.iter().map(|issue| json!({
             "path": issue.path.as_deref().map(wire::NativePath),
@@ -225,7 +228,7 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
     })
 }
 
-fn developer_cache_items_json(preview: &PurgePreview) -> Vec<Value> {
+fn developer_cache_items_json(preview: &PurgePreview, handle: u64) -> Vec<Value> {
     preview
         .developer_caches
         .iter()
@@ -234,7 +237,7 @@ fn developer_cache_items_json(preview: &PurgePreview) -> Vec<Value> {
             let id = index + 1;
             json!({
                 "id": id.to_string(),
-                "reference": Value::Null,
+                "reference": { "preview_handle": handle.to_string(), "item_id": id.to_string() },
                 "tool": cache.tool,
                 "rule_id": cache.rule_id,
                 "rule_version": cache.rule_version,
@@ -261,8 +264,16 @@ fn developer_cache_items_json(preview: &PurgePreview) -> Vec<Value> {
                     "reviewed_utc": source.reviewed_utc,
                     "license_note": source.license_note,
                 })).collect::<Vec<_>>(),
-                "execution_supported": false,
-                "execution_unsupported_reason": "developer cache cleanup needs a separate non-project cache revalidation contract; revalidated_purge_trash_v1 is marker-bound to project artifacts",
+                "filesystem_identity": filesystem_identity_json(cache.identity),
+                "execution_supported": cache.complete && cache.cleanup_supported,
+                "execution_unsupported_reason": if !cache.complete {
+                    Some("developer cache scan coverage is incomplete; refresh or grant narrower access before execution")
+                } else if !cache.cleanup_supported {
+                    Some("developer cache cleanup is refused while activity evidence such as a lock file is observed")
+                } else {
+                    None
+                },
+                "execution_contract": "revalidated_cache_trash_v1",
             })
         })
         .collect()
@@ -281,6 +292,22 @@ fn unsupported_operations_json(
             })
         })
         .collect()
+}
+
+fn filesystem_identity_json(identity: sayaka_engine::model::FileIdentity) -> Value {
+    match identity {
+        sayaka_engine::model::FileIdentity::Unix { device, inode } => {
+            json!({"platform": "unix", "device": device, "inode": inode})
+        }
+        sayaka_engine::model::FileIdentity::Windows {
+            volume_serial,
+            file_id,
+        } => json!({
+            "platform": "windows",
+            "volume_serial": volume_serial,
+            "file_id": file_id.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+        }),
+    }
 }
 
 fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
@@ -454,7 +481,10 @@ fn refusal_json(
         "status": details.status,
         "complete": false,
         "effects_performed": false,
-        "contract": "revalidated_purge_trash_v1",
+        "contract": match preview.profile {
+            PurgeProfile::Projects => "revalidated_purge_trash_v1",
+            PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
+        },
         "plan_identifier": preview.plan_digest(),
         "plan_digest": preview.plan_digest(),
         "error": { "message": details.message, "reason": details.reason },
@@ -490,6 +520,22 @@ fn preview_item_json(
             }
             current = current.saturating_add(1);
         }
+    }
+    if preview.profile == PurgeProfile::DeveloperCaches
+        && let Some(cache) = preview
+            .developer_caches
+            .get((item_id.0.saturating_sub(1)) as usize)
+    {
+        return json!({
+            "id": item_id.0.to_string(),
+            "reference": { "preview_handle": preview_handle.to_string(), "item_id": item_id.0.to_string() },
+            "path": wire::NativePath(&cache.path),
+            "status": status,
+            "reason": reason,
+            "destination": null,
+            "logical_bytes": cache.logical_bytes,
+            "recovery_evidence": null,
+        });
     }
     json!({
         "id": item_id.0.to_string(),
@@ -528,26 +574,49 @@ fn execution_worker(
     state_dir: std::path::PathBuf,
     cancellation: Cancellation,
 ) -> Result<Vec<u8>, ScanError> {
-    let selections = purge_preview::resolve_selections_by_ids(&preview, &item_ids)
-        .map_err(|message| ScanError::new(ScanCode::InvalidLimits, message))?;
-    let mut session = PurgeSession::prepare(&selections, &cancellation)
-        .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
-    let issues = session
-        .issues()
-        .iter()
-        .map(|issue| {
-            serde_json::to_value(issue)
-                .unwrap_or_else(|_| json!({"message":"issue serialization failed"}))
-        })
-        .collect::<Vec<_>>();
-    let refusals = session
-        .refusals()
-        .iter()
-        .map(|refusal| {
-            serde_json::to_value(refusal)
-                .unwrap_or_else(|_| json!({"reason":"refusal serialization failed"}))
-        })
-        .collect::<Vec<_>>();
+    if preview.status != PurgeStatus::Complete || !preview.complete {
+        return bounded_json(
+            &refusal_json(
+                task_handle,
+                preview_handle,
+                &preview,
+                &item_ids,
+                RefusalDetails {
+                    status: "refused",
+                    message: "purge execution requires a complete preview; nothing moved",
+                    reason: "preview_incomplete",
+                },
+                vec![],
+                vec![],
+            ),
+            MAX_RESULT_BYTES,
+        )
+        .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
+    }
+    let mut session = match PreparedExecutionSession::prepare(&preview, &item_ids, &cancellation) {
+        Ok(session) => session,
+        Err(reason) => {
+            return bounded_json(
+                &refusal_json(
+                    task_handle,
+                    preview_handle,
+                    &preview,
+                    &item_ids,
+                    RefusalDetails {
+                        status: "refused",
+                        message: "native purge selection was refused; nothing moved",
+                        reason: &reason,
+                    },
+                    vec![],
+                    vec![],
+                ),
+                MAX_RESULT_BYTES,
+            )
+            .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
+        }
+    };
+    let issues = session.issues();
+    let refusals = session.refusals();
     if !issues.is_empty() || !refusals.is_empty() {
         return bounded_json(
             &refusal_json(
@@ -603,6 +672,90 @@ fn execution_worker(
     .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)))
 }
 
+enum PreparedExecutionSession {
+    Projects(PurgeSession),
+    Caches(CacheSession),
+}
+
+impl PreparedExecutionSession {
+    fn prepare(
+        preview: &PurgePreview,
+        item_ids: &[PurgeItemId],
+        cancellation: &Cancellation,
+    ) -> Result<Self, String> {
+        match preview.profile {
+            PurgeProfile::Projects => {
+                let selections = purge_preview::resolve_selections_by_ids(preview, item_ids)?;
+                PurgeSession::prepare(&selections, cancellation)
+                    .map(Self::Projects)
+                    .map_err(|error| error.to_string())
+            }
+            PurgeProfile::DeveloperCaches => {
+                let selections = purge_preview::resolve_cache_selections_by_ids(preview, item_ids)?;
+                CacheSession::prepare(&selections, cancellation)
+                    .map(Self::Caches)
+                    .map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    fn issues(&self) -> Vec<Value> {
+        match self {
+            Self::Projects(session) => session.issues(),
+            Self::Caches(session) => session.issues(),
+        }
+        .iter()
+        .map(|issue| {
+            serde_json::to_value(issue)
+                .unwrap_or_else(|_| json!({"message":"issue serialization failed"}))
+        })
+        .collect()
+    }
+
+    fn refusals(&self) -> Vec<Value> {
+        match self {
+            Self::Projects(session) => session.refusals(),
+            Self::Caches(session) => session.refusals(),
+        }
+        .iter()
+        .map(|refusal| {
+            serde_json::to_value(refusal)
+                .unwrap_or_else(|_| json!({"reason":"refusal serialization failed"}))
+        })
+        .collect()
+    }
+
+    fn preview(&self) -> &sayaka_engine::model::Plan {
+        match self {
+            Self::Projects(session) => session.preview(),
+            Self::Caches(session) => session.preview(),
+        }
+    }
+
+    fn approve(
+        &mut self,
+        plan: &sayaka_engine::model::Plan,
+    ) -> Result<sayaka_engine::model::Approval, sayaka_engine::model::Error> {
+        match self {
+            Self::Projects(session) => session.approve(plan),
+            Self::Caches(session) => session.approve(plan),
+        }
+    }
+
+    fn execute(
+        &mut self,
+        plan: &sayaka_engine::model::Plan,
+        approval: &sayaka_engine::model::Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+    ) -> std::io::Result<sayaka_engine::execute::ExecutionReport> {
+        match self {
+            Self::Projects(session) => session.execute(plan, approval, cancellation, store),
+            Self::Caches(session) => session.execute(plan, approval, cancellation, store),
+        }
+    }
+}
+
 fn sayaka_status_text(code: i32) -> String {
     // SAFETY: Status messages are static NUL-terminated strings.
     unsafe {
@@ -648,11 +801,17 @@ unsafe fn read_plan_digest(request: &SayakaPurgeExecuteRequestV1) -> Result<Stri
     Ok(text.to_owned())
 }
 
-unsafe fn validate_approval(request: &SayakaPurgeExecuteRequestV1) -> Result<(), i32> {
+unsafe fn validate_approval(
+    request: &SayakaPurgeExecuteRequestV1,
+    profile: PurgeProfile,
+) -> Result<(), i32> {
     if request.approval != 1 {
         return Err(INVALID_ARGUMENT);
     }
-    let expected = format!("purge {} artifacts", request.item_count);
+    let expected = match profile {
+        PurgeProfile::Projects => format!("purge {} artifacts", request.item_count),
+        PurgeProfile::DeveloperCaches => format!("trash {} caches", request.item_count),
+    };
     if request.approval_token_length != expected.len() {
         return Err(INVALID_ARGUMENT);
     }
@@ -896,7 +1055,6 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
             return Err(UNSUPPORTED_PLATFORM);
         }
         let requested_digest = unsafe { read_plan_digest(request)? };
-        unsafe { validate_approval(request)? };
         let item_ids =
             unsafe { read_item_ids(request.preview_handle, request.items, request.item_count)? };
         let state_dir = if request.has_state_dir == 0 {
@@ -913,17 +1071,14 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
             match &mut *job {
                 PurgeJob::Preview(job) => {
                     let preview = ensure_preview(job)?;
-                    if preview.status != PurgeStatus::Complete {
-                        return Err(INVALID_ARGUMENT);
-                    }
-                    if preview.profile != PurgeProfile::Projects {
-                        return Err(INVALID_ARGUMENT);
-                    }
+                    unsafe { validate_approval(request, preview.profile)? };
                     if preview.plan_digest() != requested_digest {
                         return Err(INVALID_CANDIDATE);
                     }
-                    if purge_preview::resolve_selections_by_ids(&preview, &item_ids).is_err() {
-                        return Err(INVALID_CANDIDATE);
+                    if preview.profile == PurgeProfile::DeveloperCaches
+                        && request.has_state_dir != 1
+                    {
+                        return Err(INVALID_ARGUMENT);
                     }
                     preview
                 }
@@ -1093,7 +1248,7 @@ mod tests {
             },
         };
         assert_eq!(
-            unsafe { validate_approval(&request) },
+            unsafe { validate_approval(&request, PurgeProfile::Projects) },
             Err(INVALID_ARGUMENT)
         );
     }
@@ -1125,13 +1280,49 @@ mod tests {
             },
         };
         assert_eq!(
-            unsafe { validate_approval(&request) },
+            unsafe { validate_approval(&request, PurgeProfile::Projects) },
             Err(INVALID_ARGUMENT)
         );
 
         request.approval_token_length = b"purge 1 artifacts".len();
         assert_eq!(
-            unsafe { validate_approval(&request) },
+            unsafe { validate_approval(&request, PurgeProfile::Projects) },
+            Err(INVALID_ARGUMENT)
+        );
+    }
+
+    #[test]
+    fn developer_cache_approval_uses_distinct_token() {
+        let digest = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let item = SayakaPurgeItemRefV1 {
+            preview_handle: 7,
+            item_id: 1,
+        };
+        let request = SayakaPurgeExecuteRequestV1 {
+            abi_version: ABI_VERSION,
+            struct_size: size_of::<SayakaPurgeExecuteRequestV1>() as u32,
+            preview_handle: 7,
+            plan_digest: digest.as_ptr(),
+            plan_digest_length: digest.len(),
+            items: &item,
+            item_count: 1,
+            approval: 1,
+            reserved: 0,
+            approval_token: b"trash 1 caches".as_ptr(),
+            approval_token_length: b"trash 1 caches".len(),
+            has_state_dir: 0,
+            state_dir: SayakaPathV1 {
+                encoding: 0,
+                bytes: std::ptr::null(),
+                byte_length: 0,
+            },
+        };
+        assert_eq!(
+            unsafe { validate_approval(&request, PurgeProfile::DeveloperCaches) },
+            Ok(())
+        );
+        assert_eq!(
+            unsafe { validate_approval(&request, PurgeProfile::Projects) },
             Err(INVALID_ARGUMENT)
         );
     }

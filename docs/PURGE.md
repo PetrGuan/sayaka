@@ -41,9 +41,13 @@ additive, and no displayed byte count is guaranteed reclaimable.
 
 ## Developer cache profile
 
-`--profile developer-caches` is a read-only preview for known developer-tool
-cache locations under the effective account's passwd-database home directory
-(not `$HOME`, which may point at an app container in the macOS App Sandbox).
+`--profile developer-caches` previews known developer-tool cache locations under
+the effective account's passwd-database home directory (not `$HOME`, which may
+point at an app container in the macOS App Sandbox). App/FFI callers can execute
+complete, cleanup-supported cache candidates by passing their same-preview item
+references, the exact plan digest, an absolute journal `state_dir`, and the
+approval token `trash N caches`; the engine moves each approved cache directory
+to Trash under `revalidated_cache_trash_v1`.
 Rules are anchored to the documented absolute locations such as
 `~/Library/Caches/pip`: granting that cache directory itself, the account home,
 or an ancestor such as `~/Library` can report it, but an unrelated descendant
@@ -53,6 +57,15 @@ The matcher compares canonical existing directory paths and stops considering
 descendants once a rule location is matched. Symlinked cache directories are not
 followed into their targets; they are handled like other skipped symlink nodes
 from the scan and are not developer-cache candidates.
+
+Cache execution revalidates immediately before approval and again before each
+Trash move: the directory must still be the same device/inode and type observed
+in the preview, still a real non-symlink directory at exactly the recognized
+passwd-home rule path, and still pass the profile eligibility checks. Candidates
+with `cleanup_supported: false` (for example, a lock file was observed) are never
+approvable. Trash is the only effect; a failed Trash operation never falls back
+to permanent deletion. As with project purge, the residual final pathname or
+ancestor replacement race remains disclosed rather than claimed closed.
 
 ## Output and exit codes
 

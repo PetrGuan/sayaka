@@ -426,6 +426,15 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                 "reviewed_utc": source.reviewed_utc,
                 "license_note": source.license_note,
             })).collect::<Vec<_>>(),
+            "execution_supported": cache.complete && cache.cleanup_supported,
+            "execution_unsupported_reason": if !cache.complete {
+                Some("developer cache scan coverage is incomplete; refresh or grant narrower access before execution")
+            } else if !cache.cleanup_supported {
+                Some("developer cache cleanup is refused while activity evidence such as a lock file is observed")
+            } else {
+                None
+            },
+            "execution_contract": "revalidated_cache_trash_v1",
         })).collect::<Vec<_>>(),
         "unsupported_operations": preview.unsupported_operations.iter().map(|operation| serde_json::json!({
             "tool": operation.tool,

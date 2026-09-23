@@ -145,14 +145,27 @@ The same preview surface now has an additive `developer_caches` profile for the
 Mac App Store sandbox flow. It scans only the explicit user-granted root and
 reports documented rebuildable developer-tool cache locations at or below that
 root (Xcode DerivedData/cache/CoreSimulator cache, npm/pnpm/Yarn/pip/Cargo/
-Gradle caches and Homebrew downloads). This profile is preview-only. It never
-targets Xcode Archives, CoreSimulator Devices, installed products, simulator/app
-user data, package-manager configuration/logs, or Homebrew Cellar entries.
-External-command operations such as `brew cleanup`, `xcrun simctl delete
-unavailable`, package-manager cache-clean commands and Gradle daemon/cache
-commands are reported as unsupported with reasons. They are not emulated by the
-App and cannot enter `revalidated_purge_trash_v1`, whose native revalidation is
-marker-bound to project artifacts.
+Gradle caches and Homebrew downloads). Complete, cleanup-supported candidates
+can enter the distinct `revalidated_cache_trash_v1` contract through
+`sayaka_purge_execute_start_v1` with the exact same-preview item references,
+plan digest, absolute journal state directory and approval token
+`trash N caches`. It never targets Xcode Archives, CoreSimulator Devices,
+installed products, simulator/app user data, package-manager configuration/logs,
+or Homebrew Cellar entries. External-command operations such as `brew cleanup`,
+`xcrun simctl delete unavailable`, package-manager cache-clean commands and
+Gradle daemon/cache commands are still reported as unsupported with reasons and
+are not emulated by the App.
+
+`revalidated_cache_trash_v1` revalidates each approved cache before approval and
+again immediately before its native call: the target must still be the same
+device/inode directory observed in the preview, still a real directory rather
+than a symlink, still exactly the recognized documented cache path under the
+effective `getpwuid_r` home, and still cleanup-supported (activity lock files or
+other profile refusal evidence fail closed). Trash is the only effect; if the
+Foundation Trash call fails, the item fails and Sayaka never retries with
+permanent deletion. The journal record reuses schema 5. The same residual final
+pathname/ancestor replacement race disclosed above remains present for cache
+directories.
 
 FFI execution never imports approval from JSON, broadens a subset, silently
 selects all candidates or falls back to permanent deletion. Unknown, changed,

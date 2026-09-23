@@ -409,6 +409,70 @@ pub struct PurgeTrashCandidate {
     unavailable: std::convert::Infallible,
 }
 
+/// Sealed Trash candidate for one documented developer-cache directory.
+/// Rule/home anchoring is verified by the engine before capture and again
+/// through the engine guard; this native candidate seals the directory
+/// identity, ancestry, protections and Trash-only move.
+pub struct CacheTrashCandidate {
+    #[cfg(target_os = "macos")]
+    native: native::Candidate,
+    #[cfg(not(target_os = "macos"))]
+    unavailable: std::convert::Infallible,
+}
+
+impl CacheTrashCandidate {
+    pub fn capture(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            native::Candidate::capture_cache_diagnostic(scope, path, protected)
+                .map(|native| Self { native })
+                .map_err(NativeCaptureFailure::into_legacy_error)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (scope, path, protected);
+            Err(unsupported())
+        }
+    }
+
+    pub fn info(&self) -> &NativeFileInfo {
+        #[cfg(target_os = "macos")]
+        {
+            &self.native.info
+        }
+        #[cfg(not(target_os = "macos"))]
+        match self.unavailable {}
+    }
+
+    pub fn revalidate(&self) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            self.native.revalidate()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(unsupported())
+        }
+    }
+
+    pub fn move_to_trash_with_last_guard(
+        &self,
+        cancelled: impl FnOnce() -> bool,
+        last_guard: impl FnOnce() -> NativeLastGuard,
+    ) -> NativeTrashOutcome {
+        #[cfg(target_os = "macos")]
+        {
+            self.native
+                .move_to_trash_with_last_guard(cancelled, last_guard)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (cancelled, last_guard);
+            NativeTrashOutcome::Refused(unsupported().to_string())
+        }
+    }
+}
+
 impl PurgeTrashCandidate {
     /// Captures an artifact directory with its sealed marker files:
     /// ordinary user-owned directory strictly beneath the explicit scope on

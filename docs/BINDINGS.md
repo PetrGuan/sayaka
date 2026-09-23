@@ -616,12 +616,14 @@ Purge is the first effect-capable binding slice and is macOS-only. The default
 preview scans one explicit host-supplied root, identifies marker-bound
 rebuildable artifact directories, and execution moves only an explicitly
 approved same-preview subset to Trash. The additive `developer_caches` profile
-is preview-only: it answers which documented developer-tool cache locations
-exist at or under the granted root and reports why external-command cleanup is
-unsupported in the sandboxed App. There is no permanent-delete fallback, no
-imported JSON approval, no implicit select-all path and no attempt to claim the
-final native operation is race-free. The residual pathname/ancestor replacement
-race described in [EXECUTION.md](EXECUTION.md) applies to App callers as well.
+answers which documented developer-tool cache locations exist at or under the
+granted root and now supports Trash execution under the distinct
+`revalidated_cache_trash_v1` contract for complete, cleanup-supported cache
+items. External-command cleanup remains reported as unsupported. There is no
+permanent-delete fallback, no imported JSON approval, no implicit select-all
+path and no attempt to claim the final native operation is race-free. The
+residual pathname/ancestor replacement race described in
+[EXECUTION.md](EXECUTION.md) applies to App callers as well.
 
 | Function | Purpose |
 | --- | --- |
@@ -711,7 +713,8 @@ any refresh. In every profile, `totals.unsupported_operations` is the length of
 the top-level `unsupported_operations` array.
 
 For `profile: "developer_caches"`, `projects` is empty,
-`developer_caches` contains preview-only candidates, and
+`contract` is `revalidated_cache_trash_v1`, `developer_caches` contains
+candidates with executable references when eligible, and
 `unsupported_operations` contains the developer-cache-specific external-command
 cleanup operations that this profile deliberately does not perform. Each
 candidate exposes
@@ -719,8 +722,12 @@ candidate exposes
 documented `location`, `location_kind`, `kind`, `rebuildability_note`,
 `user_product` (always `false` for this profile), `cleanup_supported`,
 `unsupported_reason`, `sizes.logical`, `sizes.allocated`, `complete`,
-`modified_unix_ms`, `activity`, `evidence`, `execution_supported: false`, and
-`execution_unsupported_reason`. The initial rule set is deliberately limited to
+`modified_unix_ms`, `activity`, `evidence`, `filesystem_identity`,
+`execution_supported`, `execution_contract: "revalidated_cache_trash_v1"` and
+`execution_unsupported_reason`. `execution_supported` is true only when the
+preview coverage is complete and `cleanup_supported` is true; lock-file or
+other activity evidence makes the item non-approvable. The initial rule set is
+deliberately limited to
 documented rebuildable cache/download-store locations:
 
 | Tool | Rule ID | Location |
@@ -746,25 +753,33 @@ non-targets. `sayaka_purge_unsupported_operations_v1` returns the same static
 
 `SayakaPurgeExecuteRequestV1` requires:
 
-- `preview_handle` naming a terminal complete purge preview still retained in
+- `preview_handle` naming a terminal purge preview still retained in
   this library instance;
 - `plan_digest`/`plan_digest_length` equal to the 64 ASCII hex bytes returned by
   that preview;
 - `items` with `1..32` unique `SayakaPurgeItemRefV1` entries whose
   `preview_handle` and `item_id` come from that preview;
 - `approval == 1` and an exact non-NUL approval token
-  `purge N artifacts`, where `N == item_count` and the token length exactly
+  `purge N artifacts` for `projects`, or `trash N caches` for
+  `developer_caches`, where `N == item_count` and the token length exactly
   matches that phrase;
 - `has_state_dir == 0` for the default journal directory or `1` plus an
-  absolute `state_dir`.
+  absolute `state_dir`; `developer_caches` execution requires `has_state_dir == 1`
+  and the absolute path.
 
-Missing approval, malformed token, developer-cache previews, or empty/over-limit item references fail with
-`INVALID_ARGUMENT`. Duplicate, cross-preview or unknown item references fail
-with `INVALID_CANDIDATE` and do not launch a task. A partial/cancelled/failed
-preview cannot execute.
-The execution worker prepares a fresh engine `PurgeSession`, revalidates every
-selected item's identity/ancestry/marker evidence before each Foundation Trash
-call, and journals the same durable intent/outcome record as the CLI.
+Missing approval, malformed token, or empty/over-limit item references fail with
+`INVALID_ARGUMENT`. Duplicate or cross-preview item references fail with
+`INVALID_CANDIDATE` and do not launch a task. A partial/cancelled/failed preview
+or an unknown/non-executable item id launches a bounded execution result that
+refuses with `complete: false`, `effects_performed: false`, skipped items and no
+destination. The execution worker prepares a fresh engine `PurgeSession` for
+project artifacts or `CacheSession` for developer caches. Project execution
+revalidates identity/ancestry/marker evidence. Cache execution revalidates that
+the target is still the same device/inode directory observed in the preview,
+not a symlink, still exactly the known rule location under the effective
+passwd-database home, and still cleanup-supported (for example, no activity lock
+file). Both paths journal schema 5 durable intent/outcome records and use only
+Foundation Trash.
 
 Execution result JSON:
 
@@ -805,7 +820,9 @@ Execution result JSON:
 
 Per item, `id` is the selected preview `item_id` and `reference` repeats the
 source preview handle plus item id so hosts can reconcile receipts to the
-approved preview subset. `status` is `moved`, `skipped`, `failed` or `unknown`.
+approved preview subset. `contract` is `revalidated_purge_trash_v1` for
+projects and `revalidated_cache_trash_v1` for developer caches. `status` is
+`moved`, `skipped`, `failed` or `unknown`.
 Missing, changed, cancelled, not-revalidated and policy-refused items are
 reported as skipped/failed/unknown with `reason`; unknown is never counted as
 moved. Execution `path` and `destination` are emitted with the same scan wire

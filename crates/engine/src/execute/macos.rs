@@ -5,11 +5,12 @@ use crate::app_inventory::RunningObservation;
 use crate::app_uninstall;
 use crate::clean_policy::{self, ConfigPath, PolicyFileState, PolicyGuardStatus, PolicySnapshot};
 use crate::journal::{CleanPolicyContextRecord, CleanPolicyIdentityRecord, CleanPolicyPathRecord};
-use crate::purge_preview::ProjectMarker;
+use crate::purge_preview::{self, ProjectMarker};
 use crate::rules;
 use sayaka_platform_macos::{
-    BundleTrashCandidate, NativeFileInfo, NativeLastGuard, NativeRuleBindingWitness,
-    NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo, PurgeTrashCandidate, TrashCandidate,
+    BundleTrashCandidate, CacheTrashCandidate, NativeFileInfo, NativeLastGuard,
+    NativeRuleBindingWitness, NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo,
+    PurgeTrashCandidate, TrashCandidate,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -721,6 +722,237 @@ pub struct PurgeSession {
     inner: Session<PurgePlatform>,
     selections: Vec<PurgeSelection>,
     discovered: Vec<(ResourceId, PathBuf)>,
+}
+
+pub struct CacheSession {
+    inner: Session<CachePlatform>,
+    selections: Vec<CacheSelection>,
+    discovered: Vec<(ResourceId, PathBuf)>,
+}
+
+struct CachePlatform {
+    candidates: HashMap<PathBuf, CacheTrashCandidate>,
+    issues: Vec<SelectionIssue>,
+}
+
+impl Probe for CachePlatform {
+    fn inspect(&mut self, _scope: &Scope, path: &Path) -> Result<Snapshot, ProbeError> {
+        let candidate = self
+            .candidates
+            .get(path)
+            .ok_or_else(|| ProbeError::Other("native cache candidate was not retained".into()))?;
+        candidate
+            .revalidate()
+            .map_err(|error| ProbeError::Other(error.to_string()))?;
+        let info = candidate.info();
+        Ok(Snapshot {
+            identity: Some(FileIdentity::Unix {
+                device: info.device,
+                inode: info.inode,
+            }),
+            kind: ResourceKind::Directory,
+            logical_bytes: Some(info.logical_bytes),
+            modified_at: Some(info.modified_at),
+            complete: true,
+            boundary: Boundary::Verified,
+            protection: Protection::Clear,
+            trash: Capability::Available,
+            owner: OwnerState::NotApplicable,
+        })
+    }
+}
+
+impl Platform for CachePlatform {
+    fn effect(
+        &mut self,
+        path: &Path,
+        stop: &mut dyn FnMut() -> bool,
+        guard: &mut dyn FnMut() -> GuardDecision,
+    ) -> Effect {
+        let Some(candidate) = self.candidates.get(path) else {
+            return Effect::Refused("native cache candidate unavailable".into());
+        };
+        match candidate.move_to_trash_with_last_guard(stop, || match guard() {
+            GuardDecision::Proceed => NativeLastGuard::Proceed,
+            GuardDecision::Refused(reason) => NativeLastGuard::PolicyRefused(reason),
+        }) {
+            NativeTrashOutcome::Moved { destination } => Effect::Moved(destination),
+            NativeTrashOutcome::Refused(message) => Effect::Refused(message),
+            NativeTrashOutcome::Failed(message) => Effect::Failed(message),
+            NativeTrashOutcome::Unknown { message, evidence } => Effect::Unknown {
+                message,
+                evidence: Some(Box::new(journal::RecoveryEvidence {
+                    approved: file_evidence(&evidence.approved),
+                    returned_destination: evidence
+                        .returned_destination
+                        .as_deref()
+                        .map(NativePath::from_path),
+                    held_source: evidence.held_source.as_ref().map(file_evidence),
+                    held_source_path: evidence
+                        .held_source_path
+                        .as_deref()
+                        .map(NativePath::from_path),
+                    observation_errors: evidence.observation_errors,
+                })),
+            },
+        }
+    }
+}
+
+impl CacheSession {
+    pub fn prepare(selections: &[CacheSelection], cancellation: &Cancellation) -> io::Result<Self> {
+        if selections.is_empty() || selections.len() > journal::MAX_ITEMS {
+            return Err(journal::invalid(
+                "select between 1 and 32 explicit cache directories",
+            ));
+        }
+        for selection in selections {
+            if !crate::model::valid_absolute_path(&selection.path) {
+                return Err(journal::invalid(
+                    "cache selections must be absolute native paths without traversal",
+                ));
+            }
+            purge_preview::revalidate_developer_cache_selection(selection)
+                .map_err(|error| journal::invalid(&error))?;
+        }
+        let scope_root = common_ancestor(
+            &selections
+                .iter()
+                .filter_map(|selection| selection.path.parent().map(Path::to_path_buf))
+                .collect::<Vec<_>>(),
+        )
+        .ok_or_else(|| journal::invalid("cache selections share no common ancestor"))?;
+        let mut planner = Planner::new(
+            Scope::new(scope_root.clone(), vec![]).map_err(model_error)?,
+            Versions {
+                engine: 2,
+                rules: 1,
+            },
+        )
+        .map_err(model_error)?
+        .for_revalidated_cache_trash();
+        let mut platform = CachePlatform {
+            candidates: HashMap::new(),
+            issues: Vec::new(),
+        };
+        let mut ids = Vec::with_capacity(selections.len());
+        let mut discovered = Vec::with_capacity(selections.len());
+        for selection in selections {
+            if cancellation.is_cancelled() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "cancelled during preview",
+                ));
+            }
+            let candidate = CacheTrashCandidate::capture(&scope_root, &selection.path, &[])?;
+            let expected = match selection.expected_identity {
+                FileIdentity::Unix { device, inode } => (device, inode),
+                FileIdentity::Windows { .. } => {
+                    return Err(journal::invalid(
+                        "developer cache preview identity is not Unix",
+                    ));
+                }
+            };
+            let info = candidate.info();
+            if (info.device, info.inode) != expected {
+                return Err(journal::invalid(
+                    "developer cache identity changed since preview",
+                ));
+            }
+            platform
+                .candidates
+                .insert(selection.path.clone(), candidate);
+            let finding = planner
+                .discover(&selection.path, &mut platform)
+                .map_err(model_error)?;
+            let id = finding.observation().id();
+            ids.push(id);
+            discovered.push((id, selection.path.clone()));
+        }
+        let preview = planner
+            .prepare(&ids, &[], Duration::from_secs(120))
+            .map_err(model_error)?;
+        Ok(Self {
+            inner: Session {
+                planner,
+                platform,
+                preview,
+            },
+            selections: selections.to_vec(),
+            discovered,
+        })
+    }
+
+    pub fn preview(&self) -> &Plan {
+        &self.inner.preview
+    }
+
+    pub fn issues(&self) -> &[SelectionIssue] {
+        &self.inner.platform.issues
+    }
+
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        self.inner
+            .preview
+            .rejected()
+            .iter()
+            .map(|item| {
+                let path = self
+                    .discovered
+                    .iter()
+                    .find(|(id, _)| *id == item.resource)
+                    .map(|(_, path)| NativePath::from_path(path));
+                SelectionRefusal {
+                    path: path.unwrap_or_else(|| NativePath::from_path(Path::new("(unknown)"))),
+                    reason: item.code.as_str().into(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn approve(&mut self, preview: &Plan) -> Result<Approval, Error> {
+        for selection in &self.selections {
+            purge_preview::revalidate_developer_cache_selection(selection)
+                .map_err(|_| Error::new(ReasonCode::ResourceChanged))?;
+            let candidate = self
+                .inner
+                .platform
+                .candidates
+                .get(&selection.path)
+                .ok_or(Error::new(ReasonCode::ProbeFailed))?;
+            candidate
+                .revalidate()
+                .map_err(|_| Error::new(ReasonCode::ResourceChanged))?;
+        }
+        self.inner.planner.approve(preview)
+    }
+
+    pub fn execute(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+    ) -> io::Result<ExecutionReport> {
+        let selections = self.selections.clone();
+        let mut guard = move |point: GuardPoint, path: &Path| -> io::Result<GuardDecision> {
+            if matches!(point, GuardPoint::LastNative)
+                && let Some(selection) = selections.iter().find(|selection| selection.path == path)
+                && let Err(error) = purge_preview::revalidate_developer_cache_selection(selection)
+            {
+                return Ok(GuardDecision::Refused(error));
+            }
+            Ok(GuardDecision::Proceed)
+        };
+        self.inner.execute_with_clean_policy(
+            preview,
+            approval,
+            cancellation,
+            store,
+            None,
+            Some(&mut guard),
+        )
+    }
 }
 
 struct PurgePlatform {

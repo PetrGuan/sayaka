@@ -574,6 +574,8 @@ enum TargetShape {
     Bundle,
     /// Sealed marker-bound project artifact directory (T8 purge).
     PurgeArtifact,
+    /// Sealed documented developer-cache directory.
+    CacheDirectory,
 }
 
 impl TargetShape {
@@ -648,6 +650,14 @@ impl Candidate {
             protected,
             TargetShape::PurgeArtifact,
         )
+    }
+
+    pub(super) fn capture_cache_diagnostic(
+        scope: &Path,
+        path: &Path,
+        protected: &[PathBuf],
+    ) -> Result<Self, NativeCaptureFailure> {
+        Self::capture_diagnostic_mode(scope, path, &[], protected, TargetShape::CacheDirectory)
     }
 
     fn capture_diagnostic_mode(
@@ -758,7 +768,7 @@ impl Candidate {
                 admissible_bundle_target(&target.stamp, uid, path)?;
                 stage.operation = "bundle_manifest";
             }
-            TargetShape::PurgeArtifact => {
+            TargetShape::PurgeArtifact | TargetShape::CacheDirectory => {
                 stage.operation = "purge_admission";
                 admissible_purge_target(&target.stamp, uid)?;
             }
@@ -998,6 +1008,9 @@ impl Candidate {
                     marker.revalidate()?;
                     admissible_purge_marker(&marker.stamp, self.uid)?;
                 }
+            }
+            TargetShape::CacheDirectory => {
+                admissible_purge_target(&self.target.stamp, self.uid)?;
             }
             TargetShape::File => {
                 admissible_file(&self.target.stamp, self.uid)?;
@@ -1249,7 +1262,7 @@ impl Candidate {
                     ));
                 }
             }
-            TargetShape::PurgeArtifact => {
+            TargetShape::PurgeArtifact | TargetShape::CacheDirectory => {
                 admissible_moved_bundle(&stamp, self.uid)?;
             }
             TargetShape::File => {

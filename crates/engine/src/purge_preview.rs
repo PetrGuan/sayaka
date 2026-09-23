@@ -9,8 +9,8 @@
 //! excluded, not merged. This preview performs no effects: directory effects
 //! remain unapproved; see docs/DIRECTORY_ACTIONS.md.
 
-use crate::execute::PurgeSelection;
-use crate::model::ResourceKind;
+use crate::execute::{CacheSelection, PurgeSelection};
+use crate::model::{FileIdentity, ResourceKind};
 use crate::scan::ScanStatus;
 use crate::scan::index::{Metric, ScanTree};
 use sha2::{Digest, Sha256};
@@ -29,6 +29,38 @@ pub enum PurgeProfile {
     #[default]
     Projects,
     DeveloperCaches,
+}
+
+pub fn resolve_cache_selections_by_ids(
+    preview: &PurgePreview,
+    item_ids: &[PurgeItemId],
+) -> Result<Vec<CacheSelection>, String> {
+    if preview.profile != PurgeProfile::DeveloperCaches {
+        return Err("cache execution is unsupported for this purge profile".into());
+    }
+    let mut seen = HashSet::new();
+    let mut selections = Vec::with_capacity(item_ids.len());
+    for id in item_ids {
+        if id.0 == 0 || !seen.insert(id.0) {
+            return Err("purge item references must be unique nonzero ids".into());
+        }
+        let cache = preview
+            .developer_caches
+            .get((id.0 - 1) as usize)
+            .ok_or_else(|| format!("purge item id {} is not in this preview", id.0))?;
+        if !cache.complete {
+            return Err("developer cache item has incomplete scan coverage".into());
+        }
+        if !cache.cleanup_supported {
+            return Err("developer cache item is not cleanup-supported".into());
+        }
+        selections.push(CacheSelection {
+            path: cache.path.clone(),
+            expected_identity: cache.identity,
+            rule_id: cache.rule_id,
+        });
+    }
+    Ok(selections)
 }
 
 impl PurgeProfile {
@@ -202,6 +234,7 @@ pub struct DeveloperCacheCandidate {
     pub allocated_bytes: Option<u64>,
     pub complete: bool,
     pub modified_unix_ms: Option<i64>,
+    pub identity: FileIdentity,
     pub activity: DeveloperCacheActivity,
     pub evidence: &'static [EvidenceSource],
 }
@@ -577,8 +610,8 @@ impl PurgePreview {
     }
 
     pub fn item_count(&self) -> usize {
-        if self.profile != PurgeProfile::Projects {
-            return 0;
+        if self.profile == PurgeProfile::DeveloperCaches {
+            return self.developer_caches.len();
         }
         self.projects
             .iter()
@@ -1018,6 +1051,7 @@ fn developer_cache_preview_with_home(
             allocated_bytes: index.size(entry.id, Metric::Allocated),
             complete: summary.is_some_and(|summary| summary.complete),
             modified_unix_ms,
+            identity: entry.identity,
             activity,
             evidence: rule.evidence,
         });
@@ -1073,6 +1107,30 @@ fn developer_cache_rule_locations(
                 .map(|path| DeveloperCacheRuleLocation { rule, path })
         })
         .collect())
+}
+
+pub fn revalidate_developer_cache_selection(selection: &CacheSelection) -> Result<(), String> {
+    let account_home = effective_account_home()?;
+    let canonical_path = canonical_existing_directory(&selection.path)
+        .ok_or_else(|| "developer cache target is no longer a real directory".to_owned())?;
+    let locations = developer_cache_rule_locations(&account_home)?;
+    let location = locations
+        .iter()
+        .find(|location| {
+            location.rule.rule_id == selection.rule_id && location.path == canonical_path
+        })
+        .ok_or_else(|| {
+            "developer cache target is no longer the anchored passwd-home rule location".to_owned()
+        })?;
+    for lock_name in location.rule.lock_siblings {
+        let Some(parent) = selection.path.parent() else {
+            return Err("developer cache target has no parent".into());
+        };
+        if parent.join(lock_name).exists() {
+            return Err("developer cache activity lock file is present".into());
+        }
+    }
+    Ok(())
 }
 
 fn canonical_existing_directory(path: &Path) -> Option<PathBuf> {
@@ -1304,10 +1362,11 @@ mod tests {
                 .iter()
                 .all(|cache| !cache.user_product)
         );
-        assert_eq!(
-            resolve_selections_by_ids(&preview, &[PurgeItemId(1)]).unwrap_err(),
-            "execution is unsupported for this purge profile"
-        );
+        let selections =
+            resolve_cache_selections_by_ids(&preview, &[PurgeItemId(1)]).expect("cache selection");
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].path, preview.developer_caches[0].path);
+        assert_eq!(selections[0].rule_id, preview.developer_caches[0].rule_id);
     }
 
     #[test]
@@ -1377,6 +1436,40 @@ mod tests {
         assert_eq!(preview.developer_caches.len(), 1);
         assert_eq!(preview.developer_caches[0].rule_id, "pypa.pip.cache");
         assert_eq!(preview.developer_caches[0].path, pip);
+    }
+
+    #[test]
+    fn developer_cache_selection_refuses_activity_lock_items() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let modules = home
+            .join(".gradle")
+            .join("caches")
+            .join("modules-2")
+            .join("files-2.1");
+        fs::create_dir_all(&modules).expect("gradle cache");
+        fs::write(
+            home.join(".gradle")
+                .join("caches")
+                .join("modules-2")
+                .join("modules-2.lock"),
+            b"lock",
+        )
+        .expect("gradle lock");
+
+        let preview = developer_cache_preview_at(&home, &home);
+        let cache = preview
+            .developer_caches
+            .iter()
+            .find(|cache| cache.rule_id == "org.gradle.modules_cache")
+            .expect("gradle cache");
+
+        assert!(!cache.cleanup_supported);
+        assert_eq!(cache.activity, DeveloperCacheActivity::LockFileObserved);
+        assert_eq!(
+            resolve_cache_selections_by_ids(&preview, &[PurgeItemId(1)]).unwrap_err(),
+            "developer cache item is not cleanup-supported"
+        );
     }
 
     #[test]

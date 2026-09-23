@@ -40,6 +40,13 @@ pub struct PurgeSelection {
     pub markers: Vec<PathBuf>,
 }
 
+#[derive(Clone, Debug)]
+pub struct CacheSelection {
+    pub path: PathBuf,
+    pub expected_identity: FileIdentity,
+    pub rule_id: &'static str,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExecutionReport {
     pub record: Record,
@@ -165,6 +172,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
             ExecutionContract::RevalidatedTrashV1
                 | ExecutionContract::RevalidatedBundleTrashV1
                 | ExecutionContract::RevalidatedPurgeTrashV1
+                | ExecutionContract::RevalidatedCacheTrashV1
         ) {
             return Err(journal::invalid(
                 "model-only approval cannot authorize native execution",
@@ -477,7 +485,8 @@ impl GuardPoint {
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{
-    BundleUninstallSession, CleanSession, InstallerSession, PurgeSession, TrashSession,
+    BundleUninstallSession, CacheSession, CleanSession, InstallerSession, PurgeSession,
+    TrashSession,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -519,6 +528,42 @@ impl BundleUninstallSession {
 #[cfg(not(target_os = "macos"))]
 pub struct PurgeSession {
     unavailable: std::convert::Infallible,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub struct CacheSession {
+    unavailable: std::convert::Infallible,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl CacheSession {
+    pub fn prepare(_: &[CacheSelection], _: &Cancellation) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "cache purge execution is macOS-only",
+        ))
+    }
+    pub fn preview(&self) -> &Plan {
+        match self.unavailable {}
+    }
+    pub fn issues(&self) -> &[SelectionIssue] {
+        match self.unavailable {}
+    }
+    pub fn refusals(&self) -> Vec<SelectionRefusal> {
+        match self.unavailable {}
+    }
+    pub fn approve(&mut self, _: &Plan) -> Result<Approval, Error> {
+        match self.unavailable {}
+    }
+    pub fn execute(
+        &mut self,
+        _: &Plan,
+        _: &Approval,
+        _: &Cancellation,
+        _: &Store,
+    ) -> io::Result<ExecutionReport> {
+        match self.unavailable {}
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

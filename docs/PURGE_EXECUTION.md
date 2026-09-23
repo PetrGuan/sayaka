@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MPL-2.0 -->
 
-# Purge execution contract: selected project artifacts to Trash
+# Purge execution contract: selected project artifacts and developer caches to Trash
 
 Design for issue PetrGuan/SayakaCleaner#28 (T8). This contract was
 confirmed by independent review in PetrGuan/sayaka#48 and **is implemented**
@@ -219,6 +219,42 @@ never "reclaimed space" (the PURGE.md rule), and no comparison may present
 them as freed bytes. The slice is not full Mole `purge` parity: custom
 root sets, staleness-based filtering UX and grouped-project reporting
 remain ledger gaps tracked by the C0 `purge` row.
+
+## Developer-cache Trash execution addendum
+
+The App-facing `developer_caches` profile uses the same
+`sayaka_purge_execute_start_v1`/poll/result/release ABI but a distinct native
+contract, **`revalidated_cache_trash_v1`**. Approval is a nonempty 1..32 subset
+of same-preview cache item references plus the exact preview `plan_digest`, an
+absolute journal `state_dir`, `approval == 1`, and the exact typed token
+`trash N caches` where `N` is the approved count. Project-artifact approval
+tokens and contracts are not accepted for cache previews.
+
+Only complete previews and per-item `execution_supported: true` /
+`cleanup_supported: true` cache candidates can execute. A partial preview,
+unknown item id, incomplete item, or activity refusal such as
+`lock_file_observed` produces a bounded `purge_execution` refusal envelope with
+`complete: false`, `effects_performed: false`, skipped selected items and no
+destinations; malformed requests still fail at the ABI boundary as documented in
+[BINDINGS.md](BINDINGS.md).
+
+Per item, execution revalidates immediately before approval and again at the
+last native guard: the path must still canonicalize to exactly the documented
+rule location under the effective account home returned by `getpwuid_r`, must
+still be a real non-symlink directory, must still have the same Unix
+device/inode identity and directory type recorded by the preview, and must still
+pass profile eligibility checks. The native move is the same Foundation Trash
+mechanism used by `revalidated_purge_trash_v1`; a failed Trash call is reported
+as failed/unknown and never falls back to permanent deletion. Journal schema 5 is
+reused without migration; every result item carries `id`, `reference`,
+`NativePath` JSON for `path`/`destination`, status, reason, logical bytes and
+recovery evidence. Skipped-only cache runs remain `status: "partial"` with
+`complete: true` when native execution starts and all selected items are skipped.
+
+The approved object is the cache directory container, not a frozen descendant
+set. A stable directory identity does not prove stable members, and the residual
+final pathname/ancestor replacement race remains disclosed exactly as for other
+Trash contracts.
 
 ## Recorded native acceptance (2026-09-22)
 
