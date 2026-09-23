@@ -40,6 +40,10 @@ fn query_layout_arguments_and_error_outputs_are_explicit() {
             sayaka_scan_roots_v1(0, &valid, ptr::null_mut(), 0, &mut required),
             INVALID_HANDLE
         );
+        assert_eq!(
+            sayaka_scan_largest_files_v1(0, &valid, ptr::null_mut(), 0, &mut required),
+            INVALID_ARGUMENT
+        );
         assert_eq!(required, 0);
         required = 99;
         assert_eq!(
@@ -93,6 +97,16 @@ fn query_layout_arguments_and_error_outputs_are_explicit() {
         );
         assert_eq!(
             sayaka_scan_children_v1(0, &reference, &valid, ptr::null_mut(), 0, &mut required),
+            INVALID_HANDLE
+        );
+        assert_eq!(
+            sayaka_scan_largest_files_v1(
+                0,
+                &request(0, 1, SORT_LOGICAL_SIZE),
+                ptr::null_mut(),
+                0,
+                &mut required
+            ),
             INVALID_HANDLE
         );
     }
@@ -245,6 +259,32 @@ mod native {
         assert_eq!(sorted["data"]["nodes"][0]["logical_bytes"], 16);
         assert_eq!(sorted["data"]["nodes"][1]["logical_bytes"], 11);
         assert_eq!(sorted["data"]["nodes"][0]["parent"], root_node["reference"]);
+        let largest = query(|b, c, r| unsafe {
+            sayaka_scan_largest_files_v1(first.0, &request(0, 1, SORT_LOGICAL_SIZE), b, c, r)
+        });
+        assert_eq!(largest["data"]["total"], 2);
+        assert_eq!(largest["data"]["next_offset"], 1);
+        assert_eq!(largest["data"]["unmeasured"], 0);
+        assert_eq!(largest["data"]["nodes"][0]["kind"], "file");
+        assert_eq!(largest["data"]["nodes"][0]["logical_bytes"], 11);
+        let largest_last = query(|b, c, r| unsafe {
+            sayaka_scan_largest_files_v1(first.0, &request(1, 1, SORT_LOGICAL_SIZE), b, c, r)
+        });
+        assert_eq!(largest_last["data"]["nodes"][0]["logical_bytes"], 5);
+        assert_eq!(largest_last["data"]["next_offset"], Value::Null);
+        let mut required = 99;
+        assert_eq!(
+            unsafe {
+                sayaka_scan_largest_files_v1(
+                    first.0,
+                    &request(0, 1, SORT_NAME),
+                    ptr::null_mut(),
+                    0,
+                    &mut required,
+                )
+            },
+            INVALID_ARGUMENT
+        );
         let last = query(|b, c, r| unsafe {
             sayaka_scan_children_v1(
                 first.0,
@@ -275,7 +315,7 @@ mod native {
             sayaka_scan_children_v1(first.0, &root_ref, &request(3, 1, SORT_NAME), b, c, r)
         });
         assert_eq!(end["data"]["nodes"], serde_json::json!([]));
-        let mut required = 99;
+        required = 99;
         assert_eq!(
             unsafe {
                 sayaka_scan_children_v1(
@@ -421,6 +461,18 @@ mod native {
             },
             INVALID_HANDLE
         );
+        assert_eq!(
+            unsafe {
+                sayaka_scan_largest_files_v1(
+                    stale_handle,
+                    &request(0, 1, SORT_LOGICAL_SIZE),
+                    ptr::null_mut(),
+                    0,
+                    &mut required,
+                )
+            },
+            INVALID_HANDLE
+        );
         drop(refreshed);
         let failed = Task::start(&root.join("missing"));
         assert_eq!(failed.finish(), 5);
@@ -429,6 +481,18 @@ mod native {
                 sayaka_scan_roots_v1(
                     failed.0,
                     &request(0, 1, SORT_NAME),
+                    ptr::null_mut(),
+                    0,
+                    &mut required,
+                )
+            },
+            QUERY_UNAVAILABLE
+        );
+        assert_eq!(
+            unsafe {
+                sayaka_scan_largest_files_v1(
+                    failed.0,
+                    &request(0, 1, SORT_LOGICAL_SIZE),
                     ptr::null_mut(),
                     0,
                     &mut required,
@@ -494,6 +558,53 @@ mod native {
         );
         assert_eq!(detail["directory_summary"]["unique_files"], 1);
         assert_eq!(detail["directory_summary"]["complete"], true);
+        report.entries.truncate(1);
+        for (name, id, logical, allocated) in [
+            ("b-tie", root_id + 1, Some(10), Some(100)),
+            ("a-tie", root_id + 2, Some(10), Some(50)),
+            ("unknown", root_id + 3, None, Some(200)),
+            ("alias", root_id + 4, Some(99), Some(99)),
+        ] {
+            report.entries.push(ScanEntry {
+                id,
+                path: root.path.join(name),
+                kind: ResourceKind::File,
+                logical_bytes: logical,
+                allocated_bytes: allocated,
+                counted: name != "alias",
+                depth: root.depth + 1,
+                ..root.clone()
+            });
+        }
+        let tree = ScanTree::build(report.clone(), &Cancellation::default()).unwrap();
+        let order = build_largest_files_order(&tree, Metric::Logical);
+        assert_eq!(order.ids.len(), 2);
+        assert_eq!(order.unmeasured, 1);
+        assert!(tree.entry(order.ids[0]).unwrap().path.ends_with("a-tie"));
+        assert!(tree.entry(order.ids[1]).unwrap().path.ends_with("b-tie"));
+        let nodes = order
+            .ids
+            .iter()
+            .map(|id| node(&tree, 1, tree.entry(*id).unwrap()))
+            .collect();
+        let payload: Value = serde_json::from_slice(
+            &serialize(
+                &tree,
+                1,
+                LargestFilesPage {
+                    offset: 0,
+                    total: order.ids.len(),
+                    next_offset: None,
+                    unmeasured: order.unmeasured,
+                    nodes,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["data"]["unmeasured"], 1);
+        assert_eq!(payload["data"]["total"], 2);
+
         report.entries.truncate(1);
         for index in 1..=MAX_PAGE_NODES {
             report.entries.push(ScanEntry {

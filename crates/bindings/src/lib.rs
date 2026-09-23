@@ -83,6 +83,7 @@ struct Job {
     task: ScanTask,
     result: Option<Result<Vec<u8>, i32>>,
     tree: Option<Result<ScanTree, i32>>,
+    largest_files: [Option<browse::LargestFilesOrder>; 2],
     closed: bool,
 }
 
@@ -279,6 +280,7 @@ pub unsafe extern "C" fn sayaka_scan_start_v1(
                 task,
                 result: None,
                 tree: None,
+                largest_files: Default::default(),
                 closed: false,
             })),
         );

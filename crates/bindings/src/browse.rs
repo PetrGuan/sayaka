@@ -5,6 +5,7 @@ use sayaka_engine::model::{Cancellation, ResourceKind};
 use sayaka_engine::scan::index::{DirectorySummary, Metric, Sort};
 use sayaka_engine::scan::{ScanEntry, ScanStatus};
 use serde::Serialize;
+use std::cmp::Ordering;
 
 pub const MAX_PAGE_NODES: u32 = 256;
 pub const MAX_QUERY_BYTES: usize = 1024 * 1024;
@@ -13,6 +14,12 @@ const MAX_NODE_ISSUES: usize = 8;
 pub const SORT_NAME: u32 = 1;
 pub const SORT_LOGICAL_SIZE: u32 = 2;
 pub const SORT_ALLOCATED_SIZE: u32 = 3;
+
+#[derive(Debug)]
+pub(super) struct LargestFilesOrder {
+    ids: Vec<u64>,
+    unmeasured: usize,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -161,6 +168,18 @@ fn raw_path_le(left: &ScanEntry, right: &ScanEntry) -> bool {
         .le(right.path.as_os_str().encode_wide())
 }
 
+fn raw_path_cmp(left: &ScanEntry, right: &ScanEntry) -> Ordering {
+    if raw_path_le(left, right) {
+        if raw_path_le(right, left) {
+            Ordering::Equal
+        } else {
+            Ordering::Less
+        }
+    } else {
+        Ordering::Greater
+    }
+}
+
 fn node_evidence<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> NodeEvidence<'a> {
     let report = tree.report();
     let mut observed_alias_count = 0;
@@ -245,6 +264,15 @@ struct Page<'a> {
     nodes: Vec<Node<'a>>,
 }
 
+#[derive(Serialize)]
+struct LargestFilesPage<'a> {
+    offset: usize,
+    total: usize,
+    next_offset: Option<usize>,
+    unmeasured: usize,
+    nodes: Vec<Node<'a>>,
+}
+
 fn page(
     tree: &ScanTree,
     handle: u64,
@@ -271,6 +299,87 @@ fn page(
             offset,
             total: ids.len(),
             next_offset: (end < ids.len()).then_some(end),
+            nodes,
+        },
+    )
+}
+
+fn metric_index(metric: Metric) -> usize {
+    match metric {
+        Metric::Logical => 0,
+        Metric::Allocated => 1,
+    }
+}
+
+fn build_largest_files_order(tree: &ScanTree, metric: Metric) -> LargestFilesOrder {
+    let mut ids = Vec::new();
+    let mut unmeasured = 0;
+    for entry in &tree.report().entries {
+        if entry.kind != ResourceKind::File || !entry.counted {
+            continue;
+        }
+        if tree.size(entry.id, metric).is_some() {
+            ids.push(entry.id);
+        } else {
+            unmeasured += 1;
+        }
+    }
+    ids.sort_unstable_by(|a, b| {
+        let left = tree.entry(*a).expect("largest file id is indexed");
+        let right = tree.entry(*b).expect("largest file id is indexed");
+        tree.size(*b, metric)
+            .expect("largest file has measured size")
+            .cmp(
+                &tree
+                    .size(*a, metric)
+                    .expect("largest file has measured size"),
+            )
+            .then_with(|| raw_path_cmp(left, right))
+    });
+    LargestFilesOrder { ids, unmeasured }
+}
+
+fn largest_files_page(
+    job: &mut Job,
+    handle: u64,
+    metric: Metric,
+    offset: usize,
+    limit: u32,
+) -> Result<Vec<u8>, i32> {
+    let index = metric_index(metric);
+    if job.largest_files[index].is_none() {
+        let order = build_largest_files_order(tree(job)?, metric);
+        job.largest_files[index] = Some(order);
+    }
+    let tree = job
+        .tree
+        .as_ref()
+        .expect("scan tree initialized before largest files cache")
+        .as_ref()
+        .map_err(|code| *code)?;
+    let order = job.largest_files[index]
+        .as_ref()
+        .expect("largest files cache initialized");
+    if offset > order.ids.len() {
+        return Err(INVALID_ARGUMENT);
+    }
+    let end = offset.saturating_add(limit as usize).min(order.ids.len());
+    let nodes = order.ids[offset..end]
+        .iter()
+        .map(|id| {
+            tree.entry(*id)
+                .map(|entry| node(tree, handle, entry))
+                .ok_or(INTERNAL_ERROR)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    serialize(
+        tree,
+        handle,
+        LargestFilesPage {
+            offset,
+            total: order.ids.len(),
+            next_offset: (end < order.ids.len()).then_some(end),
+            unmeasured: order.unmeasured,
             nodes,
         },
     )
@@ -316,6 +425,37 @@ pub unsafe extern "C" fn sayaka_scan_roots_v1(
             offset,
             request.limit,
         )?;
+        // SAFETY: Output was validated above; bytes are privately owned.
+        unsafe { copy_output(&bytes, buffer, capacity, required) }
+    })
+}
+
+/// Returns a bounded page of counted measured files, largest first.
+///
+/// # Safety
+/// request is readable/aligned. Output follows sayaka_scan_result_v1's contract,
+/// with MAX_QUERY_BYTES capacity. All input/output storage is non-overlapping.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_scan_largest_files_v1(
+    handle: u64,
+    request: *const SayakaPageRequestV1,
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        // SAFETY: Caller supplies valid non-overlapping input/output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_QUERY_BYTES)? };
+        pointer(request)?;
+        let request = unsafe { *request };
+        let (offset, sort, metric) = request.validate()?;
+        if sort == Sort::Name {
+            return Err(INVALID_ARGUMENT);
+        }
+        let slot = get(handle)?;
+        let mut job = lock_job(&slot)?;
+        ensure_open(&job)?;
+        let bytes = largest_files_page(&mut job, handle, metric, offset, request.limit)?;
         // SAFETY: Output was validated above; bytes are privately owned.
         unsafe { copy_output(&bytes, buffer, capacity, required) }
     })

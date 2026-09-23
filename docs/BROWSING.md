@@ -70,6 +70,12 @@ Apps can page the existing observations without parsing the full scan JSON or
 reimplementing directory accounting. Native queries do not expose the terminal
 browser's selection/approval/viewer actions.
 
+Native hosts can also page a read-only "largest files" view for the current
+scan snapshot. It lists counted regular-file observations with a known logical
+or allocated measurement, sorted by size descending and native path for ties.
+Hard-linked aliases are listed once, and files whose requested measurement is
+unknown are reported as an excluded count rather than shown as zero bytes.
+
 Logical and allocated measurements remain separate. Unknown or conflicting
 measurements for an identity are not resolved by arbitrarily choosing an alias.
 Their corresponding unknown counts remain explicit. Directories, links and other
