@@ -179,6 +179,31 @@ fn native_capture_revalidation_and_cancellation_have_no_trash_effect() {
 }
 
 #[test]
+fn purge_capture_keeps_descriptors_inside_explicit_scope_only() {
+    let mut fixture = Fixture::new();
+    fixture.directory("webapp");
+    let marker = fixture.file("webapp/package.json", b"{}");
+    let target = fixture.directory("webapp/node_modules");
+    let candidate =
+        Candidate::capture_purge_diagnostic(&fixture.root, &target, &[marker], &[]).unwrap();
+    let scoped = candidate
+        .ancestors
+        .iter()
+        .find(|ancestor| ancestor.path == fixture.root)
+        .expect("scope evidence retained");
+    assert!(scoped.has_descriptor());
+    assert!(
+        candidate
+            .ancestors
+            .iter()
+            .filter(|ancestor| !ancestor.path.starts_with(&fixture.root))
+            .all(|ancestor| !ancestor.has_descriptor())
+    );
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
 fn source_bound_capture_retains_rule_witnesses_without_native_effect() {
     let mut fixture = Fixture::new();
     let pkg = fixture.directory("pkg");
