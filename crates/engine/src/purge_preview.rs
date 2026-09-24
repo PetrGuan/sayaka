@@ -54,7 +54,19 @@ pub fn resolve_cache_selections_by_ids(
         if !cache.cleanup_supported {
             return Err("developer cache item is not cleanup-supported".into());
         }
+        let scope_root = preview
+            .roots
+            .iter()
+            .filter(|root| cache.path == **root || cache.path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+            .ok_or_else(|| {
+                format!(
+                    "developer cache item is outside every preview root: {}",
+                    cache.path.display()
+                )
+            })?;
         selections.push(CacheSelection {
+            scope_root: scope_root.clone(),
             path: cache.path.clone(),
             expected_identity: cache.identity,
             rule_id: cache.rule_id,
@@ -1370,6 +1382,7 @@ mod tests {
         let selections =
             resolve_cache_selections_by_ids(&preview, &[PurgeItemId(1)]).expect("cache selection");
         assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].scope_root, *home);
         assert_eq!(selections[0].path, preview.developer_caches[0].path);
         assert_eq!(selections[0].rule_id, preview.developer_caches[0].rule_id);
     }
@@ -1412,6 +1425,10 @@ mod tests {
         assert_eq!(preview.developer_caches.len(), 1);
         assert_eq!(preview.developer_caches[0].rule_id, "pypa.pip.cache");
         assert_eq!(preview.developer_caches[0].path, pip);
+        let selections =
+            resolve_cache_selections_by_ids(&preview, &[PurgeItemId(1)]).expect("cache selection");
+        assert_eq!(selections[0].scope_root, preview.roots[0]);
+        assert_eq!(selections[0].scope_root, selections[0].path);
     }
 
     #[test]
@@ -1427,6 +1444,10 @@ mod tests {
         assert_eq!(preview.developer_caches.len(), 1);
         assert_eq!(preview.developer_caches[0].rule_id, "pypa.pip.cache");
         assert_eq!(preview.developer_caches[0].path, pip);
+        let selections =
+            resolve_cache_selections_by_ids(&preview, &[PurgeItemId(1)]).expect("cache selection");
+        assert_eq!(selections[0].scope_root, caches);
+        assert_ne!(selections[0].scope_root, selections[0].path);
     }
 
     #[test]
@@ -1515,6 +1536,7 @@ mod tests {
         assert!(
             revalidate_developer_cache_selection_with_home(
                 &CacheSelection {
+                    scope_root: root.path().to_path_buf(),
                     path: modules.clone(),
                     expected_identity: identity,
                     rule_id: "org.gradle.modules_cache",
@@ -1526,6 +1548,7 @@ mod tests {
         assert!(
             revalidate_developer_cache_selection_with_home(
                 &CacheSelection {
+                    scope_root: root.path().to_path_buf(),
                     path: home
                         .join(".gradle")
                         .join("caches")

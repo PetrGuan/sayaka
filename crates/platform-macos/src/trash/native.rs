@@ -10,6 +10,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io;
 use std::mem::MaybeUninit;
+use std::ops::Deref;
 use std::os::fd::AsRawFd;
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -188,10 +189,28 @@ impl Binding {
 struct Evidence {
     path: PathBuf,
     physical: PathBuf,
-    file: File,
+    file: EvidenceFile,
     stamp: Stamp,
     acl: Option<Vec<u8>>,
     binding: Binding,
+}
+
+enum EvidenceFile {
+    Descriptor(File),
+    MetadataOnly,
+}
+
+impl Deref for EvidenceFile {
+    type Target = File;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Descriptor(file) => file,
+            Self::MetadataOnly => {
+                panic!("metadata-only evidence has no retained descriptor")
+            }
+        }
+    }
 }
 
 impl Evidence {
@@ -214,6 +233,30 @@ impl Evidence {
     ) -> io::Result<Self> {
         let (file, stamp) = Self::open_handle_observed(path, binding, operation)?;
         Self::complete_observed(path, binding, file, stamp, operation)
+    }
+
+    fn open_metadata_observed(
+        path: &Path,
+        binding: Binding,
+        operation: &mut &'static str,
+    ) -> io::Result<Self> {
+        *operation = "validate_path";
+        valid_path(path)?;
+        *operation = "symlink_metadata";
+        let metadata = fs::symlink_metadata(path)?;
+        *operation = "link_or_dataless_policy";
+        if metadata.file_type().is_symlink() || metadata.st_flags() & SF_DATALESS != 0 {
+            return Err(refused("link or dataless object"));
+        }
+        let stamp = Stamp::read(&metadata);
+        Ok(Self {
+            path: path.to_owned(),
+            physical: path.to_owned(),
+            file: EvidenceFile::MetadataOnly,
+            stamp,
+            acl: None,
+            binding,
+        })
     }
 
     fn open_handle(path: &Path, binding: Binding) -> io::Result<(File, Stamp)> {
@@ -278,7 +321,7 @@ impl Evidence {
         Ok(Self {
             path: path.to_owned(),
             physical,
-            file,
+            file: EvidenceFile::Descriptor(file),
             stamp: observed,
             acl,
             binding,
@@ -290,11 +333,26 @@ impl Evidence {
     }
 
     fn revalidate_at(&self, path: &Path) -> io::Result<()> {
+        let file = match &self.file {
+            EvidenceFile::Descriptor(file) => file,
+            EvidenceFile::MetadataOnly => {
+                let metadata = fs::symlink_metadata(path)?;
+                if metadata.file_type().is_symlink() || metadata.st_flags() & SF_DATALESS != 0 {
+                    return Err(refused("link or dataless object"));
+                }
+                if !self.binding.matches(&self.stamp, &Stamp::read(&metadata)) {
+                    return Err(refused(
+                        "metadata-only ancestor or protection evidence changed",
+                    ));
+                }
+                return Ok(());
+            }
+        };
         if !self
             .binding
-            .matches(&self.stamp, &Stamp::read(&self.file.metadata()?))
-            || physical_path(&self.file)? != self.physical
-            || crate::acl::snapshot(&self.file)? != self.acl
+            .matches(&self.stamp, &Stamp::read(&file.metadata()?))
+            || physical_path(file)? != self.physical
+            || crate::acl::snapshot(file)? != self.acl
         {
             return Err(refused("retained object evidence or physical path changed"));
         }
@@ -308,6 +366,19 @@ impl Evidence {
             ));
         }
         Ok(())
+    }
+
+    fn required_file(&self) -> io::Result<&File> {
+        match &self.file {
+            EvidenceFile::Descriptor(file) => Ok(file),
+            EvidenceFile::MetadataOnly => Err(refused(
+                "descriptor is unavailable for metadata-only evidence",
+            )),
+        }
+    }
+
+    fn has_descriptor(&self) -> bool {
+        matches!(self.file, EvidenceFile::Descriptor(_))
     }
 }
 
@@ -582,6 +653,42 @@ impl TargetShape {
     fn is_directory(self) -> bool {
         !matches!(self, Self::File)
     }
+
+    fn allows_scope_target(self) -> bool {
+        matches!(self, Self::CacheDirectory)
+    }
+}
+
+fn target_is_within_scope(scope: &Path, path: &Path, shape: TargetShape) -> bool {
+    path.starts_with(scope) && (path != scope || shape.allows_scope_target())
+}
+
+fn captured_scope_evidence<'a>(
+    ancestors: &'a [Evidence],
+    target: &'a Evidence,
+    scope: &Path,
+    path: &Path,
+    shape: TargetShape,
+) -> io::Result<&'a Evidence> {
+    if scope == path && shape.allows_scope_target() {
+        Ok(target)
+    } else {
+        ancestors
+            .iter()
+            .find(|ancestor| ancestor.path == scope)
+            .ok_or_else(|| refused("scope identity is absent from ancestry"))
+    }
+}
+
+fn target_physically_within_scope(
+    scope: &Path,
+    path: &Path,
+    shape: TargetShape,
+    target_physical: &Path,
+    scope_physical: &Path,
+) -> bool {
+    target_physical.starts_with(scope_physical)
+        && (target_physical != scope_physical || (scope == path && shape.allows_scope_target()))
 }
 
 /// The admitted target shape plus its shape-specific sealed evidence.
@@ -741,7 +848,7 @@ impl Candidate {
         stage.operation = "scope_validation";
         valid_path(scope)?;
         valid_path(path)?;
-        if path == scope || !path.starts_with(scope) {
+        if !target_is_within_scope(scope, path, shape) {
             return Err(refused(
                 "target must be strictly beneath its explicit scope",
             ));
@@ -753,7 +860,11 @@ impl Candidate {
         let mut ancestors = Vec::with_capacity(parents.len());
         for parent in parents.into_iter().rev() {
             stage.phase = "ancestor";
-            let evidence = Evidence::open_observed(parent, Binding::Safety, &mut stage.operation)?;
+            let evidence = if parent.starts_with(scope) {
+                Evidence::open_observed(parent, Binding::Safety, &mut stage.operation)?
+            } else {
+                Evidence::open_metadata_observed(parent, Binding::Safety, &mut stage.operation)?
+            };
             stage.operation = "ancestor_admission";
             admissible_ancestor(&evidence.stamp, uid)?;
             stage.operation = "package_classification";
@@ -783,7 +894,7 @@ impl Candidate {
             None
         };
         stage.operation = "cloud_attributes";
-        reject_cloud_attributes(&target.file)?;
+        reject_cloud_attributes(target.required_file()?)?;
         stage.phase = "purge_marker";
         let purge_marker_evidence = Self::capture_purge_markers(
             scope,
@@ -804,19 +915,16 @@ impl Candidate {
                 return Err(refused("source and target identity must be different"));
             }
             admissible_file(&source.stamp, uid)?;
-            reject_cloud_attributes(&source.file)?;
+            reject_cloud_attributes(source.required_file()?)?;
             Some(source)
         } else {
             None
         };
         stage.phase = "scope";
         stage.operation = "physical_containment";
-        let scope_evidence = ancestors
-            .iter()
-            .find(|ancestor| ancestor.path == scope)
-            .ok_or_else(|| refused("scope identity is absent from ancestry"))?;
+        let scope_evidence = captured_scope_evidence(&ancestors, &target, scope, path, shape)?;
         let physical_scope = &scope_evidence.physical;
-        if !target.physical.starts_with(physical_scope) || target.physical == *physical_scope {
+        if !target_physically_within_scope(scope, path, shape, &target.physical, physical_scope) {
             return Err(refused("physical target is outside scope"));
         }
         if let Some(source) = &source
@@ -829,13 +937,25 @@ impl Candidate {
             stage.phase = "protection";
             stage.operation = "validate_path";
             valid_path(protection)?;
-            // Exclusions may themselves be aliases. Resolve only the exclusion,
-            // under the no-materialization policy, then retain its physical object.
-            // Missing/inaccessible exclusions are unknown, not permission.
-            stage.operation = "canonicalize";
-            let canonical = fs::canonicalize(protection)?;
-            let mut evidence =
-                Evidence::open_observed(&canonical, Binding::Safety, &mut stage.operation)?;
+            let mut evidence = if protection.starts_with(scope) {
+                // Exclusions may themselves be aliases. Resolve only the
+                // exclusion, under the no-materialization policy, then retain
+                // its physical object. If resolution leaves the approved root,
+                // avoid descriptor opens outside the sandbox extension.
+                stage.operation = "canonicalize";
+                let canonical = fs::canonicalize(protection)?;
+                if canonical.starts_with(scope) {
+                    Evidence::open_observed(&canonical, Binding::Safety, &mut stage.operation)?
+                } else {
+                    Evidence::open_metadata_observed(
+                        &canonical,
+                        Binding::Safety,
+                        &mut stage.operation,
+                    )?
+                }
+            } else {
+                Evidence::open_metadata_observed(protection, Binding::Safety, &mut stage.operation)?
+            };
             evidence.path = protection.clone();
             protections.push(evidence);
         }
@@ -852,7 +972,7 @@ impl Candidate {
         }
         stage.phase = "target";
         stage.operation = "final_metadata";
-        let metadata = target.file.metadata()?;
+        let metadata = target.required_file()?.metadata()?;
         let candidate = Self {
             info: NativeFileInfo {
                 device: target.stamp.device,
@@ -946,7 +1066,15 @@ impl Candidate {
             for prefix in exclusion.ancestors() {
                 match fs::symlink_metadata(prefix) {
                     Ok(_) => {
-                        let observed = Evidence::open_safety(prefix)?;
+                        let observed = if prefix.starts_with(&self.scope) {
+                            Evidence::open_safety(prefix)?
+                        } else {
+                            Evidence::open_metadata_observed(
+                                prefix,
+                                Binding::Safety,
+                                &mut "unobserved",
+                            )?
+                        };
                         let kind = observed.stamp.mode & u32::from(libc::S_IFMT);
                         if kind != u32::from(libc::S_IFDIR) && kind != u32::from(libc::S_IFREG) {
                             return Err(refused(
@@ -1016,19 +1144,18 @@ impl Candidate {
                 admissible_file(&self.target.stamp, self.uid)?;
             }
         }
-        reject_cloud_attributes(&self.target.file)?;
+        reject_cloud_attributes(self.target.required_file()?)?;
         if let Some(source) = &self.source {
             source.revalidate()?;
             admissible_file(&source.stamp, self.uid)?;
-            reject_cloud_attributes(&source.file)?;
+            reject_cloud_attributes(source.required_file()?)?;
             if source.stamp.identity() == self.target.stamp.identity() {
                 return Err(refused("source and target identity must stay distinct"));
             }
         }
         self.verify_target_marker()?;
         for protection in &self.protections {
-            let canonical = fs::canonicalize(&protection.path)?;
-            protection.revalidate_at(&canonical)?;
+            self.revalidate_protection(protection)?;
         }
         self.check_protection()?;
         if supported_volume(&self.target)? != self.volume {
@@ -1041,8 +1168,7 @@ impl Candidate {
             reject_package(ancestor)?;
         }
         for protection in &self.protections {
-            let canonical = fs::canonicalize(&protection.path)?;
-            protection.revalidate_at(&canonical)?;
+            self.revalidate_protection(protection)?;
         }
         self.target.revalidate()?;
         if let Some(source) = &self.source {
@@ -1052,20 +1178,30 @@ impl Candidate {
         Ok(())
     }
 
+    fn revalidate_protection(&self, protection: &Evidence) -> io::Result<()> {
+        if protection.has_descriptor() || protection.path.starts_with(&self.scope) {
+            let canonical = fs::canonicalize(&protection.path)?;
+            protection.revalidate_at(&canonical)
+        } else {
+            protection.revalidate()
+        }
+    }
+
     fn verify_target_marker(&self) -> io::Result<()> {
         let Some(NativeTargetMarker::Prefix4(expected)) = self.target_marker else {
             return Ok(());
         };
-        let before = Stamp::read(&self.target.file.metadata()?);
+        let target_file = self.target.required_file()?;
+        let before = Stamp::read(&target_file.metadata()?);
         if !self.target.binding.matches(&self.target.stamp, &before) {
             return Err(refused("target changed before marker verification"));
         }
         let mut prefix = [0_u8; 4];
-        let read = self.target.file.read_at(&mut prefix, 0)?;
+        let read = target_file.read_at(&mut prefix, 0)?;
         if read < prefix.len() {
             return Err(refused("target marker short read"));
         }
-        let after = Stamp::read(&self.target.file.metadata()?);
+        let after = Stamp::read(&target_file.metadata()?);
         if !self.target.binding.matches(&before, &after) {
             return Err(refused("target changed during marker verification"));
         }
@@ -1168,12 +1304,15 @@ impl Candidate {
     }
 
     fn observe_recovery(&self, returned_destination: Option<PathBuf>) -> NativeRecoveryEvidence {
-        recovery_observations(
-            &self.info,
-            returned_destination,
-            file_info(&self.target.file),
-            physical_path(&self.target.file),
-        )
+        let (held_info, held_path) = match self.target.required_file() {
+            Ok(file) => (file_info(file), physical_path(file)),
+            Err(error) => {
+                let kind = error.kind();
+                let message = error.to_string();
+                (Err(io::Error::new(kind, message)), Err(error))
+            }
+        };
+        recovery_observations(&self.info, returned_destination, held_info, held_path)
     }
 
     fn interpret_response(&self, response: foundation::Outcome) -> NativeTrashOutcome {
@@ -1281,7 +1420,8 @@ impl Candidate {
         }
         reject_destination_attributes(&file)?;
         let mut result = Evidence::complete(destination, Binding::PostMoveTarget, file, stamp)?;
-        let mut held = Stamp::read(&self.target.file.metadata()?);
+        let target_file = self.target.required_file()?;
+        let mut held = Stamp::read(&target_file.metadata()?);
         apply_test_probe_hook(TestProbeStage::HeldAfterCapture, &mut held);
         if held.identity() != self.target.stamp.identity() {
             return Err(refused(
@@ -1304,7 +1444,7 @@ impl Candidate {
             &result.stamp,
             result.acl == self.target.acl,
         )?;
-        if physical_path(&self.target.file)? != result.physical {
+        if physical_path(target_file)? != result.physical {
             return Err(refused("retained source and resulting URL disagree"));
         }
         match fs::symlink_metadata(&self.path) {
@@ -1319,11 +1459,13 @@ impl Candidate {
     }
 
     pub(super) fn admission_witness(&self) -> io::Result<NativeAdmissionWitness> {
-        let root = self
-            .ancestors
-            .iter()
-            .find(|ancestor| ancestor.path == self.scope)
-            .ok_or_else(|| refused("scope identity is absent from ancestry"))?;
+        let root = captured_scope_evidence(
+            &self.ancestors,
+            &self.target,
+            &self.scope,
+            &self.path,
+            self.shape,
+        )?;
         let target_ancestors = self
             .ancestors
             .iter()
@@ -1668,7 +1810,7 @@ fn physical_path(file: &File) -> io::Result<PathBuf> {
 fn supported_volume(evidence: &Evidence) -> io::Result<VolumeInfo> {
     let mut stat = MaybeUninit::<libc::statfs>::uninit();
     // SAFETY: fstatfs initializes the structure on success for this live fd.
-    if unsafe { libc::fstatfs(evidence.file.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+    if unsafe { libc::fstatfs(evidence.required_file()?.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: The successful call initialized the complete statfs value.

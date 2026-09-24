@@ -179,6 +179,50 @@ fn native_capture_revalidation_and_cancellation_have_no_trash_effect() {
 }
 
 #[test]
+fn purge_capture_keeps_descriptors_inside_explicit_scope_only() {
+    let mut fixture = Fixture::new();
+    fixture.directory("webapp");
+    let marker = fixture.file("webapp/package.json", b"{}");
+    let target = fixture.directory("webapp/node_modules");
+    let candidate =
+        Candidate::capture_purge_diagnostic(&fixture.root, &target, &[marker], &[]).unwrap();
+    let scoped = candidate
+        .ancestors
+        .iter()
+        .find(|ancestor| ancestor.path == fixture.root)
+        .expect("scope evidence retained");
+    assert!(scoped.has_descriptor());
+    assert!(
+        candidate
+            .ancestors
+            .iter()
+            .filter(|ancestor| !ancestor.path.starts_with(&fixture.root))
+            .all(|ancestor| !ancestor.has_descriptor())
+    );
+    drop(candidate);
+    fixture.finish();
+}
+
+#[test]
+fn only_cache_targets_may_equal_their_explicit_scope() {
+    assert!(target_is_within_scope(
+        Path::new("/Users/example/Library/Caches/pip"),
+        Path::new("/Users/example/Library/Caches/pip"),
+        TargetShape::CacheDirectory
+    ));
+    assert!(!target_is_within_scope(
+        Path::new("/Users/example/project/target"),
+        Path::new("/Users/example/project/target"),
+        TargetShape::PurgeArtifact
+    ));
+    assert!(target_is_within_scope(
+        Path::new("/Users/example/Library/Caches"),
+        Path::new("/Users/example/Library/Caches/pip"),
+        TargetShape::CacheDirectory
+    ));
+}
+
+#[test]
 fn source_bound_capture_retains_rule_witnesses_without_native_effect() {
     let mut fixture = Fixture::new();
     let pkg = fixture.directory("pkg");
@@ -869,6 +913,17 @@ fn cache_candidates_use_cache_specific_protection_without_weakening_ordinary_tar
     assert!(TrashCandidate::capture(&fixture.root, &npm_blob, &[]).is_err());
 
     CacheTrashCandidate::capture(&caches, &pip_cache, &[]).expect("Library cache target");
+    let same_scope = Candidate::capture_cache_diagnostic(&pip_cache, &pip_cache, &[])
+        .expect("cache target can be the explicit scope");
+    same_scope
+        .revalidate()
+        .expect("cache target revalidation accepts explicit scope equality");
+    let witness = same_scope
+        .admission_witness()
+        .expect("cache target witness accepts explicit scope equality");
+    assert_eq!(witness.root.path, pip_cache);
+    assert_eq!(witness.target.path, pip_cache);
+    assert!(witness.target_ancestors.is_empty());
     CacheTrashCandidate::capture(&npm, &npm_cache, &[]).expect("dot cache target");
     assert!(
         CacheTrashCandidate::capture(&fixture.root, &other_cache, &[]).is_err(),

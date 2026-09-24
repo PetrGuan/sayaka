@@ -42,6 +42,7 @@ pub struct PurgeSelection {
 
 #[derive(Clone, Debug)]
 pub struct CacheSelection {
+    pub scope_root: PathBuf,
     pub path: PathBuf,
     pub expected_identity: FileIdentity,
     pub rule_id: &'static str,

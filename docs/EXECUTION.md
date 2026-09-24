@@ -46,9 +46,15 @@ rewrite, private staging move or post-hoc check is used to claim otherwise.
   symlinks, cloud placeholders, remote/removable volumes or permanent deletion.
 - Protected/unsupported application and system locations remain unavailable.
   Every retained ancestor is classified for native package boundaries at capture
-  and revalidation. Known disk-image/VM package suffixes are also refused without
-  depending on local application registration. Unknown evidence is refusal, not
-  presumed permission.
+  and revalidation. In a sandboxed app, ancestors above the user-selected scope
+  are verified with no-follow path metadata rather than retained descriptors, so
+  descriptor/ACL/physical-path sealing starts at the approved scope and continues
+  below it. This preserves target/root identity checks without opening
+  directories outside the security-scoped resource; the residual above-scope
+  pathname race is part of the disclosed final pathname/ancestor race. Known
+  disk-image/VM package suffixes are also refused without depending on local
+  application registration. Unknown evidence is refusal, not presumed
+  permission.
 - At most 32 selected files and 32 exclusions per session; native paths and
   ancestor evidence are bounded. The plan expires after 120 seconds.
 - No batch expansion after confirmation; no cross-process saved approval.

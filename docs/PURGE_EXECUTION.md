@@ -83,7 +83,12 @@ with the purge-specific deltas:
   object.
 - **Ancestors/protections/volume**: unchanged from the M3 candidate
   (ordinary authority, writable/untrusted ancestry refusal, hidden/system
-  roots, Library, cloud roots, volume identity and device binding).
+  roots, Library, cloud roots, volume identity and device binding), except that
+  sandboxed execution verifies ancestors/protections above the approved purge
+  root with no-follow metadata instead of retained descriptors. Descriptor,
+  ACL and physical-path sealing still starts at the approved root and covers the
+  target and in-root ancestors; the above-root residual race is the same
+  disclosed pathname/ancestor race, not a permanent-delete fallback.
 - **Effect**: one synchronous `trashItemAtURL` call per item is the only
   mutation attempt; there is no fallback path. The returned destination URL
   is captured as the recovery witness. NO means the item was not moved
