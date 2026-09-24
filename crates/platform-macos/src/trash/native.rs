@@ -653,6 +653,14 @@ impl TargetShape {
     fn is_directory(self) -> bool {
         !matches!(self, Self::File)
     }
+
+    fn allows_scope_target(self) -> bool {
+        matches!(self, Self::CacheDirectory)
+    }
+}
+
+fn target_is_within_scope(scope: &Path, path: &Path, shape: TargetShape) -> bool {
+    path.starts_with(scope) && (path != scope || shape.allows_scope_target())
 }
 
 /// The admitted target shape plus its shape-specific sealed evidence.
@@ -812,7 +820,7 @@ impl Candidate {
         stage.operation = "scope_validation";
         valid_path(scope)?;
         valid_path(path)?;
-        if path == scope || !path.starts_with(scope) {
+        if !target_is_within_scope(scope, path, shape) {
             return Err(refused(
                 "target must be strictly beneath its explicit scope",
             ));

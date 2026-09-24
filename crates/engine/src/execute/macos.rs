@@ -812,10 +812,18 @@ impl CacheSession {
                     "cache selections must be absolute native paths without traversal",
                 ));
             }
+            if !crate::model::valid_absolute_path(&selection.scope_root)
+                || !(selection.path == selection.scope_root
+                    || selection.path.starts_with(&selection.scope_root))
+            {
+                return Err(journal::invalid(
+                    "cache selections must retain a preview root at or above the cache path",
+                ));
+            }
             purge_preview::revalidate_developer_cache_selection(selection)
                 .map_err(|error| journal::invalid(&error))?;
         }
-        let scope_root = common_ancestor(
+        let planner_scope_root = common_ancestor(
             &selections
                 .iter()
                 .filter_map(|selection| selection.path.parent().map(Path::to_path_buf))
@@ -823,7 +831,7 @@ impl CacheSession {
         )
         .ok_or_else(|| journal::invalid("cache selections share no common ancestor"))?;
         let mut planner = Planner::new(
-            Scope::new(scope_root.clone(), vec![]).map_err(model_error)?,
+            Scope::new(planner_scope_root, vec![]).map_err(model_error)?,
             Versions {
                 engine: 2,
                 rules: 1,
@@ -844,7 +852,8 @@ impl CacheSession {
                     "cancelled during preview",
                 ));
             }
-            let candidate = CacheTrashCandidate::capture(&scope_root, &selection.path, &[])?;
+            let candidate =
+                CacheTrashCandidate::capture(&selection.scope_root, &selection.path, &[])?;
             let expected = match selection.expected_identity {
                 FileIdentity::Unix { device, inode } => (device, inode),
                 FileIdentity::Windows { .. } => {

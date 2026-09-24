@@ -412,7 +412,8 @@ pub struct PurgeTrashCandidate {
 /// Sealed Trash candidate for one documented developer-cache directory.
 /// Rule/home anchoring is verified by the engine before capture and again
 /// through the engine guard; this native candidate seals the directory
-/// identity, ancestry, protections and Trash-only move.
+/// identity, ancestry, protections and Trash-only move. The explicit scope may
+/// be the cache directory itself or one of its ancestors.
 pub struct CacheTrashCandidate {
     #[cfg(target_os = "macos")]
     native: native::Candidate,

@@ -204,6 +204,25 @@ fn purge_capture_keeps_descriptors_inside_explicit_scope_only() {
 }
 
 #[test]
+fn only_cache_targets_may_equal_their_explicit_scope() {
+    assert!(target_is_within_scope(
+        Path::new("/Users/example/Library/Caches/pip"),
+        Path::new("/Users/example/Library/Caches/pip"),
+        TargetShape::CacheDirectory
+    ));
+    assert!(!target_is_within_scope(
+        Path::new("/Users/example/project/target"),
+        Path::new("/Users/example/project/target"),
+        TargetShape::PurgeArtifact
+    ));
+    assert!(target_is_within_scope(
+        Path::new("/Users/example/Library/Caches"),
+        Path::new("/Users/example/Library/Caches/pip"),
+        TargetShape::CacheDirectory
+    ));
+}
+
+#[test]
 fn source_bound_capture_retains_rule_witnesses_without_native_effect() {
     let mut fixture = Fixture::new();
     let pkg = fixture.directory("pkg");
@@ -894,6 +913,8 @@ fn cache_candidates_use_cache_specific_protection_without_weakening_ordinary_tar
     assert!(TrashCandidate::capture(&fixture.root, &npm_blob, &[]).is_err());
 
     CacheTrashCandidate::capture(&caches, &pip_cache, &[]).expect("Library cache target");
+    CacheTrashCandidate::capture(&pip_cache, &pip_cache, &[])
+        .expect("cache target can be the explicit scope");
     CacheTrashCandidate::capture(&npm, &npm_cache, &[]).expect("dot cache target");
     assert!(
         CacheTrashCandidate::capture(&fixture.root, &other_cache, &[]).is_err(),
