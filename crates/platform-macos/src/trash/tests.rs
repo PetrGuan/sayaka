@@ -913,8 +913,17 @@ fn cache_candidates_use_cache_specific_protection_without_weakening_ordinary_tar
     assert!(TrashCandidate::capture(&fixture.root, &npm_blob, &[]).is_err());
 
     CacheTrashCandidate::capture(&caches, &pip_cache, &[]).expect("Library cache target");
-    CacheTrashCandidate::capture(&pip_cache, &pip_cache, &[])
+    let same_scope = Candidate::capture_cache_diagnostic(&pip_cache, &pip_cache, &[])
         .expect("cache target can be the explicit scope");
+    same_scope
+        .revalidate()
+        .expect("cache target revalidation accepts explicit scope equality");
+    let witness = same_scope
+        .admission_witness()
+        .expect("cache target witness accepts explicit scope equality");
+    assert_eq!(witness.root.path, pip_cache);
+    assert_eq!(witness.target.path, pip_cache);
+    assert!(witness.target_ancestors.is_empty());
     CacheTrashCandidate::capture(&npm, &npm_cache, &[]).expect("dot cache target");
     assert!(
         CacheTrashCandidate::capture(&fixture.root, &other_cache, &[]).is_err(),

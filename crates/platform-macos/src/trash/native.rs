@@ -663,6 +663,34 @@ fn target_is_within_scope(scope: &Path, path: &Path, shape: TargetShape) -> bool
     path.starts_with(scope) && (path != scope || shape.allows_scope_target())
 }
 
+fn captured_scope_evidence<'a>(
+    ancestors: &'a [Evidence],
+    target: &'a Evidence,
+    scope: &Path,
+    path: &Path,
+    shape: TargetShape,
+) -> io::Result<&'a Evidence> {
+    if scope == path && shape.allows_scope_target() {
+        Ok(target)
+    } else {
+        ancestors
+            .iter()
+            .find(|ancestor| ancestor.path == scope)
+            .ok_or_else(|| refused("scope identity is absent from ancestry"))
+    }
+}
+
+fn target_physically_within_scope(
+    scope: &Path,
+    path: &Path,
+    shape: TargetShape,
+    target_physical: &Path,
+    scope_physical: &Path,
+) -> bool {
+    target_physical.starts_with(scope_physical)
+        && (target_physical != scope_physical || (scope == path && shape.allows_scope_target()))
+}
+
 /// The admitted target shape plus its shape-specific sealed evidence.
 #[derive(Clone, Copy)]
 struct TargetSpec<'a> {
@@ -894,12 +922,9 @@ impl Candidate {
         };
         stage.phase = "scope";
         stage.operation = "physical_containment";
-        let scope_evidence = ancestors
-            .iter()
-            .find(|ancestor| ancestor.path == scope)
-            .ok_or_else(|| refused("scope identity is absent from ancestry"))?;
+        let scope_evidence = captured_scope_evidence(&ancestors, &target, scope, path, shape)?;
         let physical_scope = &scope_evidence.physical;
-        if !target.physical.starts_with(physical_scope) || target.physical == *physical_scope {
+        if !target_physically_within_scope(scope, path, shape, &target.physical, physical_scope) {
             return Err(refused("physical target is outside scope"));
         }
         if let Some(source) = &source
@@ -1434,11 +1459,13 @@ impl Candidate {
     }
 
     pub(super) fn admission_witness(&self) -> io::Result<NativeAdmissionWitness> {
-        let root = self
-            .ancestors
-            .iter()
-            .find(|ancestor| ancestor.path == self.scope)
-            .ok_or_else(|| refused("scope identity is absent from ancestry"))?;
+        let root = captured_scope_evidence(
+            &self.ancestors,
+            &self.target,
+            &self.scope,
+            &self.path,
+            self.shape,
+        )?;
         let target_ancestors = self
             .ancestors
             .iter()
