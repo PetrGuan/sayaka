@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import resource
 import signal
 import statistics
 import tempfile
@@ -67,11 +68,17 @@ def wait_for_child(pid: int, deadline: float) -> tuple[int, object, bool]:
 def run(binary: Path, root: Path, cancel_delay: float | None, timeout: float) -> dict:
     import subprocess
 
+    def limit_output_file_size() -> None:
+        # Both redirected streams are regular files. Bound each while the CLI runs.
+        limit = 64 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
+
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         started = time.perf_counter()
         child = subprocess.Popen(
             [str(binary), "scan", str(root), "--json", "--profile-scan-stderr"],
             stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL,
+            preexec_fn=limit_output_file_size,
         )
         deadline = started + timeout
         signal_sent = None
