@@ -1,0 +1,27 @@
+{
+  "benchmark_id": "m11-scan-performance-v1",
+  "source_base_commit": "4d5647eb5cfe60e8958a2d3d51685c53e003b957",
+  "purpose": "Issue 158 macOS release CLI scan profiling; measures total process time, native scan, JSON write, peak RSS and cancellation latency without running unit or UI tests.",
+  "scenarios": [
+    {"id": "flat-1024", "directories": 1, "files": 1024, "file_bytes": 4096, "runs": 20},
+    {"id": "nested-1024", "directories": 33, "files": 1024, "file_bytes": 4096, "runs": 20},
+    {"id": "flat-8192", "directories": 1, "files": 8192, "file_bytes": 4096, "runs": 20},
+    {"id": "cancel-nested-32768", "directories": 1025, "files": 32768, "file_bytes": 128, "runs": 12, "signal_delay_ms": 20}
+  ],
+  "conditions": {
+    "host": "macOS arm64; same host and warmed filesystem cache for all paired runs",
+    "fixture": "fresh temporary tree per scenario; no symlinks or hardlinks; read-only scanner",
+    "binary": "cargo build --release --locked -p sayaka-cli",
+    "command": "sayaka scan ROOT --json --profile-scan-stderr",
+    "order": "alternating baseline/candidate per scenario after one warmup each",
+    "statistics": "median and nearest-rank p95 of wall, scan, JSON and RSS; cancellation latency from SIGINT to child exit",
+    "limits": "30-second timeout and 64 MiB stdout cap per invocation; no test runners",
+    "timeout_seconds": 30,
+    "interpretation": [
+      "The hex-path serialization change improves JSON time without changing the report schema or scanned entry count.",
+      "These local warm-cache measurements are not a Mole comparison or a cold-start claim.",
+      "Cancellation samples terminate after SIGINT and therefore retain variable observed entry counts.",
+      "Actual App UI first-result and browsing latency remain unmeasured by this CLI benchmark."
+    ]
+  }
+}

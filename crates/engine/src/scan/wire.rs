@@ -17,23 +17,28 @@ pub struct NativePath<'a>(pub &'a Path);
 
 impl Serialize for NativePath<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use std::fmt::Write;
-        let mut raw = String::new();
+        const HEX: &[u8; 16] = b"0123456789abcdef";
         #[cfg(unix)]
-        let encoding = {
+        let (encoding, raw) = {
             use std::os::unix::ffi::OsStrExt;
-            for byte in self.0.as_os_str().as_bytes() {
-                write!(raw, "{byte:02x}").map_err(serde::ser::Error::custom)?;
+            let bytes = self.0.as_os_str().as_bytes();
+            let mut raw = String::with_capacity(bytes.len() * 2);
+            for &byte in bytes {
+                raw.push(HEX[(byte >> 4) as usize] as char);
+                raw.push(HEX[(byte & 15) as usize] as char);
             }
-            "unix_bytes_hex"
+            ("unix_bytes_hex", raw)
         };
         #[cfg(windows)]
-        let encoding = {
+        let (encoding, raw) = {
             use std::os::windows::ffi::OsStrExt;
+            let mut raw = String::new();
             for unit in self.0.as_os_str().encode_wide() {
-                write!(raw, "{unit:04x}").map_err(serde::ser::Error::custom)?;
+                for shift in [12, 8, 4, 0] {
+                    raw.push(HEX[((unit >> shift) & 15) as usize] as char);
+                }
             }
-            "windows_utf16_hex"
+            ("windows_utf16_hex", raw)
         };
         let mut value = serializer.serialize_struct("Path", 3)?;
         value.serialize_field("display", &display_path(self.0))?;
