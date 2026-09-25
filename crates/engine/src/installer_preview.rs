@@ -1233,31 +1233,25 @@ fn parse_zip(
             // A central-directory digital signature may sit between the
             // directory and EOCD. Its two-byte length bounds this search.
             const MAX_SIGNATURE_RECORD: u64 = 6 + u16::MAX as u64;
-            let signature_span = eocd_absolute.min(MAX_SIGNATURE_RECORD);
-            let signature_bytes = inspected.read_exact(
-                eocd_absolute - signature_span,
-                signature_span,
-                budget,
-                context,
-            )?;
-            let signature_start =
-                (0..=signature_bytes.len().saturating_sub(6))
-                    .rev()
-                    .find(|&offset| {
-                        signature_bytes.get(offset..offset + 4) == Some(b"PK\x05\x05")
-                            && le_u16(&signature_bytes, offset + 4).is_some_and(|length| {
-                                offset + 6 + usize::from(length) == signature_bytes.len()
-                            })
-                    });
-            if let Some(start) = signature_start {
-                let signature_absolute = eocd_absolute - signature_span + start as u64;
-                if signature_absolute >= u64::from(directory_len) {
-                    directory = inspected.read_exact(
-                        signature_absolute - u64::from(directory_len),
-                        u64::from(directory_len),
-                        budget,
-                        context,
-                    )?;
+            let window_span = eocd_absolute.min(MAX_SIGNATURE_RECORD + u64::from(directory_len));
+            let window =
+                inspected.read_exact(eocd_absolute - window_span, window_span, budget, context)?;
+            let signature_span = usize::try_from(MAX_SIGNATURE_RECORD).unwrap_or(usize::MAX);
+            let earliest = window.len().saturating_sub(signature_span);
+            for start in earliest..window.len().saturating_sub(5) {
+                context.check()?;
+                if window.get(start..start + 4) != Some(b"PK\x05\x05")
+                    || !le_u16(&window, start + 4)
+                        .is_some_and(|length| start + 6 + usize::from(length) == window.len())
+                    || start < usize::try_from(directory_len).unwrap_or(usize::MAX)
+                {
+                    continue;
+                }
+                let directory_start = start - usize::try_from(directory_len).unwrap_or(usize::MAX);
+                let candidate = &window[directory_start..start];
+                if zip_directory_shape_valid(candidate, entries, context)? {
+                    directory = candidate.to_vec();
+                    break;
                 }
             }
         }
@@ -1367,6 +1361,60 @@ fn parse_zip(
         },
         has_payload,
     ))
+}
+
+/// Confirm the complete central-directory shape before accepting a signature
+/// position; signature payloads can contain bytes that look like another header.
+fn zip_directory_shape_valid(
+    directory: &[u8],
+    entries: u16,
+    context: ProbeContext<'_>,
+) -> Result<bool, PreviewError> {
+    let mut cursor = 0usize;
+    let mut name_bytes = 0usize;
+    for _ in 0..entries {
+        context.check()?;
+        if directory.get(cursor..cursor + 4) != Some(b"PK\x01\x02") {
+            return Ok(false);
+        }
+        let Some(name_len) = le_u16(directory, cursor + 28).map(usize::from) else {
+            return Ok(false);
+        };
+        let Some(extra_len) = le_u16(directory, cursor + 30).map(usize::from) else {
+            return Ok(false);
+        };
+        let Some(comment_len) = le_u16(directory, cursor + 32).map(usize::from) else {
+            return Ok(false);
+        };
+        name_bytes = name_bytes.saturating_add(name_len);
+        if name_bytes > context.limits.max_retained_name_bytes {
+            return Ok(false);
+        }
+        let Some(name_start) = cursor.checked_add(46) else {
+            return Ok(false);
+        };
+        let Some(name_end) = name_start.checked_add(name_len) else {
+            return Ok(false);
+        };
+        let Some(next) = name_end
+            .checked_add(extra_len)
+            .and_then(|value| value.checked_add(comment_len))
+        else {
+            return Ok(false);
+        };
+        let Some(name) = directory.get(name_start..name_end) else {
+            return Ok(false);
+        };
+        if next > directory.len()
+            || name.contains(&0)
+            || name.starts_with(b"/")
+            || name.split(|byte| *byte == b'/').any(|part| part == b"..")
+        {
+            return Ok(false);
+        }
+        cursor = next;
+    }
+    Ok(cursor == directory.len())
 }
 
 fn zip_format(
