@@ -1229,6 +1229,38 @@ fn parse_zip(
             budget,
             context,
         )?;
+        if directory.get(..4) != Some(b"PK\x01\x02") {
+            // A central-directory digital signature may sit between the
+            // directory and EOCD. Its two-byte length bounds this search.
+            const MAX_SIGNATURE_RECORD: u64 = 6 + u16::MAX as u64;
+            let signature_span = eocd_absolute.min(MAX_SIGNATURE_RECORD);
+            let signature_bytes = inspected.read_exact(
+                eocd_absolute - signature_span,
+                signature_span,
+                budget,
+                context,
+            )?;
+            let signature_start =
+                (0..=signature_bytes.len().saturating_sub(6))
+                    .rev()
+                    .find(|&offset| {
+                        signature_bytes.get(offset..offset + 4) == Some(b"PK\x05\x05")
+                            && le_u16(&signature_bytes, offset + 4).is_some_and(|length| {
+                                offset + 6 + usize::from(length) == signature_bytes.len()
+                            })
+                    });
+            if let Some(start) = signature_start {
+                let signature_absolute = eocd_absolute - signature_span + start as u64;
+                if signature_absolute >= u64::from(directory_len) {
+                    directory = inspected.read_exact(
+                        signature_absolute - u64::from(directory_len),
+                        u64::from(directory_len),
+                        budget,
+                        context,
+                    )?;
+                }
+            }
+        }
     }
     let mut cursor = 0usize;
     let mut name_bytes = 0usize;
