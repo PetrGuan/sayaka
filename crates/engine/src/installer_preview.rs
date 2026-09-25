@@ -18,7 +18,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub const INSTALLER_PREVIEW_SCHEMA_VERSION: u32 = 1;
+pub const INSTALLER_PREVIEW_SCHEMA_VERSION: u32 = 2;
 pub const INSTALLER_KIND: &str = "installer_preview";
 pub const INSTALLER_TOTAL_BUDGET: Duration = Duration::from_secs(30);
 const MIB: u64 = 1024 * 1024;
@@ -1213,12 +1213,23 @@ fn parse_zip(
             false,
         ));
     }
-    let directory = inspected.read_exact(
+    let mut directory = inspected.read_exact(
         u64::from(directory_offset),
         u64::from(directory_len),
         budget,
         context,
     )?;
+    // Self-extracting archives may store central-directory offsets relative to
+    // the ZIP payload, after a prepended executable. Locate the directory just
+    // before the EOCD only when the recorded offset has no directory signature.
+    if directory.get(..4) != Some(b"PK\x01\x02") && directory_end < eocd_absolute {
+        directory = inspected.read_exact(
+            eocd_absolute - u64::from(directory_len),
+            u64::from(directory_len),
+            budget,
+            context,
+        )?;
+    }
     let mut cursor = 0usize;
     let mut name_bytes = 0usize;
     let mut has_payload = false;
