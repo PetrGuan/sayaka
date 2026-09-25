@@ -8,6 +8,8 @@
 
 mod browse;
 pub use browse::*;
+mod ai_footprint;
+pub use ai_footprint::*;
 mod diagnostics;
 pub use diagnostics::*;
 mod installer;

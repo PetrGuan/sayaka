@@ -57,7 +57,7 @@ impl SayakaPageRequestV1 {
     }
 }
 
-fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
+pub(crate) fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
     if job.tree.is_none() {
         let report = job
             .task

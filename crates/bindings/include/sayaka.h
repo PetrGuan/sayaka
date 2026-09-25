@@ -26,6 +26,10 @@ extern "C" {
 #define SAYAKA_MAX_INSTALLER_CANDIDATES_V1 512u
 #define SAYAKA_MAX_INSTALLER_SELECTIONS_V1 32u
 #define SAYAKA_MAX_PURGE_SELECTIONS_V1 32u
+#define SAYAKA_AI_CLAUDE_CODE_V1 1u
+#define SAYAKA_AI_CODEX_V1 2u
+#define SAYAKA_AI_COPILOT_CLI_V1 3u
+#define SAYAKA_AI_COMFYUI_V1 4u
 #define SAYAKA_PATH_UNIX_BYTES_V1 1u
 #define SAYAKA_PATH_WINDOWS_UTF16LE_V1 2u
 
@@ -115,6 +119,13 @@ typedef struct SayakaPageRequestV1 {
     uint32_t limit; /* 1..SAYAKA_MAX_PAGE_NODES_V1 */
     uint32_t sort;
 } SayakaPageRequestV1;
+
+typedef struct SayakaAIFootprintRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t tool; /* SAYAKA_AI_*_V1 */
+    uint32_t reserved; /* Must be zero. */
+} SayakaAIFootprintRequestV1;
 
 typedef struct SayakaIssuePageRequestV1 {
     uint32_t abi_version;
@@ -264,6 +275,13 @@ SAYAKA_API int32_t sayaka_scan_node_evidence_v1(uint64_t handle, const SayakaNod
 SAYAKA_API int32_t sayaka_scan_children_v1(uint64_t handle, const SayakaNodeRefV1 *parent,
                                         const SayakaPageRequestV1 *request,
                                         uint8_t *buffer, size_t capacity, size_t *required);
+/* Read-only classification of one completed, explicitly selected scan root.
+ * Requires a tool-specific marker in that root; without one, recognized=false
+ * and no component is attributed. No deletion rights or file contents are
+ * returned. Same bounded caller-buffer query semantics as scan_roots. */
+SAYAKA_API int32_t sayaka_scan_ai_footprint_v1(uint64_t handle,
+                                             const SayakaAIFootprintRequestV1 *request,
+                                             uint8_t *buffer, size_t capacity, size_t *required);
 /* Terminal diagnostic pages, including failed/fatal scans. Same 1 MiB bounded
  * query buffer protocol; offset==total is empty, offset>total is invalid.
  * Does not build a ScanTree or serialize/cache the full report. Data contains
