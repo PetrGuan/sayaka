@@ -68,6 +68,20 @@ typedef struct SayakaScanRequestV1 {
     size_t root_count; /* 1..64 absolute roots; input copied by start. */
 } SayakaScanRequestV1;
 
+typedef struct SayakaSystemStatusRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t reserved; /* Must be zero. */
+} SayakaSystemStatusRequestV1;
+
+/* Read-only, on-demand status JSON. Call off the UI thread. No process names
+   or paths are collected. This volatile query is one-shot: supply a non-NULL
+   buffer with capacity exactly SAYAKA_MAX_QUERY_BYTES_V1. A NULL/zero-capacity
+   size probe is invalid. On success, *required is the actual byte count. */
+SAYAKA_API int32_t sayaka_system_status_v1(
+    const SayakaSystemStatusRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 typedef struct SayakaScanSnapshotV1 {
     uint32_t abi_version;
     uint32_t struct_size;

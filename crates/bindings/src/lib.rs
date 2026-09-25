@@ -14,6 +14,8 @@ mod installer;
 pub use installer::*;
 mod purge;
 pub use purge::*;
+mod system_status;
+pub use system_status::*;
 
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
