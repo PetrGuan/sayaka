@@ -126,6 +126,7 @@ pub enum OwnerScope {
 pub enum CandidateNameKind {
     Dmg,
     Pkg,
+    Zip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,6 +134,7 @@ pub enum FormatFamily {
     UdifDmg,
     FlatPkgXar,
     Xar,
+    Zip,
     Unknown,
 }
 
@@ -158,6 +160,25 @@ pub struct CandidateFormat {
 }
 
 #[derive(Clone, Debug)]
+pub struct InstallerProvenance {
+    pub where_froms: &'static str,
+    pub quarantine: &'static str,
+    pub source_urls: Vec<String>,
+    pub quarantine_agent: Option<String>,
+}
+
+impl Default for InstallerProvenance {
+    fn default() -> Self {
+        Self {
+            where_froms: "unknown",
+            quarantine: "unknown",
+            source_urls: Vec::new(),
+            quarantine_agent: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct InstallerCandidate {
     pub path: PathBuf,
     pub identity: FileIdentity,
@@ -167,6 +188,7 @@ pub struct InstallerCandidate {
     pub counted: bool,
     pub name_kind: CandidateNameKind,
     pub format: CandidateFormat,
+    pub provenance: InstallerProvenance,
     #[cfg(target_os = "macos")]
     inspection: Option<InspectionWitness>,
 }
@@ -698,6 +720,7 @@ pub fn preview_installers_with_progress(
                     counted: entry.counted,
                     name_kind,
                     format: format_unknown_for_error(error.code),
+                    provenance: InstallerProvenance::default(),
                     #[cfg(target_os = "macos")]
                     inspection: None,
                 }
@@ -801,6 +824,8 @@ fn candidate_name_kind(path: &Path) -> Option<CandidateNameKind> {
         Some(CandidateNameKind::Dmg)
     } else if name.ends_with(".pkg") || name.ends_with(".PKG") {
         Some(CandidateNameKind::Pkg)
+    } else if name.ends_with(".zip") || name.ends_with(".ZIP") {
+        Some(CandidateNameKind::Zip)
     } else {
         None
     }
@@ -851,7 +876,7 @@ fn format_unknown_for_error(code: InstallerIssueCode) -> CandidateFormat {
             "not_mounted",
             "not_installed",
             "signature_not_assessed",
-            "provenance_not_read",
+            "provenance_does_not_establish_trust",
         ],
     }
 }
@@ -889,7 +914,9 @@ fn inspect_candidate(
     let parsed = match name_kind {
         CandidateNameKind::Dmg => parse_dmg(entry, &mut inspected, context, budget),
         CandidateNameKind::Pkg => parse_pkg(entry, &mut inspected, context, budget),
+        CandidateNameKind::Zip => parse_zip(&mut inspected, context, budget),
     };
+    let provenance = inspected.provenance(context, budget);
     #[cfg(target_os = "macos")]
     let inspection = parsed.as_ref().ok().map(|format| InspectionWitness {
         path: entry.path.clone(),
@@ -912,6 +939,7 @@ fn inspect_candidate(
             counted: entry.counted,
             name_kind,
             format,
+            provenance,
             #[cfg(target_os = "macos")]
             inspection,
         }),
@@ -1109,12 +1137,236 @@ fn parse_pkg(
     }
 }
 
+/// Inspect only ZIP metadata. No member payload is decompressed or opened.
+fn parse_zip(
+    inspected: &mut InspectedRead,
+    context: ProbeContext<'_>,
+    budget: &mut ProbeBudget,
+) -> Result<CandidateFormat, PreviewError> {
+    const MAX_TAIL: u64 = 22 + u16::MAX as u64;
+    const MAX_DIRECTORY: u64 = 4 * MIB;
+    const MAX_ENTRIES: usize = 4096;
+    if inspected.size < 22 {
+        return Ok(zip_format(
+            FormatStatus::Corrupt,
+            "zip_corrupt_or_truncated",
+            false,
+        ));
+    }
+    let tail_len = inspected.size.min(MAX_TAIL);
+    let tail = inspected.read_exact(inspected.size - tail_len, tail_len, budget, context)?;
+    let eocd = (0..=tail.len() - 22).rev().find(|&offset| {
+        tail.get(offset..offset + 4) == Some(b"PK\x05\x06")
+            && le_u16(&tail, offset + 20)
+                .is_some_and(|comment| offset + 22 + usize::from(comment) == tail.len())
+    });
+    let Some(eocd) = eocd else {
+        return Ok(zip_format(
+            FormatStatus::Corrupt,
+            "zip_corrupt_or_truncated",
+            false,
+        ));
+    };
+    let Some((disk, directory_disk, disk_entries, entries, directory_len, directory_offset)) =
+        (|| {
+            Some((
+                le_u16(&tail, eocd + 4)?,
+                le_u16(&tail, eocd + 6)?,
+                le_u16(&tail, eocd + 8)?,
+                le_u16(&tail, eocd + 10)?,
+                le_u32(&tail, eocd + 12)?,
+                le_u32(&tail, eocd + 16)?,
+            ))
+        })()
+    else {
+        return Ok(zip_format(
+            FormatStatus::Corrupt,
+            "zip_corrupt_or_truncated",
+            false,
+        ));
+    };
+    if disk != 0
+        || directory_disk != 0
+        || disk_entries != entries
+        || entries == u16::MAX
+        || directory_len == u32::MAX
+        || directory_offset == u32::MAX
+    {
+        return Ok(zip_format(
+            FormatStatus::Unsupported,
+            "zip_multivolume_or_zip64",
+            false,
+        ));
+    }
+    if usize::from(entries) > MAX_ENTRIES || u64::from(directory_len) > MAX_DIRECTORY {
+        return Err(PreviewError::new(
+            InstallerIssueCode::ParseLimit,
+            "ZIP directory exceeds bounded inspection limits",
+        ));
+    }
+    let directory_end = u64::from(directory_offset) + u64::from(directory_len);
+    let eocd_absolute = inspected.size - tail_len + u64::try_from(eocd).unwrap_or(u64::MAX);
+    if directory_end > eocd_absolute {
+        return Ok(zip_format(
+            FormatStatus::Corrupt,
+            "zip_corrupt_or_truncated",
+            false,
+        ));
+    }
+    let directory = inspected.read_exact(
+        u64::from(directory_offset),
+        u64::from(directory_len),
+        budget,
+        context,
+    )?;
+    let mut cursor = 0usize;
+    let mut name_bytes = 0usize;
+    let mut has_payload = false;
+    for _ in 0..entries {
+        context.check()?;
+        if directory.get(cursor..cursor + 4) != Some(b"PK\x01\x02")
+            || cursor
+                .checked_add(46)
+                .is_none_or(|end| end > directory.len())
+        {
+            return Ok(zip_format(
+                FormatStatus::Corrupt,
+                "zip_corrupt_or_truncated",
+                false,
+            ));
+        }
+        let Some((name_len, extra_len, comment_len)) = (|| {
+            Some((
+                usize::from(le_u16(&directory, cursor + 28)?),
+                usize::from(le_u16(&directory, cursor + 30)?),
+                usize::from(le_u16(&directory, cursor + 32)?),
+            ))
+        })() else {
+            return Ok(zip_format(
+                FormatStatus::Corrupt,
+                "zip_corrupt_or_truncated",
+                false,
+            ));
+        };
+        name_bytes = name_bytes.saturating_add(name_len);
+        if name_bytes > context.limits.max_retained_name_bytes {
+            return Err(PreviewError::new(
+                InstallerIssueCode::NameBytesLimit,
+                "ZIP member names exceed inspection budget",
+            ));
+        }
+        let Some(name_end) = cursor
+            .checked_add(46)
+            .and_then(|start| start.checked_add(name_len))
+        else {
+            return Ok(zip_format(
+                FormatStatus::Corrupt,
+                "zip_corrupt_or_truncated",
+                false,
+            ));
+        };
+        let Some(next) = name_end
+            .checked_add(extra_len)
+            .and_then(|value| value.checked_add(comment_len))
+        else {
+            return Ok(zip_format(
+                FormatStatus::Corrupt,
+                "zip_corrupt_or_truncated",
+                false,
+            ));
+        };
+        let Some(name) = directory.get(cursor + 46..name_end) else {
+            return Ok(zip_format(
+                FormatStatus::Corrupt,
+                "zip_corrupt_or_truncated",
+                false,
+            ));
+        };
+        if next > directory.len()
+            || name.contains(&0)
+            || name.starts_with(b"/")
+            || name.split(|byte| *byte == b'/').any(|part| part == b"..")
+        {
+            return Ok(zip_format(
+                FormatStatus::Corrupt,
+                "zip_corrupt_or_truncated",
+                false,
+            ));
+        }
+        let lower = name.to_ascii_lowercase();
+        if !name.ends_with(b"/")
+            && (lower.ends_with(b".pkg")
+                || lower.ends_with(b".app/contents/info.plist")
+                || lower.ends_with(b".pkg/packageinfo")
+                || lower.ends_with(b".pkg/distribution"))
+        {
+            has_payload = true;
+        }
+        cursor = next;
+    }
+    if cursor != directory.len() {
+        return Ok(zip_format(
+            FormatStatus::Corrupt,
+            "zip_corrupt_or_truncated",
+            false,
+        ));
+    }
+    Ok(zip_format(
+        if has_payload {
+            FormatStatus::Recognized
+        } else {
+            FormatStatus::Unsupported
+        },
+        if has_payload {
+            "zip_installer_name_hint"
+        } else {
+            "zip_no_installer_hint"
+        },
+        has_payload,
+    ))
+}
+
+fn zip_format(
+    status: FormatStatus,
+    detection_level: &'static str,
+    has_payload: bool,
+) -> CandidateFormat {
+    CandidateFormat {
+        family: FormatFamily::Zip,
+        status,
+        detection_level,
+        evidence: if has_payload {
+            vec!["bounded_central_directory", "installer_member_name"]
+        } else {
+            vec!["bounded_central_directory"]
+        },
+        limitations: vec![
+            "member_payload_not_opened",
+            "not_installed",
+            "signature_not_assessed",
+            "provenance_does_not_establish_trust",
+        ],
+    }
+}
+
+fn le_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(
+        bytes.get(offset..offset.checked_add(2)?)?.try_into().ok()?,
+    ))
+}
+
+fn le_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(
+        bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
+    ))
+}
+
 fn common_limitations() -> Vec<&'static str> {
     vec![
         "not_mounted",
         "not_installed",
         "signature_not_assessed",
-        "provenance_not_read",
+        "provenance_does_not_establish_trust",
     ]
 }
 
@@ -2018,6 +2270,41 @@ impl InspectedRead {
         }
     }
 
+    fn provenance(
+        &self,
+        context: ProbeContext<'_>,
+        budget: &mut ProbeBudget,
+    ) -> InstallerProvenance {
+        use sayaka_platform_macos::{MetadataState, read_installer_origin};
+        use std::os::fd::AsRawFd;
+        const MAX_METADATA_IO: u64 = 16 * 1024;
+        if context.check().is_err()
+            || budget
+                .preflight_io(MAX_METADATA_IO, context.limits)
+                .is_err()
+        {
+            return InstallerProvenance::default();
+        }
+        let origin = read_installer_origin(self.fd.as_raw_fd());
+        if budget
+            .charge_io(origin.bytes_read as u64, context.limits)
+            .is_err()
+        {
+            return InstallerProvenance::default();
+        }
+        let state = |value| match value {
+            MetadataState::Present => "present",
+            MetadataState::Missing => "missing",
+            MetadataState::Unavailable => "unavailable",
+        };
+        InstallerProvenance {
+            where_froms: state(origin.where_froms),
+            quarantine: state(origin.quarantine),
+            source_urls: origin.source_urls,
+            quarantine_agent: origin.quarantine_agent,
+        }
+    }
+
     fn read_exact(
         &mut self,
         offset: u64,
@@ -2172,6 +2459,14 @@ impl InspectedRead {
 
     fn finish(self) -> Result<(), PreviewError> {
         Ok(())
+    }
+
+    fn provenance(
+        &self,
+        _context: ProbeContext<'_>,
+        _budget: &mut ProbeBudget,
+    ) -> InstallerProvenance {
+        InstallerProvenance::default()
     }
 }
 

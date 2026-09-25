@@ -28,6 +28,11 @@ pub use acl::has_extended_acl;
 
 pub mod status;
 
+#[cfg(target_os = "macos")]
+mod installer_provenance;
+#[cfg(target_os = "macos")]
+pub use installer_provenance::{InstallerOrigin, MetadataState, read_installer_origin};
+
 /// Host-wide mach-absolute nanoseconds, in Darwin's CLOCK_UPTIME_RAW domain.
 #[cfg(target_os = "macos")]
 pub fn diagnostic_monotonic_ns() -> io::Result<u64> {
