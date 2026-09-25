@@ -16,20 +16,20 @@
         "runs": 20,
         "summary": {
           "wall_ms": {
-            "median": 26.897,
-            "p95": 31.913
+            "median": 31.473,
+            "p95": 38.926
           },
           "scan_ms": {
-            "median": 10.894,
-            "p95": 11.888
+            "median": 11.303,
+            "p95": 13.359
           },
           "json_ms": {
-            "median": 5.088,
-            "p95": 5.452
+            "median": 5.179,
+            "p95": 5.601
           },
           "peak_rss_bytes": {
-            "median": 11624448.0,
-            "p95": 11747328
+            "median": 11616256.0,
+            "p95": 11763712
           }
         },
         "report_statuses": [
@@ -45,20 +45,20 @@
         "runs": 20,
         "summary": {
           "wall_ms": {
-            "median": 25.572,
-            "p95": 30.212
+            "median": 30.23,
+            "p95": 32.946
           },
           "scan_ms": {
-            "median": 10.05,
-            "p95": 12.548
+            "median": 10.217,
+            "p95": 11.079
           },
           "json_ms": {
-            "median": 4.186,
-            "p95": 4.439
+            "median": 4.273,
+            "p95": 4.631
           },
           "peak_rss_bytes": {
-            "median": 11337728.0,
-            "p95": 11517952
+            "median": 11386880.0,
+            "p95": 11468800
           }
         },
         "report_statuses": [
@@ -76,20 +76,20 @@
         "runs": 20,
         "summary": {
           "wall_ms": {
-            "median": 26.402,
-            "p95": 30.901
+            "median": 31.886,
+            "p95": 38.022
           },
           "scan_ms": {
-            "median": 11.017,
-            "p95": 12.537
+            "median": 10.861,
+            "p95": 16.653
           },
           "json_ms": {
-            "median": 5.493,
-            "p95": 5.756
+            "median": 5.538,
+            "p95": 6.145
           },
           "peak_rss_bytes": {
-            "median": 11722752.0,
-            "p95": 11845632
+            "median": 11689984.0,
+            "p95": 11763712
           }
         },
         "report_statuses": [
@@ -105,19 +105,19 @@
         "runs": 20,
         "summary": {
           "wall_ms": {
-            "median": 24.263,
-            "p95": 31.994
+            "median": 30.518,
+            "p95": 45.778
           },
           "scan_ms": {
-            "median": 10.14,
-            "p95": 17.971
+            "median": 10.193,
+            "p95": 14.831
           },
           "json_ms": {
-            "median": 4.459,
-            "p95": 4.666
+            "median": 4.468,
+            "p95": 4.772
           },
           "peak_rss_bytes": {
-            "median": 11485184.0,
+            "median": 11452416.0,
             "p95": 11632640
           }
         },
@@ -136,20 +136,20 @@
         "runs": 20,
         "summary": {
           "wall_ms": {
-            "median": 94.868,
-            "p95": 102.252
+            "median": 99.916,
+            "p95": 111.745
           },
           "scan_ms": {
-            "median": 40.885,
-            "p95": 44.421
+            "median": 41.264,
+            "p95": 47.983
           },
           "json_ms": {
-            "median": 40.189,
-            "p95": 42.437
+            "median": 40.57,
+            "p95": 45.366
           },
           "peak_rss_bytes": {
             "median": 16023552.0,
-            "p95": 16072704
+            "p95": 16056320
           }
         },
         "report_statuses": [
@@ -165,20 +165,20 @@
         "runs": 20,
         "summary": {
           "wall_ms": {
-            "median": 88.059,
-            "p95": 98.623
+            "median": 89.751,
+            "p95": 98.417
           },
           "scan_ms": {
-            "median": 40.746,
-            "p95": 44.476
+            "median": 40.574,
+            "p95": 42.787
           },
           "json_ms": {
-            "median": 32.806,
-            "p95": 34.82
+            "median": 34.31,
+            "p95": 36.619
           },
           "peak_rss_bytes": {
-            "median": 15802368.0,
-            "p95": 15843328
+            "median": 15810560.0,
+            "p95": 15876096
           }
         },
         "report_statuses": [
@@ -196,24 +196,24 @@
         "runs": 12,
         "summary": {
           "wall_ms": {
-            "median": 54.959,
-            "p95": 61.67
+            "median": 46.77,
+            "p95": 66.369
           },
           "scan_ms": {
-            "median": 25.99,
-            "p95": 27.988
+            "median": 19.686,
+            "p95": 27.869
           },
           "json_ms": {
-            "median": 18.298,
-            "p95": 24.161
+            "median": 12.436,
+            "p95": 22.987
           },
           "peak_rss_bytes": {
-            "median": 12787712.0,
-            "p95": 13533184
+            "median": 12410880.0,
+            "p95": 13434880
           },
           "cancel_latency_ms": {
-            "median": 22.389,
-            "p95": 29.029
+            "median": 21.48,
+            "p95": 33.899
           }
         },
         "report_statuses": [
@@ -222,31 +222,31 @@
         "exit_statuses": [
           130
         ],
-        "entry_count_min": 2505,
-        "entry_count_max": 4429
+        "entry_count_min": 1575,
+        "entry_count_max": 4242
       },
       "candidate": {
         "runs": 12,
         "summary": {
           "wall_ms": {
-            "median": 51.08,
-            "p95": 58.535
+            "median": 51.12,
+            "p95": 63.775
           },
           "scan_ms": {
-            "median": 25.256,
-            "p95": 30.922
+            "median": 23.698,
+            "p95": 27.637
           },
           "json_ms": {
-            "median": 14.387,
-            "p95": 20.901
+            "median": 13.407,
+            "p95": 18.637
           },
           "peak_rss_bytes": {
-            "median": 12476416.0,
-            "p95": 13598720
+            "median": 12500992.0,
+            "p95": 13156352
           },
           "cancel_latency_ms": {
-            "median": 18.497,
-            "p95": 26.004
+            "median": 20.637,
+            "p95": 30.176
           }
         },
         "report_statuses": [
@@ -255,8 +255,8 @@
         "exit_statuses": [
           130
         ],
-        "entry_count_min": 1319,
-        "entry_count_max": 4748
+        "entry_count_min": 1681,
+        "entry_count_max": 4384
       }
     }
   },
