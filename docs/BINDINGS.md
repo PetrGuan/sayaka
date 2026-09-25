@@ -838,7 +838,9 @@ refuses the selected batch, the same bounded `purge_execution` envelope has
 
 `sayaka_system_status_v1` is a macOS-only, read-only, synchronous query for
 the native client's System Status window. Pass an exact v1 request with zero
-reserved bits and a caller-owned buffer of at most 1 MiB. The result has
+reserved bits and a caller-owned buffer of exactly 1 MiB. This volatile query
+is one-shot: a zero-capacity size probe is invalid, and `required` reports
+the actual byte count after a successful call. The result has
 `kind: "system_status"`, schema version 1, and the engine's status snapshot.
 Clients call it on a worker thread: it samples twice with a 250 ms CPU counter
 window and does not create a retained task or a background monitor. Process

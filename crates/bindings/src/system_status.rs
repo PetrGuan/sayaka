@@ -20,9 +20,9 @@ pub struct SayakaSystemStatusRequestV1 {
 /// probe time; clients must invoke it off the UI thread.
 ///
 /// # Safety
-/// The request must be readable/aligned. Output follows the caller-buffer
-/// contract: `required` is writable, and a nonzero-capacity `buffer` is
-/// writable, large enough, and disjoint from request/required storage.
+/// The request must be readable/aligned. This volatile query is one-shot:
+/// `buffer` must hold exactly `MAX_QUERY_BYTES` bytes; a size-probe call is
+/// invalid. `required` is writable and disjoint from the request and buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sayaka_system_status_v1(
     request: *const SayakaSystemStatusRequestV1,
@@ -33,6 +33,9 @@ pub unsafe extern "C" fn sayaka_system_status_v1(
     boundary(|| {
         // SAFETY: Caller promises valid, non-overlapping output storage.
         unsafe { prepare_output(buffer, capacity, required, MAX_QUERY_BYTES)? };
+        if capacity != MAX_QUERY_BYTES {
+            return Err(INVALID_ARGUMENT);
+        }
         pointer(request)?;
         // SAFETY: Caller promises readable, aligned request storage.
         let request = unsafe { *request };
