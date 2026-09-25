@@ -841,7 +841,7 @@ explicitly selected root and a `SayakaAIFootprintRequestV1` tool code. It
 returns bounded JSON (`schema_version: 1`, `kind: "ai_footprint"`) with root
 coverage/known bytes, tool recognition, and versioned components. It uses the
 same immutable caller-buffer query contract as `sayaka_scan_roots_v1`. Missing
-tool markers yield `recognized: false` and no attributed components. The
+tool-specific signature yields `recognized: false` and no attributed components. The
 projection never reads content, grants cleanup authority, or estimates running
 state or last activity. See [AI_FOOTPRINT.md](AI_FOOTPRINT.md) for evidence,
 scope, and deletion consequences.

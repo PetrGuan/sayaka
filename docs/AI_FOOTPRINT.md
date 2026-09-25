@@ -3,11 +3,17 @@
 The user chooses one tool's data directory through the App's security-scoped
 folder picker. Sayaka scans that explicit root without reading file contents or
 following links. `sayaka_scan_ai_footprint_v1` projects only exact top-level
-names from the immutable scan tree. A documented marker must be present before
+names from the immutable scan tree. A documented signature must be present before
 any child is attributed to the selected tool. A custom directory is supported
 only when the user chooses its actual root and the marker matches; this feature
 does not infer ownership from `.claude`, `.codex`, `.copilot`, `output`, file
-extensions, or a path elsewhere on disk.
+extensions, or a path elsewhere on disk. Recognition requires `projects` plus
+one of Claude's history/checkpoint/memory/credential entries; Codex `sessions`
+plus configuration/history/archive evidence; Copilot `session-state` plus
+configuration/log/index evidence; or ComfyUI's `folder_paths.py` and `main.py`.
+Generic `settings.json`, `config.toml`, and `logs` names alone never establish
+ownership. A newer or sparse installation may stay unrecognized until these
+independent entries appear; that is safer than attributing an unrelated folder.
 
 The projection reports known logical bytes, unknown file counts, partial
 coverage, and cloud placeholders separately. No timestamp or reliable active

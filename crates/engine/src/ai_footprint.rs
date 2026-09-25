@@ -51,7 +51,6 @@ struct Rule {
     role: &'static str,
     consequence: &'static str,
     evidence: &'static str,
-    marker: bool,
 }
 
 fn matches_kind(name: &str, kind: ResourceKind) -> bool {
@@ -65,6 +64,7 @@ fn matches_kind(name: &str, kind: ResourceKind) -> bool {
             | "config.json"
             | "session-store.db"
             | "folder_paths.py"
+            | "main.py"
     );
     kind == if file {
         ResourceKind::File
@@ -85,56 +85,48 @@ const CLAUDE: &[Rule] = &[
         role: "recoverable_state",
         consequence: "Sessions, project memory and resume history may be lost.",
         evidence: CLAUDE_DOC,
-        marker: true,
     },
     Rule {
         name: "history.jsonl",
         role: "recoverable_state",
         consequence: "Prompt recall history may be lost.",
         evidence: CLAUDE_DOC,
-        marker: true,
     },
     Rule {
         name: "file-history",
         role: "recoverable_state",
         consequence: "Checkpoint rewind data may be lost.",
         evidence: CLAUDE_DOC,
-        marker: false,
     },
     Rule {
         name: "agent-memory",
         role: "user_asset",
         consequence: "Persistent agent memory may be lost.",
         evidence: CLAUDE_DOC,
-        marker: false,
     },
     Rule {
         name: "debug",
         role: "logs_or_cache",
         consequence: "Diagnostic logs may be lost.",
         evidence: CLAUDE_DOC,
-        marker: false,
     },
     Rule {
         name: "cache",
         role: "logs_or_cache",
         consequence: "Cached data may need to be recreated.",
         evidence: CLAUDE_DOC,
-        marker: false,
     },
     Rule {
         name: "settings.json",
         role: "protected_configuration",
         consequence: "Personal settings may be lost.",
         evidence: CLAUDE_DOC,
-        marker: true,
     },
     Rule {
         name: ".credentials.json",
         role: "protected_configuration",
         consequence: "Login credentials may be lost.",
         evidence: CLAUDE_DOC,
-        marker: false,
     },
 ];
 const CODEX: &[Rule] = &[
@@ -143,49 +135,42 @@ const CODEX: &[Rule] = &[
         role: "recoverable_state",
         consequence: "Session resume history may be lost.",
         evidence: CODEX_DOC,
-        marker: true,
     },
     Rule {
         name: "archived_sessions",
         role: "recoverable_state",
         consequence: "Archived sessions may be lost.",
         evidence: CODEX_DOC,
-        marker: false,
     },
     Rule {
         name: "history.jsonl",
         role: "recoverable_state",
         consequence: "Command and prompt history may be lost.",
         evidence: CODEX_DOC,
-        marker: false,
     },
     Rule {
         name: "log",
         role: "logs_or_cache",
         consequence: "Diagnostic logs may be lost.",
         evidence: CODEX_DOC,
-        marker: false,
     },
     Rule {
         name: "memories",
         role: "user_asset",
         consequence: "Saved memory may be lost.",
         evidence: CODEX_DOC,
-        marker: false,
     },
     Rule {
         name: "config.toml",
         role: "protected_configuration",
         consequence: "Personal settings may be lost.",
         evidence: CODEX_DOC,
-        marker: true,
     },
     Rule {
         name: "auth.json",
         role: "protected_configuration",
         consequence: "Authentication state may be lost.",
         evidence: CODEX_DOC,
-        marker: false,
     },
 ];
 const COPILOT: &[Rule] = &[
@@ -194,56 +179,48 @@ const COPILOT: &[Rule] = &[
         role: "logs_or_cache",
         consequence: "Diagnostic logs may be lost.",
         evidence: COPILOT_DOC,
-        marker: true,
     },
     Rule {
         name: "session-state",
         role: "recoverable_state",
         consequence: "Local session resume and workspace artifacts may be lost.",
         evidence: COPILOT_DOC,
-        marker: true,
     },
     Rule {
         name: "command-history-state",
         role: "recoverable_state",
         consequence: "Command history search may be lost.",
         evidence: COPILOT_DOC,
-        marker: false,
     },
     Rule {
         name: "session-store.db",
         role: "recoverable_state",
         consequence: "Cross-session indexing may be lost.",
         evidence: COPILOT_DOC,
-        marker: false,
     },
     Rule {
         name: "plugin-data",
         role: "user_asset",
         consequence: "Plugin persistent data may be lost.",
         evidence: COPILOT_DOC,
-        marker: false,
     },
     Rule {
         name: "settings.json",
         role: "protected_configuration",
         consequence: "Personal settings may be lost.",
         evidence: COPILOT_DOC,
-        marker: true,
     },
     Rule {
         name: "config.json",
         role: "protected_configuration",
         consequence: "Authentication and application state may be lost.",
         evidence: COPILOT_DOC,
-        marker: true,
     },
     Rule {
         name: "mcp-secrets",
         role: "protected_configuration",
         consequence: "Secret fallback state may be lost.",
         evidence: COPILOT_DOC,
-        marker: false,
     },
 ];
 const COMFYUI: &[Rule] = &[
@@ -252,42 +229,36 @@ const COMFYUI: &[Rule] = &[
         role: "tool_marker",
         consequence: "ComfyUI path configuration source; never a cleanup candidate.",
         evidence: COMFY_DOC,
-        marker: true,
     },
     Rule {
         name: "output",
         role: "user_asset",
         consequence: "Generated images and videos may be lost.",
         evidence: COMFY_DOC,
-        marker: false,
     },
     Rule {
         name: "input",
         role: "user_asset",
         consequence: "Input media may be lost.",
         evidence: COMFY_DOC,
-        marker: false,
     },
     Rule {
         name: "models",
         role: "user_asset",
         consequence: "Model weights may be lost and costly to reacquire.",
         evidence: COMFY_DOC,
-        marker: false,
     },
     Rule {
         name: "user",
         role: "recoverable_state",
         consequence: "Workflows and user settings may be lost.",
         evidence: COMFY_DOC,
-        marker: false,
     },
     Rule {
         name: "temp",
         role: "logs_or_cache",
         consequence: "In-progress temporary work may be lost.",
         evidence: COMFY_DOC,
-        marker: false,
     },
 ];
 
@@ -329,19 +300,36 @@ pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
     let summary = tree.summary(*root_id)?;
     let rules = tool.rules();
     let children = tree.children(*root_id)?;
-    let recognized = children.iter().any(|id| {
-        tree.entry(*id)
-            .and_then(|entry| entry.path.file_name())
-            .is_some_and(|name| {
-                rules.iter().any(|rule| {
-                    rule.marker
-                        && name == OsStr::new(rule.name)
-                        && tree
-                            .entry(*id)
-                            .is_some_and(|entry| matches_kind(rule.name, entry.kind))
-                })
+    let has = |name: &str| {
+        children
+            .iter()
+            .filter_map(|id| tree.entry(*id))
+            .any(|entry| {
+                entry.path.file_name() == Some(OsStr::new(name)) && matches_kind(name, entry.kind)
             })
-    });
+    };
+    // Generic settings/log names never establish ownership by themselves.
+    let recognized = match tool {
+        Tool::Claude => {
+            has("projects")
+                && (has("history.jsonl")
+                    || has("file-history")
+                    || has("agent-memory")
+                    || has(".credentials.json"))
+        }
+        Tool::Codex => {
+            has("sessions")
+                && (has("config.toml") || has("history.jsonl") || has("archived_sessions"))
+        }
+        Tool::Copilot => {
+            has("session-state")
+                && (has("config.json")
+                    || has("settings.json")
+                    || has("logs")
+                    || has("session-store.db"))
+        }
+        Tool::ComfyUI => has("folder_paths.py") && has("main.py"),
+    };
     let mut components = Vec::new();
     if recognized {
         for rule in rules {
