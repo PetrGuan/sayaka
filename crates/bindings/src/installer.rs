@@ -4,7 +4,9 @@ use super::*;
 use sayaka_engine::installer_preview::task::{
     InstallerPhase, InstallerTask, InstallerTaskKind, InstallerTaskResult,
 };
-use sayaka_engine::installer_preview::{InstallerPreview, InstallerStatus, wire as installer_wire};
+use sayaka_engine::installer_preview::{
+    INSTALLER_PREVIEW_SCHEMA_VERSION, InstallerPreview, InstallerStatus, wire as installer_wire,
+};
 use sayaka_engine::scan::index::{Metric, Sort};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -216,7 +218,7 @@ fn candidate_json(preview: &InstallerPreview, handle: u64, index: usize) -> Valu
 fn query_json(preview: &InstallerPreview, handle: u64, data: Value) -> Result<Vec<u8>, i32> {
     bounded_json(
         &json!({
-            "schema_version": 1, "kind": "installer_query",
+            "schema_version": INSTALLER_PREVIEW_SCHEMA_VERSION, "kind": "installer_query",
             "task_handle": handle.to_string(), "scan_task_id": preview.scan_task_id,
             "status": preview.status.as_str(), "complete": preview.complete,
             "effects_performed": false, "execution_authority": false,

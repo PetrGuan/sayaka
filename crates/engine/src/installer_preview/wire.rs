@@ -11,6 +11,7 @@ pub fn family(value: FormatFamily) -> &'static str {
         FormatFamily::UdifDmg => "udif_dmg",
         FormatFamily::FlatPkgXar => "flat_pkg_xar",
         FormatFamily::Xar => "xar",
+        FormatFamily::Zip => "zip",
         FormatFamily::Unknown => "unknown",
     }
 }
@@ -49,7 +50,7 @@ pub fn candidate_json(candidate: &InstallerCandidate) -> Value {
         "logical_bytes": candidate.logical_bytes,
         "allocated_bytes": candidate.allocated_bytes,
         "counted": candidate.counted,
-        "name_kind": match candidate.name_kind { CandidateNameKind::Dmg => "dmg", CandidateNameKind::Pkg => "pkg" },
+        "name_kind": match candidate.name_kind { CandidateNameKind::Dmg => "dmg", CandidateNameKind::Pkg => "pkg", CandidateNameKind::Zip => "zip" },
         "format": {
             "family": family(candidate.format.family),
             "status": status(candidate.format.status),
@@ -57,7 +58,12 @@ pub fn candidate_json(candidate: &InstallerCandidate) -> Value {
             "evidence": candidate.format.evidence,
             "limitations": candidate.format.limitations,
         },
-        "provenance": { "where_froms": "not_read", "quarantine": "not_read" },
+        "provenance": {
+            "where_froms": candidate.provenance.where_froms,
+            "quarantine": candidate.provenance.quarantine,
+            "source_urls": candidate.provenance.source_urls,
+            "quarantine_agent": candidate.provenance.quarantine_agent,
+        },
     })
 }
 

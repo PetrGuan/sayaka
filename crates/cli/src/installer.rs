@@ -365,6 +365,7 @@ fn write_preview_human(
         let name = match item.name_kind {
             CandidateNameKind::Dmg => "dmg",
             CandidateNameKind::Pkg => "pkg",
+            CandidateNameKind::Zip => "zip",
         };
         writeln!(out, "\n  [{}] {}", name, display_path(&item.path))?;
         writeln!(
