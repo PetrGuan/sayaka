@@ -1,0 +1,269 @@
+{
+  "benchmark_id": "m11-scan-performance-v1",
+  "host": {
+    "macos": "27.0",
+    "architecture": "arm64"
+  },
+  "source_base_commit": "4d5647eb5cfe60e8958a2d3d51685c53e003b957",
+  "binary_sha256": {
+    "baseline": "64889da1c0e357d6606d29a5912d5e5ae239a265bebd5aff309715fc0c879336",
+    "candidate": "50183149946633562a26fef7591e3979e7ecca9fad053112ff03f851a6d49ae1"
+  },
+  "method": "Paired alternating baseline/candidate, warmed macOS cache, one synthetic explicit root; release CLI with --json --profile-scan-stderr. No unit or UI tests.",
+  "results": {
+    "flat-1024": {
+      "baseline": {
+        "runs": 20,
+        "summary": {
+          "wall_ms": {
+            "median": 26.897,
+            "p95": 31.913
+          },
+          "scan_ms": {
+            "median": 10.894,
+            "p95": 11.888
+          },
+          "json_ms": {
+            "median": 5.088,
+            "p95": 5.452
+          },
+          "peak_rss_bytes": {
+            "median": 11624448.0,
+            "p95": 11747328
+          }
+        },
+        "report_statuses": [
+          "complete"
+        ],
+        "exit_statuses": [
+          0
+        ],
+        "entry_count_min": 1025,
+        "entry_count_max": 1025
+      },
+      "candidate": {
+        "runs": 20,
+        "summary": {
+          "wall_ms": {
+            "median": 25.572,
+            "p95": 30.212
+          },
+          "scan_ms": {
+            "median": 10.05,
+            "p95": 12.548
+          },
+          "json_ms": {
+            "median": 4.186,
+            "p95": 4.439
+          },
+          "peak_rss_bytes": {
+            "median": 11337728.0,
+            "p95": 11517952
+          }
+        },
+        "report_statuses": [
+          "complete"
+        ],
+        "exit_statuses": [
+          0
+        ],
+        "entry_count_min": 1025,
+        "entry_count_max": 1025
+      }
+    },
+    "nested-1024": {
+      "baseline": {
+        "runs": 20,
+        "summary": {
+          "wall_ms": {
+            "median": 26.402,
+            "p95": 30.901
+          },
+          "scan_ms": {
+            "median": 11.017,
+            "p95": 12.537
+          },
+          "json_ms": {
+            "median": 5.493,
+            "p95": 5.756
+          },
+          "peak_rss_bytes": {
+            "median": 11722752.0,
+            "p95": 11845632
+          }
+        },
+        "report_statuses": [
+          "complete"
+        ],
+        "exit_statuses": [
+          0
+        ],
+        "entry_count_min": 1057,
+        "entry_count_max": 1057
+      },
+      "candidate": {
+        "runs": 20,
+        "summary": {
+          "wall_ms": {
+            "median": 24.263,
+            "p95": 31.994
+          },
+          "scan_ms": {
+            "median": 10.14,
+            "p95": 17.971
+          },
+          "json_ms": {
+            "median": 4.459,
+            "p95": 4.666
+          },
+          "peak_rss_bytes": {
+            "median": 11485184.0,
+            "p95": 11632640
+          }
+        },
+        "report_statuses": [
+          "complete"
+        ],
+        "exit_statuses": [
+          0
+        ],
+        "entry_count_min": 1057,
+        "entry_count_max": 1057
+      }
+    },
+    "flat-8192": {
+      "baseline": {
+        "runs": 20,
+        "summary": {
+          "wall_ms": {
+            "median": 94.868,
+            "p95": 102.252
+          },
+          "scan_ms": {
+            "median": 40.885,
+            "p95": 44.421
+          },
+          "json_ms": {
+            "median": 40.189,
+            "p95": 42.437
+          },
+          "peak_rss_bytes": {
+            "median": 16023552.0,
+            "p95": 16072704
+          }
+        },
+        "report_statuses": [
+          "complete"
+        ],
+        "exit_statuses": [
+          0
+        ],
+        "entry_count_min": 8193,
+        "entry_count_max": 8193
+      },
+      "candidate": {
+        "runs": 20,
+        "summary": {
+          "wall_ms": {
+            "median": 88.059,
+            "p95": 98.623
+          },
+          "scan_ms": {
+            "median": 40.746,
+            "p95": 44.476
+          },
+          "json_ms": {
+            "median": 32.806,
+            "p95": 34.82
+          },
+          "peak_rss_bytes": {
+            "median": 15802368.0,
+            "p95": 15843328
+          }
+        },
+        "report_statuses": [
+          "complete"
+        ],
+        "exit_statuses": [
+          0
+        ],
+        "entry_count_min": 8193,
+        "entry_count_max": 8193
+      }
+    },
+    "cancel-nested-32768": {
+      "baseline": {
+        "runs": 12,
+        "summary": {
+          "wall_ms": {
+            "median": 54.959,
+            "p95": 61.67
+          },
+          "scan_ms": {
+            "median": 25.99,
+            "p95": 27.988
+          },
+          "json_ms": {
+            "median": 18.298,
+            "p95": 24.161
+          },
+          "peak_rss_bytes": {
+            "median": 12787712.0,
+            "p95": 13533184
+          },
+          "cancel_latency_ms": {
+            "median": 22.389,
+            "p95": 29.029
+          }
+        },
+        "report_statuses": [
+          "cancelled"
+        ],
+        "exit_statuses": [
+          130
+        ],
+        "entry_count_min": 2505,
+        "entry_count_max": 4429
+      },
+      "candidate": {
+        "runs": 12,
+        "summary": {
+          "wall_ms": {
+            "median": 51.08,
+            "p95": 58.535
+          },
+          "scan_ms": {
+            "median": 25.256,
+            "p95": 30.922
+          },
+          "json_ms": {
+            "median": 14.387,
+            "p95": 20.901
+          },
+          "peak_rss_bytes": {
+            "median": 12476416.0,
+            "p95": 13598720
+          },
+          "cancel_latency_ms": {
+            "median": 18.497,
+            "p95": 26.004
+          }
+        },
+        "report_statuses": [
+          "cancelled"
+        ],
+        "exit_statuses": [
+          130
+        ],
+        "entry_count_min": 1319,
+        "entry_count_max": 4748
+      }
+    }
+  },
+  "interpretation": [
+    "The hex-path serialization change improves JSON time without changing the report schema or scanned entry count.",
+    "These local warm-cache measurements are not a Mole comparison or a cold-start claim.",
+    "Cancellation samples terminate after SIGINT and therefore retain variable observed entry counts.",
+    "Actual App UI first-result and browsing latency remain unmeasured by this CLI benchmark."
+  ]
+}
