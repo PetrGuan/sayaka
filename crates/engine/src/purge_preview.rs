@@ -22,7 +22,7 @@ pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 1;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -253,6 +253,7 @@ pub struct FinderMetadataCandidate {
 pub enum DeveloperCacheActivity {
     NotDetected,
     LockFileObserved,
+    ApplicationActiveOrUnknown,
 }
 
 impl DeveloperCacheActivity {
@@ -260,6 +261,7 @@ impl DeveloperCacheActivity {
         match self {
             Self::NotDetected => "not_detected",
             Self::LockFileObserved => "lock_file_observed",
+            Self::ApplicationActiveOrUnknown => "application_active_or_unknown",
         }
     }
 }
@@ -493,9 +495,65 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             license_note: "Homebrew documentation license",
         }],
     },
+    DeveloperCacheRule {
+        tool: "chrome",
+        rule_id: "com.google.chrome.disk_cache.macos",
+        rule_version: 1,
+        title: "Google Chrome profile disk caches",
+        suffix: &["Library", "Caches", "Google", "Chrome"],
+        location: "~/Library/Caches/Google/Chrome",
+        location_kind: "directory",
+        rebuildability_note: "Chromium maps the macOS profile cache tree to Library/Caches. This rule excludes the parallel Application Support user-data tree containing history, cookies, bookmarks and passwords. Chrome must be fully closed.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Chromium user data directory: macOS user cache directory",
+            url: "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
+            reviewed_utc: "2026-09-26",
+            license_note: "Chromium documentation license",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "edge",
+        rule_id: "com.microsoft.edge.disk_cache.macos",
+        rule_version: 1,
+        title: "Microsoft Edge profile disk caches",
+        suffix: &["Library", "Caches", "Microsoft Edge"],
+        location: "~/Library/Caches/Microsoft Edge",
+        location_kind: "directory",
+        rebuildability_note: "Edge uses a distinct macOS cache tree. Only Library/Caches/Microsoft Edge is selected; Application Support profiles, history, cookies, passwords and bookmarks are excluded. Edge must be fully closed.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Microsoft Edge macOS cache directory guidance",
+            url: "https://learn.microsoft.com/en-us/answers/questions/2378736/how-to-fix-ms-edge-installation-failed-on-mac-inte",
+            reviewed_utc: "2026-09-26",
+            license_note: "Microsoft-hosted support discussion; path independently confirmed at preview",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "firefox",
+        rule_id: "org.mozilla.firefox.disk_cache.macos",
+        rule_version: 1,
+        title: "Firefox profile disk caches",
+        suffix: &["Library", "Caches", "Firefox", "Profiles"],
+        location: "~/Library/Caches/Firefox/Profiles",
+        location_kind: "directory",
+        rebuildability_note: "Firefox keeps its disk cache under Library/Caches/Firefox/Profiles, separate from Application Support/Firefox/Profiles containing bookmarks, credentials and history. Firefox must be fully closed.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Mozilla Support: Firefox macOS disk cache location",
+            url: "https://support.mozilla.org/en-US/questions/1280409",
+            reviewed_utc: "2026-09-26",
+            license_note: "Mozilla-hosted support discussion",
+        }],
+    },
 ];
 
 pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
+    UnsupportedOperation {
+        tool: "safari",
+        operation: "Safari website cache",
+        reason: "Safari's protected website data is not a file-level App Store sandbox target; use Safari's own website-data controls instead of granting a broad cleanup rule",
+    },
     UnsupportedOperation {
         tool: "homebrew",
         operation: "brew cleanup",
@@ -1152,6 +1210,8 @@ fn developer_cache_preview_with_home(
         matched_locations.push(path);
         let activity = if lock_sibling_observed(&entry.path, rule, &by_path) {
             DeveloperCacheActivity::LockFileObserved
+        } else if browser_active_or_unknown(rule.tool, account_home) {
+            DeveloperCacheActivity::ApplicationActiveOrUnknown
         } else {
             DeveloperCacheActivity::NotDetected
         };
@@ -1161,7 +1221,7 @@ fn developer_cache_preview_with_home(
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .and_then(|duration| i64::try_from(duration.as_millis()).ok());
-        let active = activity == DeveloperCacheActivity::LockFileObserved;
+        let active = activity != DeveloperCacheActivity::NotDetected;
         candidates.push(DeveloperCacheCandidate {
             tool: rule.tool,
             rule_id: rule.rule_id,
@@ -1175,9 +1235,15 @@ fn developer_cache_preview_with_home(
             rebuildability_note: rule.rebuildability_note,
             user_product: false,
             cleanup_supported: !active,
-            unsupported_reason: active.then_some(
-                "activity lock file was observed near this cache; preview is conservative",
-            ),
+            unsupported_reason: match activity {
+                DeveloperCacheActivity::LockFileObserved => {
+                    Some("activity lock file was observed near this cache; preview is conservative")
+                }
+                DeveloperCacheActivity::ApplicationActiveOrUnknown => {
+                    Some("browser is running or its process state could not be proven idle")
+                }
+                DeveloperCacheActivity::NotDetected => None,
+            },
             logical_bytes: index.size(entry.id, Metric::Logical),
             allocated_bytes: index.size(entry.id, Metric::Allocated),
             complete: summary.is_some_and(|summary| summary.complete),
@@ -1263,7 +1329,55 @@ fn revalidate_developer_cache_selection_with_home(
             return Err("developer cache activity lock file is present".into());
         }
     }
+    if browser_active_or_unknown(location.rule.tool, account_home) {
+        return Err("browser is running or its process state could not be proven idle".into());
+    }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn browser_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    let (bundle, lock) = match tool {
+        "chrome" => (
+            "Google Chrome",
+            Some(account_home.join("Library/Application Support/Google/Chrome/SingletonLock")),
+        ),
+        "edge" => (
+            "Microsoft Edge",
+            Some(account_home.join("Library/Application Support/Microsoft Edge/SingletonLock")),
+        ),
+        "firefox" => ("Firefox", None),
+        _ => return false,
+    };
+    if lock.is_some_and(|path| std::fs::symlink_metadata(path).is_ok()) {
+        return true;
+    }
+    if tool == "firefox" {
+        let profiles = account_home.join("Library/Application Support/Firefox/Profiles");
+        match std::fs::read_dir(profiles) {
+            Ok(entries) => {
+                for entry in entries {
+                    let Ok(entry) = entry else { return true };
+                    if std::fs::symlink_metadata(entry.path().join("parent.lock")).is_ok() {
+                        return true;
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return true,
+        }
+    }
+    match sayaka_platform_macos::status::running_executable_paths(65_536) {
+        Ok(processes) => processes
+            .iter()
+            .any(|(_, path)| path.to_string_lossy().contains(&format!("/{bundle}.app/"))),
+        Err(_) => true,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn browser_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
+    matches!(tool, "chrome" | "edge" | "firefox")
 }
 
 fn nofollow_existing_rule_directory(
