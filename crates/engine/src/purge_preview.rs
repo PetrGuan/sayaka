@@ -22,7 +22,7 @@ pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 3;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -532,6 +532,23 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             url: "https://learn.microsoft.com/en-us/answers/questions/4437348/i-deleted-classic-teams-from-my-mac-and-now-i-have",
             reviewed_utc: "2026-09-26",
             license_note: "Microsoft-hosted support guidance",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "discord",
+        rule_id: "com.discord.stable.cache.macos",
+        rule_version: 1,
+        title: "Discord app cache",
+        suffix: &["Library", "Application Support", "discord", "Cache"],
+        location: "~/Library/Application Support/discord/Cache",
+        location_kind: "directory",
+        rebuildability_note: "Discord documents this exact macOS cache directory as clearable after fully quitting the app. Only Cache is eligible; settings, credentials, downloads, and other Application Support data are not included.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Discord Troubleshooting Guide: Clear Discord cache",
+            url: "https://support.discord.com/hc/en-us/articles/31623498041623-Discord-Troubleshooting-Guide",
+            reviewed_utc: "2026-09-26",
+            license_note: "Discord support documentation",
         }],
     },
     browser_cache_rule!(
@@ -1506,7 +1523,11 @@ fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
             Some(account_home.join("Library/Application Support/Microsoft Edge/SingletonLock")),
         ),
         "firefox" => (&["Firefox.app"][..], None),
-        "teams-classic" => (&["Microsoft Teams classic.app", "Microsoft Teams.app"][..], None),
+        "teams-classic" => (
+            &["Microsoft Teams classic.app", "Microsoft Teams.app"][..],
+            None,
+        ),
+        "discord" => (&["Discord.app"][..], None),
         _ => return false,
     };
     if lock.is_some_and(|path| std::fs::symlink_metadata(path).is_ok()) {
@@ -1534,10 +1555,7 @@ fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn process_paths_active_or_unknown<E>(
-    paths: Result<Vec<PathBuf>, E>,
-    bundles: &[&str],
-) -> bool {
+fn process_paths_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>, bundles: &[&str]) -> bool {
     match paths {
         Ok(paths) => paths.iter().any(|path| {
             path.components().any(|component| {
@@ -1552,7 +1570,10 @@ fn process_paths_active_or_unknown<E>(
 
 #[cfg(not(target_os = "macos"))]
 fn application_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
-    matches!(tool, "chrome" | "edge" | "firefox" | "teams-classic")
+    matches!(
+        tool,
+        "chrome" | "edge" | "firefox" | "teams-classic" | "discord"
+    )
 }
 
 fn nofollow_existing_rule_directory(
@@ -1837,8 +1858,7 @@ mod tests {
         fs::create_dir_all(&cache).expect("classic cache");
         fs::create_dir_all(&support).expect("application support");
         fs::create_dir_all(&shared).expect("shared data");
-        fs::create_dir_all(preference.parent().expect("preferences parent"))
-            .expect("preferences");
+        fs::create_dir_all(preference.parent().expect("preferences parent")).expect("preferences");
         fs::write(&preference, b"user preference").expect("preference");
         fs::create_dir_all(credential.parent().expect("keychain parent"))
             .expect("keychain directory");
@@ -1852,9 +1872,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].path, cache);
-        assert_eq!(matches[0].rule_id, "com.microsoft.teams.classic_cache.macos");
+        assert_eq!(
+            matches[0].rule_id,
+            "com.microsoft.teams.classic_cache.macos"
+        );
         assert!(!preview.developer_caches.iter().any(|item| {
-            item.path == support || item.path == shared || item.path == preference || item.path == credential
+            item.path == support
+                || item.path == shared
+                || item.path == preference
+                || item.path == credential
         }));
     }
 
@@ -1864,11 +1890,67 @@ mod tests {
         let bundles = &["Microsoft Teams classic.app", "Microsoft Teams.app"];
         for name in bundles {
             let executable = PathBuf::from(format!("/Applications/{name}/Contents/MacOS/Teams"));
-            assert!(process_paths_active_or_unknown(Ok::<_, ()>(vec![executable]), bundles));
+            assert!(process_paths_active_or_unknown(
+                Ok::<_, ()>(vec![executable]),
+                bundles
+            ));
         }
-        assert!(process_paths_active_or_unknown(Err::<Vec<PathBuf>, ()>(()), bundles));
+        assert!(process_paths_active_or_unknown(
+            Err::<Vec<PathBuf>, ()>(()),
+            bundles
+        ));
         assert!(!process_paths_active_or_unknown(
-            Ok::<_, ()>(vec![PathBuf::from("/Applications/Microsoft Teams Fake.app/Contents/MacOS/Teams")]),
+            Ok::<_, ()>(vec![PathBuf::from(
+                "/Applications/Microsoft Teams Fake.app/Contents/MacOS/Teams"
+            )]),
+            bundles,
+        ));
+    }
+
+    #[test]
+    fn discord_cache_is_exact_and_excludes_neighboring_account_data() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let support = home.join("Library/Application Support/discord");
+        let cache = support.join("Cache");
+        let settings = support.join("settings.json");
+        let downloads = support.join("Downloads");
+        fs::create_dir_all(&cache).expect("cache");
+        fs::create_dir_all(&downloads).expect("downloads");
+        fs::write(&settings, b"user settings").expect("settings");
+
+        let preview = developer_cache_preview_at(&home, &home);
+        let matches = preview
+            .developer_caches
+            .iter()
+            .filter(|item| item.tool == "discord")
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path, cache);
+        assert_eq!(matches[0].rule_id, "com.discord.stable.cache.macos");
+        assert!(!preview.developer_caches.iter().any(|item| {
+            item.path == support || item.path == settings || item.path == downloads
+        }));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn discord_activity_detection_blocks_running_or_unknown_process_state() {
+        let bundles = &["Discord.app"];
+        assert!(process_paths_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from(
+                "/Applications/Discord.app/Contents/MacOS/Discord"
+            )]),
+            bundles,
+        ));
+        assert!(process_paths_active_or_unknown(
+            Err::<Vec<PathBuf>, ()>(()),
+            bundles
+        ));
+        assert!(!process_paths_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from(
+                "/Applications/Discord Canary.app/Contents/MacOS/Discord"
+            )]),
             bundles,
         ));
     }

@@ -742,6 +742,8 @@ documented rebuildable cache/download-store locations:
 | Cargo | `org.rust-lang.cargo.registry_cache` | `~/.cargo/registry/cache` |
 | Gradle | `org.gradle.modules_cache` | `~/.gradle/caches/modules-2/files-2.1` |
 | Homebrew | `sh.homebrew.downloads_cache` | `~/Library/Caches/Homebrew/downloads` |
+| Classic Teams | `com.microsoft.teams.classic_cache.macos` | `~/Library/Caches/com.microsoft.teams` |
+| Discord stable | `com.discord.stable.cache.macos` | `~/Library/Application Support/discord/Cache` |
 
 The profile matches a cache when the granted root is the cache directory itself
 or an ancestor, which supports sandboxed App flows where the user grants

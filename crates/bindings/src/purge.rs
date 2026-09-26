@@ -351,7 +351,7 @@ fn developer_cache_items_json(
                 } else if cache.activity.as_str() == "lock_file_observed" {
                     Some("cache cleanup is refused while an activity lock file is observed")
                 } else if !cache.cleanup_supported {
-                    Some("browser cache cleanup is refused while the browser is active or its process state is unknown")
+                    Some("application cache cleanup is refused while its owner is active or its process state is unknown")
                 } else {
                     None
                 },

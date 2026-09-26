@@ -28,6 +28,23 @@ identities, unsupported volumes and incomplete coverage. Real application
 activity and Trash effects still need owner-side isolated native observation;
 the automated unit/UI suites are intentionally not run by agents.
 
+## Discord stable desktop cache, rule version 1
+
+| Field | Contract |
+| --- | --- |
+| Client version | Discord stable desktop app for macOS 11 or later; Canary, PTB and sandboxed variants are excluded |
+| Exact location | `~/Library/Application Support/discord/Cache` under the current account's anchored home |
+| Owner evidence | Discord's [troubleshooting guide](https://support.discord.com/hc/en-us/articles/31623498041623-Discord-Troubleshooting-Guide) names this exact Mac cache directory |
+| Rebuildability | Discord instructs users to clear this cache for troubleshooting and restart the app; the cache is re-created as needed, while signing in again may be necessary |
+| Activity | Running `Discord.app` or unavailable process census blocks selection and execution; the check is repeated before the move |
+| Non-targets | Sibling settings, credentials, downloads, other Application Support data, and Canary/PTB directories are excluded |
+| Scope | The sandbox needs explicit user authorization for this folder or an ancestor; incomplete or denied scans cannot become executable selections |
+
+The App shows this app-specific cache for explicit review, never as a
+preselected recommendation. The fixture assertions cover the exact path,
+sibling data and running or unknown activity. Native isolated observation
+remains necessary before treating the rule as fully accepted.
+
 Generic logs and crash reports remain non-targets: their ownership and
 diagnostic value cannot be established from a directory name. The broader
 Mole-style user/app cache and log catalog remains an open expansion area;
