@@ -454,7 +454,8 @@ typedef struct SayakaUninstallRelatedRequestV1 {
     uint64_t reserved; /* Must be zero. */
 } SayakaUninstallRelatedRequestV1;
 
-/* Bounded, read-only related-data evidence for the retained app. The caller
+/* Bounded, read-only bundle-ID/location evidence for the retained app. Other
+ * copies outside the user-granted inventory root remain unknown. The caller
  * holds a readable security scope on library_root and supplies a 4 MiB buffer.
  * Every candidate remains protected; this never modifies the uninstall plan. */
 SAYAKA_API int32_t sayaka_uninstall_related_preview_v1(

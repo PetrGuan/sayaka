@@ -22,7 +22,9 @@ The App Store client's optional `sayaka_uninstall_related_preview_v1` call
 now exposes the existing `app_related` evidence for one retained bundle and
 one separately authorized Library folder. It inventories the selected app
 folder and probes bounded related locations, but returns only candidates
-matching that exact physical app copy. Every row is explicitly unselected and
+linked by bundle-ID/location evidence to the selected copy in that folder.
+Other copies outside user-granted roots remain unknown even when the local
+inventory is complete. Every row is explicitly unselected and
 has no authorized action. This call does not modify the sealed bundle plan or
 permit a related-data Trash move. A future execution contract needs its own
 ownership, shared-copy, live-process, identity and approval checks before any

@@ -12,9 +12,11 @@ use sayaka_engine::app_uninstall::{self, UninstallPreview};
 use sayaka_engine::execute::BundleUninstallSession;
 use sayaka_engine::journal::ItemState;
 use sayaka_engine::journal::Store;
-use sayaka_engine::model::{Cancellation, Scope};
+use sayaka_engine::model::{Cancellation, FileIdentity, Scope};
 use sayaka_engine::scan::{ScanLimits, scan_prune_app_bundles};
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::Component;
 use std::time::Duration;
 use std::time::Instant;
@@ -145,15 +147,15 @@ pub unsafe extern "C" fn sayaka_uninstall_related_preview_v1(
             return Err(INVALID_ARGUMENT);
         }
         let slot = get_job(request.handle)?;
-        let (bundle, app_root) = {
-            let job = lock_job(&slot)?;
-            if job.closed || job.result_bytes.is_some() {
-                return Err(INVALID_HANDLE);
-            }
-            let bundle = job.preview.bundle_path.clone();
-            let root = bundle.parent().ok_or(INVALID_ARGUMENT)?.to_path_buf();
-            (bundle, root)
-        };
+        // Retain the job lock through the entire read: execute/release must
+        // not consume this handle while attribution is being assembled.
+        let job = lock_job(&slot)?;
+        if job.closed || job.result_bytes.is_some() {
+            return Err(INVALID_HANDLE);
+        }
+        let bundle = job.preview.bundle_path.clone();
+        let app_root = bundle.parent().ok_or(INVALID_ARGUMENT)?.to_path_buf();
+        let retained_identity = job.preview.identity.as_ref().ok_or(INVALID_CANDIDATE)?;
         let cancellation = Cancellation::default();
         let started = Instant::now();
         let scan_report = scan_prune_app_bundles(
@@ -181,6 +183,12 @@ pub unsafe extern "C" fn sayaka_uninstall_related_preview_v1(
             .iter()
             .find(|app| app.bundle_path == bundle)
             .ok_or(QUERY_UNAVAILABLE)?;
+        if !matches!(selected.bundle_identity,
+            FileIdentity::Unix { device, inode }
+                if device == retained_identity.device && inode == retained_identity.inode)
+        {
+            return Err(INVALID_CANDIDATE);
+        }
         let bundle_id = selected
             .bundle_id
             .value
@@ -201,6 +209,14 @@ pub unsafe extern "C" fn sayaka_uninstall_related_preview_v1(
             .filter(|copy| copy.bundle_path == bundle)
             .map(|copy| copy.app_copy_id.as_str())
             .collect::<Vec<_>>();
+        #[cfg(unix)]
+        {
+            let current = std::fs::symlink_metadata(&bundle).map_err(|_| INVALID_CANDIDATE)?;
+            if current.dev() != retained_identity.device || current.ino() != retained_identity.inode
+            {
+                return Err(INVALID_CANDIDATE);
+            }
+        }
         let candidates = preview
             .candidates
             .iter()
@@ -233,6 +249,7 @@ pub unsafe extern "C" fn sayaka_uninstall_related_preview_v1(
                 "status": preview.status.as_str(),
                 "complete": preview.complete,
                 "inventory_complete": preview.inventory_complete,
+                "external_copies_unknown": true,
                 "effects_performed": false,
                 "bundle_path": display(&bundle),
                 "bundle_id": bundle_id,
