@@ -445,6 +445,22 @@ typedef struct SayakaUninstallRequestV1 {
  * uninstallers are guidance only. */
 SAYAKA_API int32_t sayaka_uninstall_preview_start_v1(
     const SayakaUninstallRequestV1 *request, uint64_t *out_handle);
+
+typedef struct SayakaUninstallRelatedRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t handle; /* Active uninstall preview handle, before execution. */
+    SayakaPathV1 library_root; /* Explicitly granted Library folder. */
+    uint64_t reserved; /* Must be zero. */
+} SayakaUninstallRelatedRequestV1;
+
+/* Bounded, read-only related-data evidence for the retained app. The caller
+ * holds a readable security scope on library_root and supplies a 4 MiB buffer.
+ * Every candidate remains protected; this never modifies the uninstall plan. */
+SAYAKA_API int32_t sayaka_uninstall_related_preview_v1(
+    const SayakaUninstallRelatedRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 SAYAKA_API int32_t sayaka_uninstall_result_v1(uint64_t handle, uint8_t *buffer,
                                              size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_uninstall_execute_v1(

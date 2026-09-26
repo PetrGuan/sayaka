@@ -18,6 +18,16 @@ slice. Inputs: the read-only
   bundles that are running, `/System`, permanent deletion of any kind, and
   any programmatic restore.
 
+The App Store client's optional `sayaka_uninstall_related_preview_v1` call
+now exposes the existing `app_related` evidence for one retained bundle and
+one separately authorized Library folder. It inventories the selected app
+folder and probes bounded related locations, but returns only candidates
+matching that exact physical app copy. Every row is explicitly unselected and
+has no authorized action. This call does not modify the sealed bundle plan or
+permit a related-data Trash move. A future execution contract needs its own
+ownership, shared-copy, live-process, identity and approval checks before any
+related location can become actionable.
+
 ## Why the plan contract must change
 
 The M1 planner's `refusal()` currently returns `UnsupportedResource` for any
