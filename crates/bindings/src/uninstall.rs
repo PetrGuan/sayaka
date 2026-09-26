@@ -4,13 +4,34 @@
 //! Other copies are read-only evidence, never execution selections.
 
 use super::*;
+use sayaka_engine::app_inventory::{
+    AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, inventory_apps,
+};
+use sayaka_engine::app_related::preview_app_related_data;
 use sayaka_engine::app_uninstall::{self, UninstallPreview};
 use sayaka_engine::execute::BundleUninstallSession;
 use sayaka_engine::journal::ItemState;
 use sayaka_engine::journal::Store;
-use sayaka_engine::model::{Cancellation, Scope};
+use sayaka_engine::model::{Cancellation, FileIdentity, Scope};
+use sayaka_engine::scan::{ScanLimits, scan_prune_app_bundles};
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+use std::path::Component;
 use std::time::Duration;
+use std::time::Instant;
+
+const RELATED_RESULT_BYTES: usize = 4 * 1024 * 1024;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SayakaUninstallRelatedRequestV1 {
+    pub abi_version: u32,
+    pub struct_size: u32,
+    pub handle: u64,
+    pub library_root: SayakaPathV1,
+    pub reserved: u64,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -82,6 +103,164 @@ fn get_job(handle: u64) -> Result<Arc<Mutex<UninstallJob>>, i32> {
         .get(&handle)
         .cloned()
         .ok_or(INVALID_HANDLE)
+}
+
+/// Bounded read-only related-data evidence for the retained app. The caller
+/// must hold readable security scopes for its app folder and Library root.
+/// Every candidate remains protected; this API grants no Trash authority.
+///
+/// # Safety
+/// Request and nested path bytes must be readable. Output storage must be
+/// disjoint from them and exactly RELATED_RESULT_BYTES long.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_uninstall_related_preview_v1(
+    request: *const SayakaUninstallRelatedRequestV1,
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        unsafe { prepare_output(buffer, capacity, required, RELATED_RESULT_BYTES)? };
+        if capacity != RELATED_RESULT_BYTES {
+            return Err(INVALID_ARGUMENT);
+        }
+        pointer(request)?;
+        let request = unsafe { *request };
+        if request.abi_version != ABI_VERSION
+            || request.struct_size as usize != size_of::<SayakaUninstallRelatedRequestV1>()
+            || request.reserved != 0
+        {
+            return Err(UNSUPPORTED_VERSION);
+        }
+        if !cfg!(target_os = "macos") {
+            return Err(UNSUPPORTED_PLATFORM);
+        }
+        let library_root = unsafe { decode_path(request.library_root)? };
+        if !normal_absolute(&library_root)
+            || library_root
+                .file_name()
+                .is_none_or(|name| name != "Library")
+            || library_root
+                .components()
+                .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
+        {
+            return Err(INVALID_ARGUMENT);
+        }
+        let slot = get_job(request.handle)?;
+        // Retain the job lock through the entire read: execute/release must
+        // not consume this handle while attribution is being assembled.
+        let job = lock_job(&slot)?;
+        if job.closed || job.result_bytes.is_some() {
+            return Err(INVALID_HANDLE);
+        }
+        let bundle = job.preview.bundle_path.clone();
+        let app_root = bundle.parent().ok_or(INVALID_ARGUMENT)?.to_path_buf();
+        let retained_identity = job.preview.identity.as_ref().ok_or(INVALID_CANDIDATE)?;
+        let cancellation = Cancellation::default();
+        let started = Instant::now();
+        let scan_report = scan_prune_app_bundles(
+            &[app_root.clone()],
+            &ScanLimits {
+                time_budget: Duration::from_secs(15),
+                ..ScanLimits::default()
+            },
+            &cancellation,
+            |_| {},
+        )
+        .map_err(|_| QUERY_UNAVAILABLE)?;
+        let inventory = inventory_apps(
+            scan_report,
+            &AppInventoryOptions {
+                metadata_read_mode: AppInventoryMetadataReadMode::AppRelated,
+                limits: AppInventoryLimits::default(),
+                ..AppInventoryOptions::default()
+            },
+            &cancellation,
+            Duration::from_secs(30).saturating_sub(started.elapsed()),
+        );
+        let selected = inventory
+            .apps
+            .iter()
+            .find(|app| app.bundle_path == bundle)
+            .ok_or(QUERY_UNAVAILABLE)?;
+        if !matches!(selected.bundle_identity,
+            FileIdentity::Unix { device, inode }
+                if device == retained_identity.device && inode == retained_identity.inode)
+        {
+            return Err(INVALID_CANDIDATE);
+        }
+        let bundle_id = selected
+            .bundle_id
+            .value
+            .as_deref()
+            .ok_or(QUERY_UNAVAILABLE)?
+            .to_owned();
+        let preview = preview_app_related_data(
+            inventory,
+            vec![app_root],
+            vec![library_root],
+            bundle_id.clone(),
+            &cancellation,
+            Duration::from_secs(5),
+        );
+        let selected_copy_ids = preview
+            .app_copies
+            .iter()
+            .filter(|copy| copy.bundle_path == bundle)
+            .map(|copy| copy.app_copy_id.as_str())
+            .collect::<Vec<_>>();
+        #[cfg(unix)]
+        {
+            let current = std::fs::symlink_metadata(&bundle).map_err(|_| INVALID_CANDIDATE)?;
+            if current.dev() != retained_identity.device || current.ino() != retained_identity.inode
+            {
+                return Err(INVALID_CANDIDATE);
+            }
+        }
+        let candidates = preview
+            .candidates
+            .iter()
+            .filter(|candidate| {
+                candidate
+                    .matched_app_copy_ids
+                    .iter()
+                    .any(|id| selected_copy_ids.contains(&id.as_str()))
+            })
+            .map(|candidate| {
+                json!({
+                    "candidate_id": candidate.candidate_id,
+                    "path": display(&candidate.path),
+                    "relative_library_path": candidate.relative_library_path,
+                    "role": candidate.role,
+                    "path_state": candidate.path_state,
+                    "ownership_certainty": candidate.ownership_certainty,
+                    "ownership_statement": candidate.ownership_statement,
+                    "matched_app_copy_ids": candidate.matched_app_copy_ids,
+                    "protection_reasons": candidate.protection_reasons,
+                    "selected": false,
+                    "authorized_action": serde_json::Value::Null,
+                })
+            })
+            .collect::<Vec<_>>();
+        let bytes = bounded_json(
+            &json!({
+                "schema_version": 1,
+                "kind": "sayaka.app_uninstall_related_preview",
+                "status": preview.status.as_str(),
+                "complete": preview.complete,
+                "inventory_complete": preview.inventory_complete,
+                "external_copies_unknown": true,
+                "effects_performed": false,
+                "bundle_path": display(&bundle),
+                "bundle_id": bundle_id,
+                "candidate_count": candidates.len(),
+                "candidates": candidates,
+                "issue_count": preview.issues.len() + preview.scan_issues.len(),
+            }),
+            RELATED_RESULT_BYTES,
+        )?;
+        unsafe { copy_output(&bytes, buffer, capacity, required) }
+    })
 }
 
 /// Starts a retained preview. The caller must hold a read-write security scope
