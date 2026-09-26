@@ -584,6 +584,26 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
 
 pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
     UnsupportedOperation {
+        tool: "dropbox",
+        operation: "Dropbox sync cache (.dropbox.cache)",
+        reason: "Dropbox uses this folder to stage uploads and downloads; File Provider cache locations are OS-managed. Sync state cannot be proved from an authorized directory scan, so neither is a cleanup target",
+    },
+    UnsupportedOperation {
+        tool: "onedrive",
+        operation: "OneDrive Files On-Demand content",
+        reason: "online-only files are cloud placeholders, not reclaimable local cache; scanning must not materialize them and no OneDrive sync location is a cleanup target",
+    },
+    UnsupportedOperation {
+        tool: "microsoft-office",
+        operation: "Office document cache",
+        reason: "the document cache can contain changes pending cloud upload or reconciliation metadata; an authorized folder scan cannot prove that it is safe to remove",
+    },
+    UnsupportedOperation {
+        tool: "docker-desktop",
+        operation: "Docker Desktop VM disk (Docker.raw / Docker.qcow2)",
+        reason: "the VM disk stores containers and images, including user data; it is never a rebuildable file cache or a Trash candidate",
+    },
+    UnsupportedOperation {
         tool: "safari",
         operation: "Safari website cache",
         reason: "Safari's protected website data is not a file-level App Store sandbox target; use Safari's own website-data controls instead of granting a broad cleanup rule",
