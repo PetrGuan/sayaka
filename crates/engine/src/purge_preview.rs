@@ -1513,6 +1513,13 @@ fn revalidate_developer_cache_selection_with_home(
 
 #[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    if tool == "discord" {
+        // A signed Discord bundle can be renamed without changing its executable
+        // names. Prefer a conservative false positive to moving a live cache.
+        return discord_process_active_or_unknown(
+            sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
+        );
+    }
     let (bundles, lock) = match tool {
         "chrome" => (
             &["Google Chrome.app"][..],
@@ -1527,7 +1534,6 @@ fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
             &["Microsoft Teams classic.app", "Microsoft Teams.app"][..],
             None,
         ),
-        "discord" => (&["Discord.app"][..], None),
         _ => return false,
     };
     if lock.is_some_and(|path| std::fs::symlink_metadata(path).is_ok()) {
@@ -1552,6 +1558,18 @@ fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
         sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
         bundles,
     )
+}
+
+#[cfg(target_os = "macos")]
+fn discord_process_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>) -> bool {
+    match paths {
+        Err(_) => true,
+        Ok(paths) => paths.iter().any(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "Discord" || name.starts_with("Discord Helper"))
+        }),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1936,23 +1954,20 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn discord_activity_detection_blocks_running_or_unknown_process_state() {
-        let bundles = &["Discord.app"];
-        assert!(process_paths_active_or_unknown(
-            Ok::<_, ()>(vec![PathBuf::from(
-                "/Applications/Discord.app/Contents/MacOS/Discord"
-            )]),
-            bundles,
-        ));
-        assert!(process_paths_active_or_unknown(
-            Err::<Vec<PathBuf>, ()>(()),
-            bundles
-        ));
-        assert!(!process_paths_active_or_unknown(
-            Ok::<_, ()>(vec![PathBuf::from(
-                "/Applications/Discord Canary.app/Contents/MacOS/Discord"
-            )]),
-            bundles,
-        ));
+        assert!(discord_process_active_or_unknown(Ok::<_, ()>(vec![
+            PathBuf::from("/Applications/Discord Work.app/Contents/MacOS/Discord")
+        ]),));
+        assert!(discord_process_active_or_unknown(Ok::<_, ()>(vec![
+            PathBuf::from(
+                "/Applications/Discord Work.app/Contents/Frameworks/Discord Helper.app/Contents/MacOS/Discord Helper (Renderer)"
+            )
+        ]),));
+        assert!(discord_process_active_or_unknown(Err::<Vec<PathBuf>, ()>(
+            ()
+        )));
+        assert!(!discord_process_active_or_unknown(Ok::<_, ()>(vec![
+            PathBuf::from("/Applications/Discord Canary.app/Contents/MacOS/Discord Canary")
+        ]),));
     }
 
     #[test]
