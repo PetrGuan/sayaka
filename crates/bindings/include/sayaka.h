@@ -222,7 +222,7 @@ typedef struct SayakaPurgePreviewProfileRequestV1 {
     uint32_t struct_size;
     SayakaPathV1 root; /* One explicit native absolute root; input copied. */
     uint32_t stale_days; /* 0 means CLI default; otherwise 1..3650. */
-    uint32_t profile; /* 1/0 = projects, 2 = developer_caches. */
+    uint32_t profile; /* 1/0 = projects, 2 = developer_caches, 3 = finder_metadata. */
     uint32_t reserved; /* Must be zero. */
 } SayakaPurgePreviewProfileRequestV1;
 
@@ -231,7 +231,7 @@ typedef struct SayakaPurgePreviewPolicyRequestV1 {
     uint32_t struct_size;
     SayakaPathV1 root; /* One explicitly authorized native absolute root. */
     uint32_t stale_days;
-    uint32_t profile; /* 1/0 = projects, 2 = developer_caches. */
+    uint32_t profile; /* 1/0 = projects, 2 = developer_caches, 3 = finder_metadata. */
     uint32_t reserved; /* Must be zero. */
     SayakaPathV1 config_dir; /* App-private exclusion policy directory. */
 } SayakaPurgePreviewPolicyRequestV1;
@@ -385,7 +385,13 @@ SAYAKA_API int32_t sayaka_installer_release_v1(uint64_t handle);
  * operations. Complete cleanup-supported developer-cache candidates can execute
  * under revalidated_cache_trash_v1 with the same-preview item refs, exact
  * plan_digest, explicit "trash N caches" approval token and journal state_dir.
- * Unknown size fields are JSON null. Project execution still uses
+ * Finder metadata profile reports only .DS_Store files under the selected
+ * supported local internal volume. Its execution uses revalidated_trash_v1,
+ * exact "trash N Finder files" approval token and an explicit journal state_dir.
+ * Removing these files may lose Finder view settings; hosts should not
+ * preselect them. External and network volumes are refused by the native
+ * scanner and Trash implementation. Unknown size fields are JSON null.
+ * Project execution still uses
  * revalidated_purge_trash_v1 and "purge N artifacts". Changed/missing/
  * not-revalidated items are skipped/failed/unknown, never counted as moved.
  * Native effects are ordinary Foundation Trash only: no permanent-delete

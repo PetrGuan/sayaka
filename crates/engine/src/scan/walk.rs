@@ -27,6 +27,16 @@ fn should_descend_directory(policy: TraversalPolicy, path: &Path) -> bool {
     match policy {
         TraversalPolicy::Default => true,
         TraversalPolicy::PruneAppBundles => !app_candidate_directory(path),
+        TraversalPolicy::PruneNativePackages => {
+            #[cfg(target_os = "macos")]
+            {
+                matches!(sayaka_platform_macos::is_package(path), Ok(false))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                false
+            }
+        }
     }
 }
 

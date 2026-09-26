@@ -29,6 +29,7 @@ pub enum PurgeProfile {
     #[default]
     Projects,
     DeveloperCaches,
+    FinderMetadata,
 }
 
 pub fn resolve_cache_selections_by_ids(
@@ -75,11 +76,35 @@ pub fn resolve_cache_selections_by_ids(
     Ok(selections)
 }
 
+pub fn resolve_finder_selections_by_ids(
+    preview: &PurgePreview,
+    item_ids: &[PurgeItemId],
+) -> Result<Vec<(PathBuf, FileIdentity)>, String> {
+    if preview.profile != PurgeProfile::FinderMetadata {
+        return Err("Finder selection requires the Finder metadata profile".into());
+    }
+    let mut seen = HashSet::new();
+    item_ids
+        .iter()
+        .map(|id| {
+            if id.0 == 0 || !seen.insert(id.0) {
+                return Err("Finder references must be unique nonzero ids".into());
+            }
+            let item = preview
+                .finder_metadata
+                .get((id.0 - 1) as usize)
+                .ok_or_else(|| format!("Finder item {} is not in this preview", id.0))?;
+            Ok((item.path.clone(), item.identity))
+        })
+        .collect()
+}
+
 impl PurgeProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Projects => "projects",
             Self::DeveloperCaches => "developer_caches",
+            Self::FinderMetadata => "finder_metadata",
         }
     }
 
@@ -87,6 +112,7 @@ impl PurgeProfile {
         match value {
             0 | 1 => Some(Self::Projects),
             2 => Some(Self::DeveloperCaches),
+            3 => Some(Self::FinderMetadata),
             _ => None,
         }
     }
@@ -95,6 +121,7 @@ impl PurgeProfile {
         match self {
             Self::Projects => 1,
             Self::DeveloperCaches => 2,
+            Self::FinderMetadata => 3,
         }
     }
 }
@@ -210,6 +237,16 @@ pub struct PurgeProject {
     pub root: PathBuf,
     pub markers: Vec<ProjectMarker>,
     pub artifacts: Vec<PurgeArtifact>,
+}
+
+/// Finder's per-directory view settings file. Removing it loses custom view
+/// settings; the file can be recreated, but it is never preselected.
+#[derive(Clone, Debug)]
+pub struct FinderMetadataCandidate {
+    pub path: PathBuf,
+    pub identity: FileIdentity,
+    pub logical_bytes: Option<u64>,
+    pub allocated_bytes: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -510,6 +547,7 @@ pub struct PurgeCounts {
     /// project's artifact, or because the artifact is a dataless placeholder.
     pub excluded: usize,
     pub developer_caches: usize,
+    pub finder_metadata: usize,
     pub unsupported_operations: usize,
 }
 
@@ -545,6 +583,7 @@ pub struct PurgePreview {
     pub stale_days: u32,
     pub projects: Vec<PurgeProject>,
     pub developer_caches: Vec<DeveloperCacheCandidate>,
+    pub finder_metadata: Vec<FinderMetadataCandidate>,
     pub unsupported_operations: &'static [UnsupportedOperation],
     pub counts: PurgeCounts,
     /// Scan-side issues (denied subtrees, budget limits) explaining partial
@@ -582,6 +621,26 @@ impl PurgePreview {
             hasher.update(cache.activity.as_str().as_bytes());
             hasher.update([0]);
         }
+        for item in &self.finder_metadata {
+            hash_path(&mut hasher, &item.path);
+            match item.identity {
+                FileIdentity::Unix { device, inode } => {
+                    hasher.update([1]);
+                    hasher.update(device.to_le_bytes());
+                    hasher.update(inode.to_le_bytes());
+                }
+                FileIdentity::Windows {
+                    volume_serial,
+                    file_id,
+                } => {
+                    hasher.update([2]);
+                    hasher.update(volume_serial.to_le_bytes());
+                    hasher.update(file_id);
+                }
+            }
+            hash_option_u64(&mut hasher, item.logical_bytes);
+            hash_option_u64(&mut hasher, item.allocated_bytes);
+        }
         for project in &self.projects {
             hash_path(&mut hasher, &project.root);
             for marker in &project.markers {
@@ -612,6 +671,7 @@ impl PurgePreview {
         hasher.update((self.counts.stale_artifacts as u64).to_le_bytes());
         hasher.update((self.counts.excluded as u64).to_le_bytes());
         hasher.update((self.counts.developer_caches as u64).to_le_bytes());
+        hasher.update((self.counts.finder_metadata as u64).to_le_bytes());
         let digest = hasher.finalize();
         let mut out = String::with_capacity(digest.len() * 2);
         for byte in digest {
@@ -622,8 +682,10 @@ impl PurgePreview {
     }
 
     pub fn item_count(&self) -> usize {
-        if self.profile == PurgeProfile::DeveloperCaches {
-            return self.developer_caches.len();
+        match self.profile {
+            PurgeProfile::DeveloperCaches => return self.developer_caches.len(),
+            PurgeProfile::FinderMetadata => return self.finder_metadata.len(),
+            PurgeProfile::Projects => {}
         }
         self.projects
             .iter()
@@ -780,6 +842,7 @@ pub fn purge_preview(
     match options.profile {
         PurgeProfile::Projects => project_purge_preview(index, options, now),
         PurgeProfile::DeveloperCaches => developer_cache_preview(index, options),
+        PurgeProfile::FinderMetadata => finder_metadata_preview(index, options),
     }
 }
 
@@ -790,6 +853,63 @@ fn preview_status(report: &crate::scan::ScanReport) -> PurgeStatus {
         ScanStatus::Cancelled => PurgeStatus::Cancelled,
         ScanStatus::Failed => PurgeStatus::Failed,
     }
+}
+
+fn finder_metadata_preview(
+    index: &ScanTree,
+    options: &PurgeOptions,
+) -> Result<PurgePreview, String> {
+    let report = index.report();
+    let mut candidates = report
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.kind == ResourceKind::File
+                && !entry.dataless
+                && entry.counted
+                && entry.path.file_name() == Some(std::ffi::OsStr::new(".DS_Store"))
+                && !entry.path.ancestors().any(|ancestor| {
+                    ancestor.extension().is_some_and(|extension| {
+                        ["app", "framework", "bundle", "xpc", "appex"]
+                            .iter()
+                            .any(|blocked| extension == std::ffi::OsStr::new(blocked))
+                    })
+                })
+        })
+        .map(|entry| FinderMetadataCandidate {
+            path: entry.path.clone(),
+            identity: entry.identity,
+            logical_bytes: entry.logical_bytes,
+            allocated_bytes: entry.allocated_bytes,
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    let counts = PurgeCounts {
+        finder_metadata: candidates.len(),
+        ..Default::default()
+    };
+    Ok(PurgePreview {
+        schema_version: PURGE_SCHEMA_VERSION,
+        kind: PURGE_KIND,
+        platform: if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "unsupported"
+        },
+        status: preview_status(report),
+        complete: report.status == ScanStatus::Complete,
+        effects_performed: false,
+        profile: options.profile,
+        roots: report.roots.clone(),
+        stale_days: options.stale_days,
+        projects: Vec::new(),
+        developer_caches: Vec::new(),
+        finder_metadata: candidates,
+        unsupported_operations: &[],
+        counts,
+        scan_issues: report.issues.clone(),
+        scan_issues_omitted: report.issues_omitted,
+    })
 }
 
 fn project_purge_preview(
@@ -953,6 +1073,7 @@ fn project_purge_preview(
         stale_days: options.stale_days,
         projects: output,
         developer_caches: Vec::new(),
+        finder_metadata: Vec::new(),
         unsupported_operations: profile_unsupported_operations(PurgeProfile::Projects),
         counts,
         scan_issues: report.issues.clone(),
@@ -968,6 +1089,7 @@ pub fn profile_unsupported_operations(profile: PurgeProfile) -> &'static [Unsupp
     match profile {
         PurgeProfile::Projects => &[],
         PurgeProfile::DeveloperCaches => UNSUPPORTED_OPERATIONS,
+        PurgeProfile::FinderMetadata => &[],
     }
 }
 
@@ -1084,6 +1206,7 @@ fn developer_cache_preview_with_home(
         stale_days: options.stale_days,
         projects: Vec::new(),
         developer_caches: candidates,
+        finder_metadata: Vec::new(),
         unsupported_operations,
         counts,
         scan_issues: report.issues.clone(),
