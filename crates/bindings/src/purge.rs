@@ -2,9 +2,10 @@
 
 use super::*;
 use sayaka_engine::clean_policy::{self, ConfigPath, PolicyGuardStatus, PolicySnapshot};
-use sayaka_engine::execute::{CacheSession, PurgeSession};
+use sayaka_engine::execute::{CacheSession, PurgeSession, TrashSession};
 use sayaka_engine::journal::{self, Store};
 use sayaka_engine::model::Cancellation;
+use sayaka_engine::model::Scope;
 use sayaka_engine::purge_preview::{
     self, PurgeItemId, PurgeOptions, PurgePreview, PurgeProfile, PurgeStatus,
 };
@@ -32,7 +33,7 @@ pub struct SayakaPurgePreviewProfileRequestV1 {
     pub struct_size: u32,
     pub root: SayakaPathV1,
     pub stale_days: u32,
-    /// 1 = projects, 2 = developer_caches. 0 is accepted as projects for
+    /// 1 = projects, 2 = developer_caches, 3 = finder_metadata. 0 is accepted as projects for
     /// callers that zero-initialize optional fields.
     pub profile: u32,
     pub reserved: u32,
@@ -206,6 +207,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
         "contract": match preview.profile {
             PurgeProfile::Projects => "revalidated_purge_trash_v1",
             PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
+            PurgeProfile::FinderMetadata => "revalidated_trash_v1",
         },
         "profile": preview.profile.as_str(),
         "plan_identifier": digest,
@@ -218,6 +220,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
             "stale_items": preview.counts.stale_artifacts,
             "excluded": preview.counts.excluded,
             "developer_caches": preview.counts.developer_caches,
+            "finder_metadata": preview.counts.finder_metadata,
             "unsupported_operations": preview.counts.unsupported_operations,
             "logical_bytes": sum_known(preview, true),
             "allocated_bytes": sum_known(preview, false),
@@ -259,6 +262,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
             value
         }).collect::<Vec<_>>(),
         "developer_caches": developer_cache_items_json(preview, handle, policy),
+        "finder_metadata": finder_metadata_items_json(preview, handle, policy),
         "unsupported_operations": unsupported_operations_json(preview.unsupported_operations),
         "scan_issues": preview.scan_issues.iter().map(|issue| json!({
             "path": issue.path.as_deref().map(wire::NativePath),
@@ -268,6 +272,35 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
         })).collect::<Vec<_>>(),
         "scan_issues_omitted": preview.scan_issues_omitted,
     })
+}
+
+fn finder_metadata_items_json(
+    preview: &PurgePreview,
+    handle: u64,
+    policy: Option<&PurgePolicy>,
+) -> Vec<Value> {
+    preview
+        .finder_metadata
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let id = index + 1;
+            json!({
+                "id": id.to_string(),
+                "reference": { "preview_handle": handle.to_string(), "item_id": id.to_string() },
+                "path": wire::NativePath(&item.path),
+                "name": ".DS_Store",
+                "kind": "file",
+                "sizes": { "logical": item.logical_bytes, "allocated": item.allocated_bytes },
+                "complete": true,
+                "reasons": ["finder_view_settings_may_be_lost"],
+                "policy_excluded": policy.is_some_and(|p| p.excludes(&item.path)),
+                "filesystem_identity": filesystem_identity_json(item.identity),
+                "execution_supported": true,
+            "execution_contract": "revalidated_trash_v1",
+            })
+        })
+        .collect()
 }
 
 fn developer_cache_items_json(
@@ -376,6 +409,14 @@ fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
             cache.logical_bytes
         } else {
             cache.allocated_bytes
+        }?;
+        total = total.checked_add(value)?;
+    }
+    for item in &preview.finder_metadata {
+        let value = if logical {
+            item.logical_bytes
+        } else {
+            item.allocated_bytes
         }?;
         total = total.checked_add(value)?;
     }
@@ -538,6 +579,7 @@ fn refusal_json(
         "contract": match preview.profile {
             PurgeProfile::Projects => "revalidated_purge_trash_v1",
             PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
+            PurgeProfile::FinderMetadata => "revalidated_trash_v1",
         },
         "plan_identifier": preview.plan_digest(),
         "plan_digest": preview.plan_digest(),
@@ -588,6 +630,22 @@ fn preview_item_json(
             "reason": reason,
             "destination": null,
             "logical_bytes": cache.logical_bytes,
+            "recovery_evidence": null,
+        });
+    }
+    if preview.profile == PurgeProfile::FinderMetadata
+        && let Some(item) = preview
+            .finder_metadata
+            .get((item_id.0.saturating_sub(1)) as usize)
+    {
+        return json!({
+            "id": item_id.0.to_string(),
+            "reference": { "preview_handle": preview_handle.to_string(), "item_id": item_id.0.to_string() },
+            "path": wire::NativePath(&item.path),
+            "status": status,
+            "reason": reason,
+            "destination": null,
+            "logical_bytes": item.logical_bytes,
             "recovery_evidence": null,
         });
     }
@@ -659,6 +717,10 @@ fn execution_worker(
             PurgeProfile::DeveloperCaches => {
                 purge_preview::resolve_cache_selections_by_ids(&preview, &item_ids)
                     .map(|selections| selections.iter().any(|item| policy.excludes(&item.path)))
+            }
+            PurgeProfile::FinderMetadata => {
+                purge_preview::resolve_finder_selections_by_ids(&preview, &item_ids)
+                    .map(|selections| selections.iter().any(|(path, _)| policy.excludes(path)))
             }
         };
         if policy.needs_attention() || !policy.unchanged() || excluded.unwrap_or(true) {
@@ -763,6 +825,7 @@ fn execution_worker(
 enum PreparedExecutionSession {
     Projects(PurgeSession),
     Caches(CacheSession),
+    Finder(TrashSession),
 }
 
 impl PreparedExecutionSession {
@@ -784,6 +847,28 @@ impl PreparedExecutionSession {
                     .map(Self::Caches)
                     .map_err(|error| error.to_string())
             }
+            PurgeProfile::FinderMetadata => {
+                let selections =
+                    purge_preview::resolve_finder_selections_by_ids(preview, item_ids)?;
+                let root = preview
+                    .roots
+                    .first()
+                    .ok_or("Finder scan root is unavailable")?
+                    .clone();
+                let scope = Scope::new(root, vec![]).map_err(|error| error.to_string())?;
+                let paths = selections
+                    .iter()
+                    .map(|(path, _)| path.clone())
+                    .collect::<Vec<_>>();
+                let session = TrashSession::prepare(scope, &paths, &[], cancellation)
+                    .map_err(|error| error.to_string())?;
+                if !session.matches_observed_identities(&selections) {
+                    return Err(
+                        "Finder metadata changed since preview; refresh before execution".into(),
+                    );
+                }
+                Ok(Self::Finder(session))
+            }
         }
     }
 
@@ -791,6 +876,7 @@ impl PreparedExecutionSession {
         match self {
             Self::Projects(session) => session.issues(),
             Self::Caches(session) => session.issues(),
+            Self::Finder(session) => session.issues(),
         }
         .iter()
         .map(|issue| {
@@ -804,6 +890,7 @@ impl PreparedExecutionSession {
         match self {
             Self::Projects(session) => session.refusals(),
             Self::Caches(session) => session.refusals(),
+            Self::Finder(session) => session.refusals(),
         }
         .iter()
         .map(|refusal| {
@@ -817,6 +904,7 @@ impl PreparedExecutionSession {
         match self {
             Self::Projects(session) => session.preview(),
             Self::Caches(session) => session.preview(),
+            Self::Finder(session) => session.preview(),
         }
     }
 
@@ -827,6 +915,7 @@ impl PreparedExecutionSession {
         match self {
             Self::Projects(session) => session.approve(plan),
             Self::Caches(session) => session.approve(plan),
+            Self::Finder(session) => session.approve(plan),
         }
     }
 
@@ -847,6 +936,13 @@ impl PreparedExecutionSession {
                 policy.map(|p| (&p.config, p.root.as_path(), &p.snapshot)),
             ),
             Self::Caches(session) => session.execute_with_exclusions(
+                plan,
+                approval,
+                cancellation,
+                store,
+                policy.map(|p| (&p.config, p.root.as_path(), &p.snapshot)),
+            ),
+            Self::Finder(session) => session.execute_with_exclusions(
                 plan,
                 approval,
                 cancellation,
@@ -912,6 +1008,7 @@ unsafe fn validate_approval(
     let expected = match profile {
         PurgeProfile::Projects => format!("purge {} artifacts", request.item_count),
         PurgeProfile::DeveloperCaches => format!("trash {} caches", request.item_count),
+        PurgeProfile::FinderMetadata => format!("trash {} Finder files", request.item_count),
     };
     if request.approval_token_length != expected.len() {
         return Err(INVALID_ARGUMENT);
@@ -1229,8 +1326,10 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
                     if preview.plan_digest() != requested_digest {
                         return Err(INVALID_CANDIDATE);
                     }
-                    if preview.profile == PurgeProfile::DeveloperCaches
-                        && request.has_state_dir != 1
+                    if matches!(
+                        preview.profile,
+                        PurgeProfile::DeveloperCaches | PurgeProfile::FinderMetadata
+                    ) && request.has_state_dir != 1
                     {
                         return Err(INVALID_ARGUMENT);
                     }

@@ -351,6 +351,25 @@ impl TrashSession {
         &self.inner.preview
     }
 
+    /// A Finder metadata preview is only approvable if every native candidate
+    /// captured for this plan still has the scan-observed file identity.
+    pub fn matches_observed_identities(&self, expected: &[(PathBuf, FileIdentity)]) -> bool {
+        expected.iter().all(|(path, identity)| {
+            self.inner
+                .platform
+                .candidates
+                .get(path)
+                .is_some_and(|candidate| {
+                    let info = candidate.info();
+                    *identity
+                        == FileIdentity::Unix {
+                            device: info.device,
+                            inode: info.inode,
+                        }
+                })
+        })
+    }
+
     fn to_rule_binding(
         metadata: rules::RuleBindingMetadata,
         scope: &Scope,
@@ -465,6 +484,35 @@ impl TrashSession {
         store: &Store,
     ) -> io::Result<ExecutionReport> {
         self.inner.execute(preview, approval, cancellation, store)
+    }
+
+    pub fn execute_with_exclusions(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+        policy: Option<(&ConfigPath, &Path, &PolicySnapshot)>,
+    ) -> io::Result<ExecutionReport> {
+        let mut guard = move |_: GuardPoint, _: &Path| -> io::Result<GuardDecision> {
+            if let Some((config, root, snapshot)) = policy {
+                match clean_policy::guard_snapshot(config, root, snapshot)? {
+                    PolicyGuardStatus::Unchanged => {}
+                    PolicyGuardStatus::Refused(reason) => {
+                        return Ok(GuardDecision::Refused(reason));
+                    }
+                }
+            }
+            Ok(GuardDecision::Proceed)
+        };
+        self.inner.execute_with_clean_policy(
+            preview,
+            approval,
+            cancellation,
+            store,
+            None,
+            Some(&mut guard),
+        )
     }
 
     pub(crate) fn execute_with_clean_policy(
