@@ -648,6 +648,11 @@ pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
         reason: "logs can be needed for diagnosis, and a generic name match cannot establish ownership, rebuildability or absence of user content",
     },
     UnsupportedOperation {
+        tool: "zoom",
+        operation: "Zoom diagnostic logs (~/Library/Logs/zoom.us)",
+        reason: "Zoom asks users to send these logs to Support for an active ticket; historical diagnostic evidence cannot be reconstructed after removal, so it is not a rebuildable cache target",
+    },
+    UnsupportedOperation {
         tool: "safari",
         operation: "Safari website cache",
         reason: "Safari's protected website data is not a file-level App Store sandbox target; use Safari's own website-data controls instead of granting a broad cleanup rule",
@@ -1513,11 +1518,21 @@ fn revalidate_developer_cache_selection_with_home(
 
 #[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
-    if tool == "discord" {
-        // A signed Discord bundle can be renamed without changing its executable
-        // names. Prefer a conservative false positive to moving a live cache.
-        return discord_process_active_or_unknown(
+    if matches!(tool, "discord" | "teams-classic") {
+        // Bundles can be renamed without changing their executables. Prefer a
+        // conservative false positive to moving a live application cache.
+        let (exact, prefixes): (&[&str], &[&str]) = if tool == "discord" {
+            (&["Discord"], &["Discord Helper"])
+        } else {
+            (
+                &["Teams", "Microsoft Teams", "Microsoft Teams classic"],
+                &["Teams Helper", "Microsoft Teams Helper"],
+            )
+        };
+        return named_process_active_or_unknown(
             sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
+            exact,
+            prefixes,
         );
     }
     let (bundles, lock) = match tool {
@@ -1530,10 +1545,6 @@ fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
             Some(account_home.join("Library/Application Support/Microsoft Edge/SingletonLock")),
         ),
         "firefox" => (&["Firefox.app"][..], None),
-        "teams-classic" => (
-            &["Microsoft Teams classic.app", "Microsoft Teams.app"][..],
-            None,
-        ),
         _ => return false,
     };
     if lock.is_some_and(|path| std::fs::symlink_metadata(path).is_ok()) {
@@ -1561,13 +1572,19 @@ fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn discord_process_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>) -> bool {
+fn named_process_active_or_unknown<E>(
+    paths: Result<Vec<PathBuf>, E>,
+    exact: &[&str],
+    prefixes: &[&str],
+) -> bool {
     match paths {
         Err(_) => true,
         Ok(paths) => paths.iter().any(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name == "Discord" || name.starts_with("Discord Helper"))
+                .is_some_and(|name| {
+                    exact.contains(&name) || prefixes.iter().any(|prefix| name.starts_with(prefix))
+                })
         }),
     }
 }
@@ -1873,6 +1890,8 @@ mod tests {
         let shared = home.join("Library/Group Containers/UBF8T346G9.com.microsoft.teams");
         let preference = home.join("Library/Preferences/com.microsoft.teams.plist");
         let credential = home.join("Library/Keychains/Teams.keychain-db");
+        let logs = home.join("Library/Logs/zoom.us");
+        let sync_cache = home.join("Dropbox/.dropbox.cache");
         fs::create_dir_all(&cache).expect("classic cache");
         fs::create_dir_all(&support).expect("application support");
         fs::create_dir_all(&shared).expect("shared data");
@@ -1881,6 +1900,8 @@ mod tests {
         fs::create_dir_all(credential.parent().expect("keychain parent"))
             .expect("keychain directory");
         fs::write(&credential, b"credential fixture").expect("credential");
+        fs::create_dir_all(&logs).expect("diagnostic logs");
+        fs::create_dir_all(&sync_cache).expect("sync staging cache");
 
         let preview = developer_cache_preview_at(&home, &home);
         let matches = preview
@@ -1899,29 +1920,53 @@ mod tests {
                 || item.path == shared
                 || item.path == preference
                 || item.path == credential
+                || item.path == logs
+                || item.path == sync_cache
         }));
+        assert!(
+            preview
+                .unsupported_operations
+                .iter()
+                .any(|item| item.tool == "zoom")
+        );
+        assert!(
+            preview
+                .unsupported_operations
+                .iter()
+                .any(|item| item.tool == "dropbox")
+        );
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn classic_teams_activity_detection_recognizes_both_bundle_names_and_unknown() {
-        let bundles = &["Microsoft Teams classic.app", "Microsoft Teams.app"];
-        for name in bundles {
-            let executable = PathBuf::from(format!("/Applications/{name}/Contents/MacOS/Teams"));
-            assert!(process_paths_active_or_unknown(
-                Ok::<_, ()>(vec![executable]),
-                bundles
-            ));
-        }
-        assert!(process_paths_active_or_unknown(
-            Err::<Vec<PathBuf>, ()>(()),
-            bundles
-        ));
-        assert!(!process_paths_active_or_unknown(
+    fn classic_teams_activity_detection_survives_bundle_rename_and_unknown_state() {
+        let exact = &["Teams", "Microsoft Teams", "Microsoft Teams classic"];
+        let prefixes = &["Teams Helper", "Microsoft Teams Helper"];
+        assert!(named_process_active_or_unknown(
             Ok::<_, ()>(vec![PathBuf::from(
-                "/Applications/Microsoft Teams Fake.app/Contents/MacOS/Teams"
+                "/Applications/Teams Work.app/Contents/MacOS/Teams"
             )]),
-            bundles,
+            exact,
+            prefixes,
+        ));
+        assert!(named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from(
+                "/Applications/Teams Work.app/Contents/Frameworks/Teams Helper.app/Contents/MacOS/Teams Helper (Renderer)"
+            )]),
+            exact,
+            prefixes,
+        ));
+        assert!(named_process_active_or_unknown(
+            Err::<Vec<PathBuf>, ()>(()),
+            exact,
+            prefixes,
+        ));
+        assert!(!named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from(
+                "/Applications/Other.app/Contents/MacOS/Other"
+            )]),
+            exact,
+            prefixes,
         ));
     }
 
@@ -1954,20 +1999,34 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn discord_activity_detection_blocks_running_or_unknown_process_state() {
-        assert!(discord_process_active_or_unknown(Ok::<_, ()>(vec![
-            PathBuf::from("/Applications/Discord Work.app/Contents/MacOS/Discord")
-        ]),));
-        assert!(discord_process_active_or_unknown(Ok::<_, ()>(vec![
-            PathBuf::from(
+        let exact = &["Discord"];
+        let prefixes = &["Discord Helper"];
+        assert!(named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from(
+                "/Applications/Discord Work.app/Contents/MacOS/Discord"
+            )]),
+            exact,
+            prefixes
+        ));
+        assert!(named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from(
                 "/Applications/Discord Work.app/Contents/Frameworks/Discord Helper.app/Contents/MacOS/Discord Helper (Renderer)"
-            )
-        ]),));
-        assert!(discord_process_active_or_unknown(Err::<Vec<PathBuf>, ()>(
-            ()
-        )));
-        assert!(!discord_process_active_or_unknown(Ok::<_, ()>(vec![
-            PathBuf::from("/Applications/Discord Canary.app/Contents/MacOS/Discord Canary")
-        ]),));
+            )]),
+            exact,
+            prefixes
+        ));
+        assert!(named_process_active_or_unknown(
+            Err::<Vec<PathBuf>, ()>(()),
+            exact,
+            prefixes
+        ));
+        assert!(!named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from(
+                "/Applications/Discord Canary.app/Contents/MacOS/Discord Canary"
+            )]),
+            exact,
+            prefixes
+        ));
     }
 
     #[test]
