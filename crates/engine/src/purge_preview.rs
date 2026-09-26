@@ -22,7 +22,7 @@ pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 2;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -517,6 +517,23 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             license_note: "Homebrew documentation license",
         }],
     },
+    DeveloperCacheRule {
+        tool: "teams-classic",
+        rule_id: "com.microsoft.teams.classic_cache.macos",
+        rule_version: 1,
+        title: "Classic Teams app cache",
+        suffix: &["Library", "Caches", "com.microsoft.teams"],
+        location: "~/Library/Caches/com.microsoft.teams",
+        location_kind: "directory",
+        rebuildability_note: "Microsoft documents this exact Classic Teams cache directory as removable after quitting Teams. It may need to rebuild or sign in again. Application Support, Group Containers, Preferences, Keychain and diagnostic logs are never included.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Microsoft Teams for Mac cache guidance (Classic client)",
+            url: "https://learn.microsoft.com/en-us/answers/questions/4437348/i-deleted-classic-teams-from-my-mac-and-now-i-have",
+            reviewed_utc: "2026-09-26",
+            license_note: "Microsoft-hosted support guidance",
+        }],
+    },
     browser_cache_rule!(
         "chrome",
         "com.google.chrome.http_cache.macos",
@@ -602,6 +619,16 @@ pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
         tool: "docker-desktop",
         operation: "Docker Desktop VM disk (Docker.raw / Docker.qcow2)",
         reason: "the VM disk stores containers and images, including user data; it is never a rebuildable file cache or a Trash candidate",
+    },
+    UnsupportedOperation {
+        tool: "teams-new",
+        operation: "New Teams protected container and group data",
+        reason: "the New Teams cache is inside app/group containers that the App Store sandbox cannot treat as a user-granted general cache root; shared identity and settings are excluded",
+    },
+    UnsupportedOperation {
+        tool: "application-logs",
+        operation: "generic application logs and diagnostic reports",
+        reason: "logs can be needed for diagnosis, and a generic name match cannot establish ownership, rebuildability or absence of user content",
     },
     UnsupportedOperation {
         tool: "safari",
@@ -1264,7 +1291,7 @@ fn developer_cache_preview_with_home(
         matched_locations.push(path);
         let activity = if lock_sibling_observed(&entry.path, rule, &by_path) {
             DeveloperCacheActivity::LockFileObserved
-        } else if browser_active_or_unknown(rule.tool, account_home) {
+        } else if application_active_or_unknown(rule.tool, account_home) {
             DeveloperCacheActivity::ApplicationActiveOrUnknown
         } else {
             DeveloperCacheActivity::NotDetected
@@ -1294,7 +1321,7 @@ fn developer_cache_preview_with_home(
                     Some("activity lock file was observed near this cache; preview is conservative")
                 }
                 DeveloperCacheActivity::ApplicationActiveOrUnknown => {
-                    Some("browser is running or its process state could not be proven idle")
+                    Some("application is running or its process state could not be proven idle")
                 }
                 DeveloperCacheActivity::NotDetected => None,
             },
@@ -1461,14 +1488,14 @@ fn revalidate_developer_cache_selection_with_home(
             return Err("developer cache activity lock file is present".into());
         }
     }
-    if browser_active_or_unknown(location.rule.tool, account_home) {
-        return Err("browser is running or its process state could not be proven idle".into());
+    if application_active_or_unknown(location.rule.tool, account_home) {
+        return Err("application is running or its process state could not be proven idle".into());
     }
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn browser_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
     let (bundle, lock) = match tool {
         "chrome" => (
             "Google Chrome",
@@ -1479,6 +1506,7 @@ fn browser_active_or_unknown(tool: &str, account_home: &Path) -> bool {
             Some(account_home.join("Library/Application Support/Microsoft Edge/SingletonLock")),
         ),
         "firefox" => ("Firefox", None),
+        "teams-classic" => ("Microsoft Teams", None),
         _ => return false,
     };
     if lock.is_some_and(|path| std::fs::symlink_metadata(path).is_ok()) {
@@ -1508,8 +1536,8 @@ fn browser_active_or_unknown(tool: &str, account_home: &Path) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn browser_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
-    matches!(tool, "chrome" | "edge" | "firefox")
+fn application_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
+    matches!(tool, "chrome" | "edge" | "firefox" | "teams-classic")
 }
 
 fn nofollow_existing_rule_directory(
@@ -1780,6 +1808,35 @@ mod tests {
 
         assert!(paths.contains(&real_pip.as_path()));
         assert!(!paths.contains(&false_pip.as_path()));
+    }
+
+    #[test]
+    fn classic_teams_cache_is_exact_and_does_not_select_user_or_shared_data() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let cache = home.join("Library/Caches/com.microsoft.teams");
+        let support = home.join("Library/Application Support/Microsoft/Teams");
+        let shared = home.join("Library/Group Containers/UBF8T346G9.com.microsoft.teams");
+        let preference = home.join("Library/Preferences/com.microsoft.teams.plist");
+        fs::create_dir_all(&cache).expect("classic cache");
+        fs::create_dir_all(&support).expect("application support");
+        fs::create_dir_all(&shared).expect("shared data");
+        fs::create_dir_all(preference.parent().expect("preferences parent"))
+            .expect("preferences");
+        fs::write(&preference, b"user preference").expect("preference");
+
+        let preview = developer_cache_preview_at(&home, &home);
+        let matches = preview
+            .developer_caches
+            .iter()
+            .filter(|item| item.tool == "teams-classic")
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path, cache);
+        assert_eq!(matches[0].rule_id, "com.microsoft.teams.classic_cache.macos");
+        assert!(!preview.developer_caches.iter().any(|item| {
+            item.path == support || item.path == shared || item.path == preference
+        }));
     }
 
     #[test]
