@@ -324,6 +324,28 @@ pub struct EvidenceSource {
 // installed products, and other user-authored artifacts. Locations are matched
 // only at their documented account-home-anchored absolute paths; the granted
 // preview root may be that cache directory itself or any ancestor.
+macro_rules! browser_cache_rule {
+    ($tool:expr, $id:expr, $title:expr, $suffix:expr, $location:expr, $evidence_title:expr, $evidence_url:expr $(,)?) => {
+        DeveloperCacheRule {
+            tool: $tool,
+            rule_id: $id,
+            rule_version: 1,
+            title: $title,
+            suffix: $suffix,
+            location: $location,
+            location_kind: "directory",
+            rebuildability_note: "This exact cache class is rebuildable; only its leaf directory is eligible. The matching Application Support profile is observed but never selected. Browser activity or unknown process state blocks cleanup.",
+            lock_siblings: &[],
+            evidence: &[EvidenceSource {
+                title: $evidence_title,
+                url: $evidence_url,
+                reviewed_utc: "2026-09-26",
+                license_note: "Browser vendor documentation",
+            }],
+        }
+    };
+}
+
 const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
     DeveloperCacheRule {
         tool: "xcode",
@@ -495,57 +517,69 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             license_note: "Homebrew documentation license",
         }],
     },
-    DeveloperCacheRule {
-        tool: "chrome",
-        rule_id: "com.google.chrome.disk_cache.macos",
-        rule_version: 1,
-        title: "Google Chrome profile disk caches",
-        suffix: &["Library", "Caches", "Google", "Chrome"],
-        location: "~/Library/Caches/Google/Chrome",
-        location_kind: "directory",
-        rebuildability_note: "Chromium maps the macOS profile cache tree to Library/Caches. This rule excludes the parallel Application Support user-data tree containing history, cookies, bookmarks and passwords. Chrome must be fully closed.",
-        lock_siblings: &[],
-        evidence: &[EvidenceSource {
-            title: "Chromium user data directory: macOS user cache directory",
-            url: "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
-            reviewed_utc: "2026-09-26",
-            license_note: "Chromium documentation license",
-        }],
-    },
-    DeveloperCacheRule {
-        tool: "edge",
-        rule_id: "com.microsoft.edge.disk_cache.macos",
-        rule_version: 1,
-        title: "Microsoft Edge profile disk caches",
-        suffix: &["Library", "Caches", "Microsoft Edge"],
-        location: "~/Library/Caches/Microsoft Edge",
-        location_kind: "directory",
-        rebuildability_note: "Edge uses a distinct macOS cache tree. Only Library/Caches/Microsoft Edge is selected; Application Support profiles, history, cookies, passwords and bookmarks are excluded. Edge must be fully closed.",
-        lock_siblings: &[],
-        evidence: &[EvidenceSource {
-            title: "Microsoft Edge macOS cache directory guidance",
-            url: "https://learn.microsoft.com/en-us/answers/questions/2378736/how-to-fix-ms-edge-installation-failed-on-mac-inte",
-            reviewed_utc: "2026-09-26",
-            license_note: "Microsoft-hosted support discussion; path independently confirmed at preview",
-        }],
-    },
-    DeveloperCacheRule {
-        tool: "firefox",
-        rule_id: "org.mozilla.firefox.disk_cache.macos",
-        rule_version: 1,
-        title: "Firefox profile disk caches",
-        suffix: &["Library", "Caches", "Firefox", "Profiles"],
-        location: "~/Library/Caches/Firefox/Profiles",
-        location_kind: "directory",
-        rebuildability_note: "Firefox keeps its disk cache under Library/Caches/Firefox/Profiles, separate from Application Support/Firefox/Profiles containing bookmarks, credentials and history. Firefox must be fully closed.",
-        lock_siblings: &[],
-        evidence: &[EvidenceSource {
-            title: "Mozilla Support: Firefox macOS disk cache location",
-            url: "https://support.mozilla.org/en-US/questions/1280409",
-            reviewed_utc: "2026-09-26",
-            license_note: "Mozilla-hosted support discussion",
-        }],
-    },
+    browser_cache_rule!(
+        "chrome",
+        "com.google.chrome.http_cache.macos",
+        "Chrome HTTP cache",
+        &["Library", "Caches", "Google", "Chrome"],
+        "~/Library/Caches/Google/Chrome/<profile>/Cache",
+        "Chromium user cache mapping and HTTP cache storage",
+        "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
+    ),
+    browser_cache_rule!(
+        "chrome",
+        "com.google.chrome.code_cache.macos",
+        "Chrome code cache",
+        &["Library", "Caches", "Google", "Chrome"],
+        "~/Library/Caches/Google/Chrome/<profile>/Code Cache",
+        "Chromium code cache under the separate user cache tree",
+        "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
+    ),
+    browser_cache_rule!(
+        "chrome",
+        "com.google.chrome.gpu_cache.macos",
+        "Chrome GPU cache",
+        &["Library", "Caches", "Google", "Chrome"],
+        "~/Library/Caches/Google/Chrome/<profile>/GPUCache",
+        "Chromium GPU cache under the separate user cache tree",
+        "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
+    ),
+    browser_cache_rule!(
+        "edge",
+        "com.microsoft.edge.http_cache.macos",
+        "Edge HTTP cache",
+        &["Library", "Caches", "Microsoft Edge"],
+        "~/Library/Caches/Microsoft Edge/<profile>/Cache",
+        "Edge disk cache under a distinct user cache tree; policy may override this location",
+        "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/diskcachedir",
+    ),
+    browser_cache_rule!(
+        "edge",
+        "com.microsoft.edge.code_cache.macos",
+        "Edge code cache",
+        &["Library", "Caches", "Microsoft Edge"],
+        "~/Library/Caches/Microsoft Edge/<profile>/Code Cache",
+        "Edge code cache under a distinct user cache tree",
+        "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/diskcachedir",
+    ),
+    browser_cache_rule!(
+        "edge",
+        "com.microsoft.edge.gpu_cache.macos",
+        "Edge GPU cache",
+        &["Library", "Caches", "Microsoft Edge"],
+        "~/Library/Caches/Microsoft Edge/<profile>/GPUCache",
+        "Edge GPU cache under a distinct user cache tree",
+        "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/diskcachedir",
+    ),
+    browser_cache_rule!(
+        "firefox",
+        "org.mozilla.firefox.http_cache.macos",
+        "Firefox HTTP disk cache",
+        &["Library", "Caches", "Firefox", "Profiles"],
+        "~/Library/Caches/Firefox/Profiles/<profile>/cache2",
+        "Firefox cache2 stores HTTP disk entries outside the main profile containing history and credentials",
+        "https://firefox-source-docs.mozilla.org/networking/cache2/doc.html",
+    ),
 ];
 
 pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
@@ -1294,13 +1328,91 @@ fn developer_cache_rule_locations(
             account_home.display()
         )
     })?;
-    Ok(DEVELOPER_CACHE_RULES
-        .iter()
-        .filter_map(|rule| {
-            nofollow_existing_rule_directory(&account_home, rule)
-                .map(|path| DeveloperCacheRuleLocation { rule, path })
-        })
-        .collect())
+    let mut locations = Vec::new();
+    for rule in DEVELOPER_CACHE_RULES {
+        let Some(base) = nofollow_existing_rule_directory(&account_home, rule) else {
+            continue;
+        };
+        let Some(leaf) = browser_cache_leaf(rule.rule_id) else {
+            locations.push(DeveloperCacheRuleLocation { rule, path: base });
+            continue;
+        };
+        let support_base = match rule.tool {
+            "chrome" => &["Library", "Application Support", "Google", "Chrome"][..],
+            "edge" => &["Library", "Application Support", "Microsoft Edge"][..],
+            "firefox" => &["Library", "Application Support", "Firefox", "Profiles"][..],
+            _ => continue,
+        };
+        let Some(support) = nofollow_existing_components(&account_home, support_base) else {
+            continue;
+        };
+        let Ok(profiles) = std::fs::read_dir(&base) else {
+            continue;
+        };
+        for profile in profiles {
+            let Ok(profile) = profile else { continue };
+            let name = profile.file_name();
+            let Some(name_str) = name.to_str() else {
+                continue;
+            };
+            let recognized = if rule.tool == "firefox" {
+                !name_str.is_empty() && !name_str.starts_with('.')
+            } else {
+                name_str == "Default"
+                    || name_str.strip_prefix("Profile ").is_some_and(|number| {
+                        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                    })
+            };
+            if !recognized
+                || !is_real_directory(&profile.path())
+                || !is_real_directory(&support.join(&name))
+            {
+                continue;
+            }
+            let target = profile.path().join(leaf);
+            if is_real_directory(&target) {
+                locations.push(DeveloperCacheRuleLocation { rule, path: target });
+            }
+        }
+    }
+    locations.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.rule.rule_id.cmp(right.rule.rule_id))
+    });
+    Ok(locations)
+}
+
+fn browser_cache_leaf(rule_id: &str) -> Option<&'static str> {
+    match rule_id {
+        "com.google.chrome.http_cache.macos" | "com.microsoft.edge.http_cache.macos" => {
+            Some("Cache")
+        }
+        "com.google.chrome.code_cache.macos" | "com.microsoft.edge.code_cache.macos" => {
+            Some("Code Cache")
+        }
+        "com.google.chrome.gpu_cache.macos" | "com.microsoft.edge.gpu_cache.macos" => {
+            Some("GPUCache")
+        }
+        "org.mozilla.firefox.http_cache.macos" => Some("cache2"),
+        _ => None,
+    }
+}
+
+fn is_real_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+}
+
+fn nofollow_existing_components(home: &Path, components: &[&str]) -> Option<PathBuf> {
+    let mut path = home.to_path_buf();
+    for component in components {
+        path.push(component);
+        if !is_real_directory(&path) {
+            return None;
+        }
+    }
+    Some(path)
 }
 
 pub fn revalidate_developer_cache_selection(selection: &CacheSelection) -> Result<(), String> {
@@ -1367,10 +1479,10 @@ fn browser_active_or_unknown(tool: &str, account_home: &Path) -> bool {
             Err(_) => return true,
         }
     }
-    match sayaka_platform_macos::status::running_executable_paths(65_536) {
+    match sayaka_platform_macos::status::current_user_executable_paths_complete(65_536) {
         Ok(processes) => processes
             .iter()
-            .any(|(_, path)| path.to_string_lossy().contains(&format!("/{bundle}.app/"))),
+            .any(|path| path.to_string_lossy().contains(&format!("/{bundle}.app/"))),
         Err(_) => true,
     }
 }
