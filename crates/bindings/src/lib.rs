@@ -12,6 +12,8 @@ mod ai_footprint;
 pub use ai_footprint::*;
 mod diagnostics;
 pub use diagnostics::*;
+mod exclusions;
+pub use exclusions::*;
 mod installer;
 pub use installer::*;
 mod maintenance_catalog;

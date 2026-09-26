@@ -30,6 +30,9 @@ extern "C" {
 #define SAYAKA_AI_CODEX_V1 2u
 #define SAYAKA_AI_COPILOT_CLI_V1 3u
 #define SAYAKA_AI_COMFYUI_V1 4u
+#define SAYAKA_EXCLUSIONS_LIST_V1 1u
+#define SAYAKA_EXCLUSIONS_ADD_V1 2u
+#define SAYAKA_EXCLUSIONS_REMOVE_V1 3u
 #define SAYAKA_PATH_UNIX_BYTES_V1 1u
 #define SAYAKA_PATH_WINDOWS_UTF16LE_V1 2u
 
@@ -97,6 +100,26 @@ typedef struct SayakaMaintenanceCatalogRequestV1 {
    returns SAYAKA_BUFFER_TOO_SMALL and the exact required byte count. */
 SAYAKA_API int32_t sayaka_maintenance_catalog_v1(
     const SayakaMaintenanceCatalogRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
+typedef struct SayakaExclusionsRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t operation; /* SAYAKA_EXCLUSIONS_*_V1 */
+    uint32_t reserved; /* Must be zero. */
+    SayakaPathV1 config_dir; /* App-private policy directory. */
+    SayakaPathV1 root; /* Caller holds security-scoped access. */
+    SayakaPathV1 entry; /* Absolute for add; absolute or relative for remove; ignored for list. */
+} SayakaExclusionsRequestV1;
+
+/* Identity-bound shared policy management. Read-only list or single-entry
+   add/remove; mutation never moves the protected path. LIST supports a normal
+   NULL/0 size probe (SAYAKA_BUFFER_TOO_SMALL with required bytes). ADD/REMOVE
+   are one-shot: capacity must equal SAYAKA_MAX_QUERY_BYTES_V1, otherwise
+   SAYAKA_INVALID_ARGUMENT is returned before any mutation. All operations
+   return bounded JSON listing relative entries and missing-attention states. */
+SAYAKA_API int32_t sayaka_exclusions_v1(
+    const SayakaExclusionsRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
 typedef struct SayakaScanSnapshotV1 {
@@ -202,6 +225,16 @@ typedef struct SayakaPurgePreviewProfileRequestV1 {
     uint32_t profile; /* 1/0 = projects, 2 = developer_caches. */
     uint32_t reserved; /* Must be zero. */
 } SayakaPurgePreviewProfileRequestV1;
+
+typedef struct SayakaPurgePreviewPolicyRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    SayakaPathV1 root; /* One explicitly authorized native absolute root. */
+    uint32_t stale_days;
+    uint32_t profile; /* 1/0 = projects, 2 = developer_caches. */
+    uint32_t reserved; /* Must be zero. */
+    SayakaPathV1 config_dir; /* App-private exclusion policy directory. */
+} SayakaPurgePreviewPolicyRequestV1;
 
 typedef struct SayakaPurgeItemRefV1 {
     uint64_t preview_handle; /* Purge preview handle, never scan/installer/execution. */
@@ -361,6 +394,8 @@ SAYAKA_API int32_t sayaka_purge_preview_start_v1(const SayakaPurgePreviewRequest
                                                uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_purge_preview_start_profile_v1(const SayakaPurgePreviewProfileRequestV1 *request,
                                                        uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_purge_preview_start_policy_v1(const SayakaPurgePreviewPolicyRequestV1 *request,
+                                                      uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_purge_poll_v1(uint64_t handle, SayakaPurgeSnapshotV1 *out_snapshot);
 SAYAKA_API int32_t sayaka_purge_cancel_v1(uint64_t handle);
 SAYAKA_API int32_t sayaka_purge_execute_start_v1(const SayakaPurgeExecuteRequestV1 *request,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use sayaka_engine::clean_policy::{self, ConfigPath, PolicyGuardStatus, PolicySnapshot};
 use sayaka_engine::execute::{CacheSession, PurgeSession};
 use sayaka_engine::journal::{self, Store};
 use sayaka_engine::model::Cancellation;
@@ -35,6 +36,44 @@ pub struct SayakaPurgePreviewProfileRequestV1 {
     /// callers that zero-initialize optional fields.
     pub profile: u32,
     pub reserved: u32,
+}
+
+#[repr(C)]
+pub struct SayakaPurgePreviewPolicyRequestV1 {
+    pub abi_version: u32,
+    pub struct_size: u32,
+    pub root: SayakaPathV1,
+    pub stale_days: u32,
+    pub profile: u32,
+    pub reserved: u32,
+    pub config_dir: SayakaPathV1,
+}
+
+#[derive(Clone)]
+struct PurgePolicy {
+    config: ConfigPath,
+    root: std::path::PathBuf,
+    snapshot: PolicySnapshot,
+}
+
+impl PurgePolicy {
+    fn excludes(&self, path: &std::path::Path) -> bool {
+        self.snapshot
+            .effective_exclusions
+            .iter()
+            .any(|entry| path.starts_with(entry) || entry.starts_with(path))
+    }
+
+    fn needs_attention(&self) -> bool {
+        !self.snapshot.missing_attention_entries.is_empty()
+    }
+
+    fn unchanged(&self) -> bool {
+        matches!(
+            clean_policy::guard_snapshot(&self.config, &self.root, &self.snapshot),
+            Ok(PolicyGuardStatus::Unchanged)
+        )
+    }
 }
 
 #[repr(C)]
@@ -83,6 +122,7 @@ pub struct SayakaPurgeSnapshotV1 {
 pub(super) struct PurgePreviewJob {
     task: ScanTask,
     options: PurgeOptions,
+    policy: Option<PurgePolicy>,
     preview: Option<Result<Arc<PurgePreview>, i32>>,
     result: Option<Result<Vec<u8>, i32>>,
     closed: bool,
@@ -151,7 +191,7 @@ fn ensure_preview(job: &mut PurgePreviewJob) -> Result<Arc<PurgePreview>, i32> {
         .clone()
 }
 
-fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
+fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy>) -> Value {
     let digest = preview.plan_digest();
     let mut next_id = 1u64;
     json!({
@@ -162,6 +202,7 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
         "complete": preview.complete,
         "effects_performed": false,
         "execution_authority": false,
+        "policy_needs_attention": policy.is_some_and(PurgePolicy::needs_attention),
         "contract": match preview.profile {
             PurgeProfile::Projects => "revalidated_purge_trash_v1",
             PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
@@ -203,7 +244,8 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
                         "complete": artifact.complete,
                         "modified_unix_ms": artifact.modified_unix_ms,
                         "stale": artifact.stale,
-                        "reasons": reasons(artifact),
+                        "reasons": reasons(artifact, policy),
+                        "policy_excluded": policy.is_some_and(|p| p.excludes(&artifact.path)),
                         "evidence": {
                             "project_markers": artifact.markers.iter().map(|marker| json!({
                                 "kind": marker.as_str(),
@@ -216,7 +258,7 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
             });
             value
         }).collect::<Vec<_>>(),
-        "developer_caches": developer_cache_items_json(preview, handle),
+        "developer_caches": developer_cache_items_json(preview, handle, policy),
         "unsupported_operations": unsupported_operations_json(preview.unsupported_operations),
         "scan_issues": preview.scan_issues.iter().map(|issue| json!({
             "path": issue.path.as_deref().map(wire::NativePath),
@@ -228,7 +270,11 @@ fn preview_json(preview: &PurgePreview, handle: u64) -> Value {
     })
 }
 
-fn developer_cache_items_json(preview: &PurgePreview, handle: u64) -> Vec<Value> {
+fn developer_cache_items_json(
+    preview: &PurgePreview,
+    handle: u64,
+    policy: Option<&PurgePolicy>,
+) -> Vec<Value> {
     preview
         .developer_caches
         .iter()
@@ -250,6 +296,7 @@ fn developer_cache_items_json(preview: &PurgePreview, handle: u64) -> Vec<Value>
                 "rebuildability_note": cache.rebuildability_note,
                 "user_product": cache.user_product,
                 "cleanup_supported": cache.cleanup_supported,
+                "policy_excluded": policy.is_some_and(|p| p.excludes(&cache.path)),
                 "unsupported_reason": cache.unsupported_reason,
                 "sizes": {
                     "logical": cache.logical_bytes,
@@ -335,7 +382,10 @@ fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
     Some(total)
 }
 
-fn reasons(artifact: &purge_preview::PurgeArtifact) -> Vec<&'static str> {
+fn reasons(
+    artifact: &purge_preview::PurgeArtifact,
+    policy: Option<&PurgePolicy>,
+) -> Vec<&'static str> {
     let mut reasons = vec!["project_marker_bound"];
     reasons.push(match artifact.stale {
         Some(true) => "stale",
@@ -345,12 +395,16 @@ fn reasons(artifact: &purge_preview::PurgeArtifact) -> Vec<&'static str> {
     if !artifact.complete {
         reasons.push("partial_coverage");
     }
+    if policy.is_some_and(|p| p.excludes(&artifact.path)) {
+        reasons.push("protected_by_user");
+    }
     reasons
 }
 
 fn preview_result_bytes(job: &mut PurgePreviewJob, handle: u64) -> Result<&[u8], i32> {
     if job.result.is_none() {
-        let data = ensure_preview(job).map(|preview| preview_json(&preview, handle));
+        let data =
+            ensure_preview(job).map(|preview| preview_json(&preview, handle, job.policy.as_ref()));
         job.result = Some(data.and_then(|data| bounded_json(&data, MAX_RESULT_BYTES)));
     }
     job.result
@@ -570,6 +624,7 @@ fn execution_worker(
     task_handle: u64,
     preview_handle: u64,
     preview: Arc<PurgePreview>,
+    policy: Option<PurgePolicy>,
     item_ids: Vec<PurgeItemId>,
     state_dir: std::path::PathBuf,
     cancellation: Cancellation,
@@ -592,6 +647,39 @@ fn execution_worker(
             MAX_RESULT_BYTES,
         )
         .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
+    }
+    if let Some(policy) = &policy {
+        let excluded = match preview.profile {
+            PurgeProfile::Projects => purge_preview::resolve_selections_by_ids(&preview, &item_ids)
+                .map(|selections| {
+                    selections
+                        .iter()
+                        .any(|item| policy.excludes(&item.artifact))
+                }),
+            PurgeProfile::DeveloperCaches => {
+                purge_preview::resolve_cache_selections_by_ids(&preview, &item_ids)
+                    .map(|selections| selections.iter().any(|item| policy.excludes(&item.path)))
+            }
+        };
+        if policy.needs_attention() || !policy.unchanged() || excluded.unwrap_or(true) {
+            return bounded_json(
+                &refusal_json(
+                    task_handle,
+                    preview_handle,
+                    &preview,
+                    &item_ids,
+                    RefusalDetails {
+                        status: "refused",
+                        message: "protected-path policy requires a fresh preview; nothing moved",
+                        reason: "protected_or_policy_changed",
+                    },
+                    vec![],
+                    vec![],
+                ),
+                MAX_RESULT_BYTES,
+            )
+            .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
+        }
     }
     let mut session = match PreparedExecutionSession::prepare(&preview, &item_ids, &cancellation) {
         Ok(session) => session,
@@ -663,7 +751,7 @@ fn execution_worker(
     let store = Store::open(&state_dir, true)
         .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
     let report = session
-        .execute(&plan, &approval, &cancellation, &store)
+        .execute(&plan, &approval, &cancellation, &store, policy.as_ref())
         .map_err(|error| ScanError::new(ScanCode::Internal, error.to_string()))?;
     bounded_json(
         &execution_json(task_handle, preview_handle, &preview, &item_ids, report),
@@ -748,10 +836,23 @@ impl PreparedExecutionSession {
         approval: &sayaka_engine::model::Approval,
         cancellation: &Cancellation,
         store: &Store,
+        policy: Option<&PurgePolicy>,
     ) -> std::io::Result<sayaka_engine::execute::ExecutionReport> {
         match self {
-            Self::Projects(session) => session.execute(plan, approval, cancellation, store),
-            Self::Caches(session) => session.execute(plan, approval, cancellation, store),
+            Self::Projects(session) => session.execute_with_exclusions(
+                plan,
+                approval,
+                cancellation,
+                store,
+                policy.map(|p| (&p.config, p.root.as_path(), &p.snapshot)),
+            ),
+            Self::Caches(session) => session.execute_with_exclusions(
+                plan,
+                approval,
+                cancellation,
+                store,
+                policy.map(|p| (&p.config, p.root.as_path(), &p.snapshot)),
+            ),
         }
     }
 }
@@ -855,6 +956,7 @@ unsafe fn read_item_ids(
 fn start_preview(
     root: std::path::PathBuf,
     options: PurgeOptions,
+    policy: Option<PurgePolicy>,
     out_handle: *mut u64,
 ) -> Result<(), i32> {
     options.validate().map_err(|_| INVALID_ARGUMENT)?;
@@ -867,6 +969,7 @@ fn start_preview(
         Arc::new(Mutex::new(PurgeJob::Preview(Box::new(PurgePreviewJob {
             task,
             options,
+            policy,
             preview: None,
             result: None,
             closed: false,
@@ -911,7 +1014,7 @@ pub unsafe extern "C" fn sayaka_purge_preview_start_v1(
             profile: PurgeProfile::Projects,
         };
         let root = unsafe { decode_path(request.root)? };
-        start_preview(root, options, out_handle)?;
+        start_preview(root, options, None, out_handle)?;
         Ok(())
     })
 }
@@ -951,8 +1054,59 @@ pub unsafe extern "C" fn sayaka_purge_preview_start_profile_v1(
             profile,
         };
         let root = unsafe { decode_path(request.root)? };
-        start_preview(root, options, out_handle)?;
+        start_preview(root, options, None, out_handle)?;
         Ok(())
+    })
+}
+
+/// Starts a purge preview bound to the same per-root exclusion policy as clean.
+///
+/// # Safety
+/// Request/path bytes are readable; out_handle is writable. The caller holds
+/// read access for root and an App-private configuration directory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_preview_start_policy_v1(
+    request: *const SayakaPurgePreviewPolicyRequestV1,
+    out_handle: *mut u64,
+) -> i32 {
+    boundary(|| {
+        pointer(out_handle)?;
+        // SAFETY: Caller supplies writable output storage.
+        unsafe { out_handle.write(0) };
+        pointer(request)?;
+        // SAFETY: Caller supplies readable, aligned request storage.
+        let request = unsafe { &*request };
+        if request.abi_version != ABI_VERSION
+            || request.struct_size as usize != size_of::<SayakaPurgePreviewPolicyRequestV1>()
+            || request.reserved != 0
+        {
+            return Err(UNSUPPORTED_VERSION);
+        }
+        if !cfg!(target_os = "macos") {
+            return Err(UNSUPPORTED_PLATFORM);
+        }
+        let profile = PurgeProfile::from_ffi(request.profile).ok_or(INVALID_ARGUMENT)?;
+        // SAFETY: Caller holds the paths readable for this call.
+        let root = unsafe { decode_path(request.root)? };
+        let config_dir = unsafe { decode_path(request.config_dir)? };
+        let config =
+            clean_policy::resolve_config_path(Some(&config_dir)).map_err(|_| INVALID_ARGUMENT)?;
+        let snapshot =
+            clean_policy::snapshot_for_root(&config, &root).map_err(|_| INVALID_CANDIDATE)?;
+        let policy = PurgePolicy {
+            config,
+            root: root.clone(),
+            snapshot,
+        };
+        let options = PurgeOptions {
+            stale_days: if request.stale_days == 0 {
+                purge_preview::DEFAULT_STALE_DAYS
+            } else {
+                request.stale_days
+            },
+            profile,
+        };
+        start_preview(root, options, Some(policy), out_handle)
     })
 }
 
@@ -1065,7 +1219,7 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
             return Err(INVALID_ARGUMENT);
         };
         journal::validate_state_directory_path(&state_dir).map_err(|_| INVALID_ARGUMENT)?;
-        let preview = {
+        let (preview, policy) = {
             let slot = get_purge(request.preview_handle)?;
             let mut job = lock_job(&slot)?;
             match &mut *job {
@@ -1080,7 +1234,7 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
                     {
                         return Err(INVALID_ARGUMENT);
                     }
-                    preview
+                    (preview, job.policy.clone())
                 }
                 PurgeJob::Execution(_) => return Err(INVALID_HANDLE),
             }
@@ -1097,6 +1251,7 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
                     handle,
                     preview_handle,
                     preview,
+                    policy,
                     item_ids,
                     state_dir,
                     worker_cancel,
