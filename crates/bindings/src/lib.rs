@@ -22,6 +22,8 @@ mod purge;
 pub use purge::*;
 mod system_status;
 pub use system_status::*;
+mod uninstall;
+pub use uninstall::*;
 
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
@@ -102,11 +104,14 @@ struct Registry {
     jobs: HashMap<u64, Arc<Mutex<Job>>>,
     installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
     purges: HashMap<u64, Arc<Mutex<purge::PurgeJob>>>,
+    uninstalls: HashMap<u64, Arc<Mutex<uninstall::UninstallJob>>>,
 }
 
 impl Registry {
     fn allocate_handle(&mut self) -> Result<u64, i32> {
-        if self.jobs.len() + self.installers.len() + self.purges.len() >= MAX_TASKS {
+        if self.jobs.len() + self.installers.len() + self.purges.len() + self.uninstalls.len()
+            >= MAX_TASKS
+        {
             return Err(LIMIT_EXCEEDED);
         }
         let handle = self.next_handle;
@@ -123,6 +128,7 @@ fn registry() -> &'static Mutex<Registry> {
             jobs: HashMap::new(),
             installers: HashMap::new(),
             purges: HashMap::new(),
+            uninstalls: HashMap::new(),
         })
     })
 }

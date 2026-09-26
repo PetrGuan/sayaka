@@ -540,6 +540,9 @@ impl TrashSession {
 pub struct BundleUninstallSession {
     inner: Session<BundlePlatform>,
     bundle: PathBuf,
+    manifest_digest: [u8; 32],
+    manifest_device: u64,
+    manifest_inode: u64,
 }
 
 struct BundlePlatform {
@@ -660,6 +663,19 @@ impl BundleUninstallSession {
     /// scope must be the bundle's parent directory; exclusions are the
     /// preview contract's refusal surface, not plan exclusions.
     pub fn prepare(scope: Scope, bundle: &Path, cancellation: &Cancellation) -> io::Result<Self> {
+        let classification =
+            app_uninstall::classify_bundle_uninstaller(bundle).map_err(|reason| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("vendor workflow cannot be classified: {reason}"),
+                )
+            })?;
+        if classification.vendor.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "documented vendor uninstaller must be used for this bundle",
+            ));
+        }
         let mut planner = Planner::new(
             scope,
             Versions {
@@ -693,6 +709,9 @@ impl BundleUninstallSession {
                 preview,
             },
             bundle: bundle.to_path_buf(),
+            manifest_digest: classification.manifest_digest,
+            manifest_device: classification.manifest_device,
+            manifest_inode: classification.manifest_inode,
         })
     }
 
@@ -719,6 +738,11 @@ impl BundleUninstallSession {
     /// Approval re-observes the running state per the execution contract;
     /// anything but a proven clear state refuses approval.
     pub fn approve(&mut self, preview: &Plan) -> Result<Approval, Error> {
+        if !matches!(app_uninstall::classify_bundle_uninstaller(&self.bundle),
+            Ok(classification) if classification.vendor.is_none() && classification.manifest_digest == self.manifest_digest && classification.manifest_device == self.manifest_device && classification.manifest_inode == self.manifest_inode)
+        {
+            return Err(Error::new(ReasonCode::Excluded));
+        }
         match app_uninstall::bundle_running(&self.bundle) {
             RunningObservation::NotRunning => {}
             RunningObservation::Running(_) => return Err(Error::new(ReasonCode::OwnerRunning)),
@@ -735,10 +759,20 @@ impl BundleUninstallSession {
         store: &Store,
     ) -> io::Result<ExecutionReport> {
         let bundle = self.bundle.clone();
+        let manifest_digest = self.manifest_digest;
+        let manifest_device = self.manifest_device;
+        let manifest_inode = self.manifest_inode;
         let mut guard = move |point: GuardPoint, _: &Path| -> io::Result<GuardDecision> {
             // Last native guard: re-observe running immediately before the
             // sole Foundation call; fail closed on any unclear state.
             if matches!(point, GuardPoint::LastNative) {
+                if !matches!(app_uninstall::classify_bundle_uninstaller(&bundle),
+                    Ok(classification) if classification.vendor.is_none() && classification.manifest_digest == manifest_digest && classification.manifest_device == manifest_device && classification.manifest_inode == manifest_inode)
+                {
+                    return Ok(GuardDecision::Refused(
+                        "bundle manifest changed, is unclassifiable, or requires a vendor uninstaller".into(),
+                    ));
+                }
                 return Ok(match app_uninstall::bundle_running(&bundle) {
                     RunningObservation::NotRunning => GuardDecision::Proceed,
                     RunningObservation::Running(pids) => GuardDecision::Refused(format!(

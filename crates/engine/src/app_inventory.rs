@@ -782,23 +782,36 @@ pub enum BundleIdentifierRead {
 /// Read-only; used by the T9 copy-evidence slice to name the previewed
 /// bundle without a full inventory of its parent.
 pub fn read_bundle_identifier(bundle: &Path) -> BundleIdentifierRead {
-    let plist = bundle.join("Contents").join("Info.plist");
-    let limits = AppInventoryLimits::default();
-    let metadata = match std::fs::symlink_metadata(&plist) {
-        Ok(metadata) if metadata.is_file() => metadata,
-        Ok(_) => return BundleIdentifierRead::Unreadable("Info.plist is not a regular file"),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return BundleIdentifierRead::Unreadable("Info.plist is missing");
-        }
-        Err(_) => return BundleIdentifierRead::Unreadable("Info.plist cannot be inspected"),
-    };
-    if metadata.len() > limits.max_info_plist_bytes {
-        return BundleIdentifierRead::Unreadable("Info.plist exceeds the single-file budget");
+    match read_bundle_identifier_with_digest(bundle) {
+        Ok((field, _, _, _)) => BundleIdentifierRead::Parsed(field),
+        Err(reason) => BundleIdentifierRead::Unreadable(reason),
     }
-    let bytes = match std::fs::read(&plist) {
-        Ok(bytes) => bytes,
-        Err(_) => return BundleIdentifierRead::Unreadable("Info.plist cannot be read"),
-    };
+}
+
+/// Identifier and content digest from the same bounded plist read.
+pub fn read_bundle_identifier_with_digest(
+    bundle: &Path,
+) -> Result<(StringField, [u8; 32], u64, u64), &'static str> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let limits = AppInventoryLimits::default();
+    let file = open_bundle_manifest_nofollow(bundle)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Info.plist cannot be inspected")?;
+    if !metadata.is_file() {
+        return Err("Info.plist is not a regular file");
+    }
+    if metadata.len() > limits.max_info_plist_bytes {
+        return Err("Info.plist exceeds the single-file budget");
+    }
+    let mut bytes = Vec::new();
+    file.take(limits.max_info_plist_bytes + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Info.plist cannot be read")?;
+    if bytes.len() as u64 > limits.max_info_plist_bytes {
+        return Err("Info.plist exceeds the single-file budget");
+    }
     let cancellation = Cancellation::default();
     let context = ProbeContext {
         cancellation: &cancellation,
@@ -808,10 +821,40 @@ pub fn read_bundle_identifier(bundle: &Path) -> BundleIdentifierRead {
         now: wall_clock_now,
     };
     let mut budget = ProbeBudget::default();
-    match parse_info_plist(&bytes, context, &mut budget) {
-        Ok(parsed) => BundleIdentifierRead::Parsed(parsed.bundle_id),
-        Err(_) => BundleIdentifierRead::Unreadable("Info.plist cannot be parsed"),
+    let parsed = parse_info_plist(&bytes, context, &mut budget)
+        .map_err(|_| "Info.plist cannot be parsed")?;
+    let digest: [u8; 32] = Sha256::digest(&bytes).into();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok((parsed.bundle_id, digest, metadata.dev(), metadata.ino()))
     }
+    #[cfg(not(unix))]
+    Ok((parsed.bundle_id, digest, 0, 0))
+}
+
+#[cfg(unix)]
+fn open_bundle_manifest_nofollow(bundle: &Path) -> Result<std::fs::File, &'static str> {
+    use rustix::fs::{Mode, OFlags, open, openat};
+    let directory = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let bundle_fd = open(bundle, directory, Mode::empty())
+        .map_err(|_| "bundle cannot be opened without following links")?;
+    let contents_fd = openat(&bundle_fd, "Contents", directory, Mode::empty())
+        .map_err(|_| "Contents cannot be opened without following links")?;
+    let plist_fd = openat(
+        &contents_fd,
+        "Info.plist",
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| "Info.plist cannot be opened without following links")?;
+    Ok(std::fs::File::from(plist_fd))
+}
+
+#[cfg(not(unix))]
+fn open_bundle_manifest_nofollow(bundle: &Path) -> Result<std::fs::File, &'static str> {
+    std::fs::File::open(bundle.join("Contents").join("Info.plist"))
+        .map_err(|_| "Info.plist cannot be opened")
 }
 
 /// Resolves the declared executable of each record to a canonical path and
