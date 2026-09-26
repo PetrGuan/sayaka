@@ -17,6 +17,7 @@ const PID_CAP: usize = 65_536;
 const PROCESS_TOP_MAX_LIMIT: usize = 32;
 // SDK sys/proc_info.h; libc exposes proc_listpids but not this selector.
 const PROC_ALL_PIDS: u32 = 1;
+const PROC_UID_ONLY: u32 = 4;
 
 #[link(name = "System")]
 unsafe extern "C" {
@@ -547,6 +548,54 @@ pub fn running_executable_paths(max_pids: usize) -> io::Result<Vec<(u32, std::pa
         out.push((pid as u32, path));
     }
     Ok(out)
+}
+
+/// Current-user process paths for decisions that require proven absence.
+/// Unlike the general status API, an unreadable live PID fails closed.
+pub fn current_user_executable_paths_complete(
+    max_pids: usize,
+) -> io::Result<Vec<std::path::PathBuf>> {
+    if max_pids == 0 || max_pids > PID_CAP {
+        return Err(invalid("current-user PID cap is invalid"));
+    }
+    let mut pids = bounded_vec(max_pids, PID_CAP, 0 as libc::pid_t)?;
+    let capacity = std::mem::size_of_val(pids.as_slice());
+    let written = unsafe {
+        libc::proc_listpids(
+            PROC_UID_ONLY,
+            libc::geteuid(),
+            pids.as_mut_ptr().cast(),
+            capacity as i32,
+        )
+    };
+    if written <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let (pids, truncated) = pid_list(&pids, written as usize)?;
+    if truncated {
+        return Err(invalid("current-user PID list was truncated"));
+    }
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let mut paths = Vec::with_capacity(pids.len());
+    for pid in pids {
+        let length =
+            unsafe { libc::proc_pidpath(*pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+        if length <= 0 || length as usize >= buffer.len() {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                continue;
+            }
+            return Err(io::Error::new(
+                error.kind(),
+                format!("current-user PID {pid} path unavailable: {error}"),
+            ));
+        }
+        use std::os::unix::ffi::OsStrExt;
+        paths.push(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(
+            &buffer[..length as usize],
+        )));
+    }
+    Ok(paths)
 }
 
 /// Bounded per-process PID/name/RSS/CPU counters from `PROC_PIDTASKALLINFO`.

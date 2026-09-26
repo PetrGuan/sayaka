@@ -22,7 +22,7 @@ pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 1;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -253,6 +253,7 @@ pub struct FinderMetadataCandidate {
 pub enum DeveloperCacheActivity {
     NotDetected,
     LockFileObserved,
+    ApplicationActiveOrUnknown,
 }
 
 impl DeveloperCacheActivity {
@@ -260,6 +261,7 @@ impl DeveloperCacheActivity {
         match self {
             Self::NotDetected => "not_detected",
             Self::LockFileObserved => "lock_file_observed",
+            Self::ApplicationActiveOrUnknown => "application_active_or_unknown",
         }
     }
 }
@@ -322,6 +324,28 @@ pub struct EvidenceSource {
 // installed products, and other user-authored artifacts. Locations are matched
 // only at their documented account-home-anchored absolute paths; the granted
 // preview root may be that cache directory itself or any ancestor.
+macro_rules! browser_cache_rule {
+    ($tool:expr, $id:expr, $title:expr, $suffix:expr, $location:expr, $evidence_title:expr, $evidence_url:expr $(,)?) => {
+        DeveloperCacheRule {
+            tool: $tool,
+            rule_id: $id,
+            rule_version: 1,
+            title: $title,
+            suffix: $suffix,
+            location: $location,
+            location_kind: "directory",
+            rebuildability_note: "This exact cache class is rebuildable; only its leaf directory is eligible. The matching Application Support profile is observed but never selected. Browser activity or unknown process state blocks cleanup.",
+            lock_siblings: &[],
+            evidence: &[EvidenceSource {
+                title: $evidence_title,
+                url: $evidence_url,
+                reviewed_utc: "2026-09-26",
+                license_note: "Browser vendor documentation",
+            }],
+        }
+    };
+}
+
 const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
     DeveloperCacheRule {
         tool: "xcode",
@@ -493,9 +517,77 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             license_note: "Homebrew documentation license",
         }],
     },
+    browser_cache_rule!(
+        "chrome",
+        "com.google.chrome.http_cache.macos",
+        "Chrome HTTP cache",
+        &["Library", "Caches", "Google", "Chrome"],
+        "~/Library/Caches/Google/Chrome/<profile>/Cache",
+        "Chromium user cache mapping and HTTP cache storage",
+        "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
+    ),
+    browser_cache_rule!(
+        "chrome",
+        "com.google.chrome.code_cache.macos",
+        "Chrome code cache",
+        &["Library", "Caches", "Google", "Chrome"],
+        "~/Library/Caches/Google/Chrome/<profile>/Code Cache",
+        "Chromium code cache under the separate user cache tree",
+        "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
+    ),
+    browser_cache_rule!(
+        "chrome",
+        "com.google.chrome.gpu_cache.macos",
+        "Chrome GPU cache",
+        &["Library", "Caches", "Google", "Chrome"],
+        "~/Library/Caches/Google/Chrome/<profile>/GPUCache",
+        "Chromium GPU cache under the separate user cache tree",
+        "https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md",
+    ),
+    browser_cache_rule!(
+        "edge",
+        "com.microsoft.edge.http_cache.macos",
+        "Edge HTTP cache",
+        &["Library", "Caches", "Microsoft Edge"],
+        "~/Library/Caches/Microsoft Edge/<profile>/Cache",
+        "Edge disk cache under a distinct user cache tree; policy may override this location",
+        "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/diskcachedir",
+    ),
+    browser_cache_rule!(
+        "edge",
+        "com.microsoft.edge.code_cache.macos",
+        "Edge code cache",
+        &["Library", "Caches", "Microsoft Edge"],
+        "~/Library/Caches/Microsoft Edge/<profile>/Code Cache",
+        "Edge code cache under a distinct user cache tree",
+        "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/diskcachedir",
+    ),
+    browser_cache_rule!(
+        "edge",
+        "com.microsoft.edge.gpu_cache.macos",
+        "Edge GPU cache",
+        &["Library", "Caches", "Microsoft Edge"],
+        "~/Library/Caches/Microsoft Edge/<profile>/GPUCache",
+        "Edge GPU cache under a distinct user cache tree",
+        "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/diskcachedir",
+    ),
+    browser_cache_rule!(
+        "firefox",
+        "org.mozilla.firefox.http_cache.macos",
+        "Firefox HTTP disk cache",
+        &["Library", "Caches", "Firefox", "Profiles"],
+        "~/Library/Caches/Firefox/Profiles/<profile>/cache2",
+        "Firefox cache2 stores HTTP disk entries outside the main profile containing history and credentials",
+        "https://firefox-source-docs.mozilla.org/networking/cache2/doc.html",
+    ),
 ];
 
 pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
+    UnsupportedOperation {
+        tool: "safari",
+        operation: "Safari website cache",
+        reason: "Safari's protected website data is not a file-level App Store sandbox target; use Safari's own website-data controls instead of granting a broad cleanup rule",
+    },
     UnsupportedOperation {
         tool: "homebrew",
         operation: "brew cleanup",
@@ -1152,6 +1244,8 @@ fn developer_cache_preview_with_home(
         matched_locations.push(path);
         let activity = if lock_sibling_observed(&entry.path, rule, &by_path) {
             DeveloperCacheActivity::LockFileObserved
+        } else if browser_active_or_unknown(rule.tool, account_home) {
+            DeveloperCacheActivity::ApplicationActiveOrUnknown
         } else {
             DeveloperCacheActivity::NotDetected
         };
@@ -1161,7 +1255,7 @@ fn developer_cache_preview_with_home(
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .and_then(|duration| i64::try_from(duration.as_millis()).ok());
-        let active = activity == DeveloperCacheActivity::LockFileObserved;
+        let active = activity != DeveloperCacheActivity::NotDetected;
         candidates.push(DeveloperCacheCandidate {
             tool: rule.tool,
             rule_id: rule.rule_id,
@@ -1175,9 +1269,15 @@ fn developer_cache_preview_with_home(
             rebuildability_note: rule.rebuildability_note,
             user_product: false,
             cleanup_supported: !active,
-            unsupported_reason: active.then_some(
-                "activity lock file was observed near this cache; preview is conservative",
-            ),
+            unsupported_reason: match activity {
+                DeveloperCacheActivity::LockFileObserved => {
+                    Some("activity lock file was observed near this cache; preview is conservative")
+                }
+                DeveloperCacheActivity::ApplicationActiveOrUnknown => {
+                    Some("browser is running or its process state could not be proven idle")
+                }
+                DeveloperCacheActivity::NotDetected => None,
+            },
             logical_bytes: index.size(entry.id, Metric::Logical),
             allocated_bytes: index.size(entry.id, Metric::Allocated),
             complete: summary.is_some_and(|summary| summary.complete),
@@ -1228,13 +1328,91 @@ fn developer_cache_rule_locations(
             account_home.display()
         )
     })?;
-    Ok(DEVELOPER_CACHE_RULES
-        .iter()
-        .filter_map(|rule| {
-            nofollow_existing_rule_directory(&account_home, rule)
-                .map(|path| DeveloperCacheRuleLocation { rule, path })
-        })
-        .collect())
+    let mut locations = Vec::new();
+    for rule in DEVELOPER_CACHE_RULES {
+        let Some(base) = nofollow_existing_rule_directory(&account_home, rule) else {
+            continue;
+        };
+        let Some(leaf) = browser_cache_leaf(rule.rule_id) else {
+            locations.push(DeveloperCacheRuleLocation { rule, path: base });
+            continue;
+        };
+        let support_base = match rule.tool {
+            "chrome" => &["Library", "Application Support", "Google", "Chrome"][..],
+            "edge" => &["Library", "Application Support", "Microsoft Edge"][..],
+            "firefox" => &["Library", "Application Support", "Firefox", "Profiles"][..],
+            _ => continue,
+        };
+        let Some(support) = nofollow_existing_components(&account_home, support_base) else {
+            continue;
+        };
+        let Ok(profiles) = std::fs::read_dir(&base) else {
+            continue;
+        };
+        for profile in profiles {
+            let Ok(profile) = profile else { continue };
+            let name = profile.file_name();
+            let Some(name_str) = name.to_str() else {
+                continue;
+            };
+            let recognized = if rule.tool == "firefox" {
+                !name_str.is_empty() && !name_str.starts_with('.')
+            } else {
+                name_str == "Default"
+                    || name_str.strip_prefix("Profile ").is_some_and(|number| {
+                        !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                    })
+            };
+            if !recognized
+                || !is_real_directory(&profile.path())
+                || !is_real_directory(&support.join(&name))
+            {
+                continue;
+            }
+            let target = profile.path().join(leaf);
+            if is_real_directory(&target) {
+                locations.push(DeveloperCacheRuleLocation { rule, path: target });
+            }
+        }
+    }
+    locations.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.rule.rule_id.cmp(right.rule.rule_id))
+    });
+    Ok(locations)
+}
+
+fn browser_cache_leaf(rule_id: &str) -> Option<&'static str> {
+    match rule_id {
+        "com.google.chrome.http_cache.macos" | "com.microsoft.edge.http_cache.macos" => {
+            Some("Cache")
+        }
+        "com.google.chrome.code_cache.macos" | "com.microsoft.edge.code_cache.macos" => {
+            Some("Code Cache")
+        }
+        "com.google.chrome.gpu_cache.macos" | "com.microsoft.edge.gpu_cache.macos" => {
+            Some("GPUCache")
+        }
+        "org.mozilla.firefox.http_cache.macos" => Some("cache2"),
+        _ => None,
+    }
+}
+
+fn is_real_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+}
+
+fn nofollow_existing_components(home: &Path, components: &[&str]) -> Option<PathBuf> {
+    let mut path = home.to_path_buf();
+    for component in components {
+        path.push(component);
+        if !is_real_directory(&path) {
+            return None;
+        }
+    }
+    Some(path)
 }
 
 pub fn revalidate_developer_cache_selection(selection: &CacheSelection) -> Result<(), String> {
@@ -1263,7 +1441,55 @@ fn revalidate_developer_cache_selection_with_home(
             return Err("developer cache activity lock file is present".into());
         }
     }
+    if browser_active_or_unknown(location.rule.tool, account_home) {
+        return Err("browser is running or its process state could not be proven idle".into());
+    }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn browser_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    let (bundle, lock) = match tool {
+        "chrome" => (
+            "Google Chrome",
+            Some(account_home.join("Library/Application Support/Google/Chrome/SingletonLock")),
+        ),
+        "edge" => (
+            "Microsoft Edge",
+            Some(account_home.join("Library/Application Support/Microsoft Edge/SingletonLock")),
+        ),
+        "firefox" => ("Firefox", None),
+        _ => return false,
+    };
+    if lock.is_some_and(|path| std::fs::symlink_metadata(path).is_ok()) {
+        return true;
+    }
+    if tool == "firefox" {
+        let profiles = account_home.join("Library/Application Support/Firefox/Profiles");
+        match std::fs::read_dir(profiles) {
+            Ok(entries) => {
+                for entry in entries {
+                    let Ok(entry) = entry else { return true };
+                    if std::fs::symlink_metadata(entry.path().join("parent.lock")).is_ok() {
+                        return true;
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return true,
+        }
+    }
+    match sayaka_platform_macos::status::current_user_executable_paths_complete(65_536) {
+        Ok(processes) => processes
+            .iter()
+            .any(|path| path.to_string_lossy().contains(&format!("/{bundle}.app/"))),
+        Err(_) => true,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn browser_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
+    matches!(tool, "chrome" | "edge" | "firefox")
 }
 
 fn nofollow_existing_rule_directory(

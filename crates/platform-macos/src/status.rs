@@ -104,8 +104,8 @@ pub enum ThermalState {
 mod native;
 #[cfg(target_os = "macos")]
 pub use native::{
-    cpu, disk, gpu, memory, network, power, processes, processes_top, running_executable_paths,
-    sampler, thermal,
+    cpu, current_user_executable_paths_complete, disk, gpu, memory, network, power, processes,
+    processes_top, running_executable_paths, sampler, thermal,
 };
 
 #[cfg(not(target_os = "macos"))]
