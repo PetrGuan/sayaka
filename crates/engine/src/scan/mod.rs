@@ -36,6 +36,7 @@ static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 pub(crate) enum TraversalPolicy {
     Default,
     PruneAppBundles,
+    PruneNativePackages,
 }
 
 #[cfg(all(test, windows))]
@@ -455,6 +456,37 @@ pub fn scan_prune_app_bundles(
         TraversalPolicy::PruneAppBundles,
         progress,
     )
+}
+
+/// Read-only Finder scan that does not descend into macOS packages. A failed
+/// package classification is treated as a package, so no candidate inside an
+/// unknown container is advertised for native Trash execution.
+pub fn scan_prune_native_packages(
+    roots: &[PathBuf],
+    limits: &ScanLimits,
+    cancellation: &Cancellation,
+    progress: impl FnMut(&ScanProgress),
+) -> Result<ScanReport, ScanError> {
+    scan_with_policy(
+        roots,
+        limits,
+        cancellation,
+        TraversalPolicy::PruneNativePackages,
+        progress,
+    )
+}
+
+pub fn has_native_package_ancestor(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        path.ancestors()
+            .any(|ancestor| !matches!(sayaka_platform_macos::is_package(ancestor), Ok(false)))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        true
+    }
 }
 
 pub(crate) fn scan_with_policy(

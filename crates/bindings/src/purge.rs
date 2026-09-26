@@ -1057,10 +1057,19 @@ fn start_preview(
     out_handle: *mut u64,
 ) -> Result<(), i32> {
     options.validate().map_err(|_| INVALID_ARGUMENT)?;
+    if options.profile == PurgeProfile::FinderMetadata
+        && sayaka_engine::scan::has_native_package_ancestor(&root)
+    {
+        return Err(INVALID_CANDIDATE);
+    }
     let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
     let handle = registry.allocate_handle()?;
-    let task = ScanTask::start(vec![root], ScanLimits::default())
-        .map_err(|error| scan_error_code(&error))?;
+    let task = if options.profile == PurgeProfile::FinderMetadata {
+        ScanTask::start_prune_native_packages(vec![root], ScanLimits::default())
+    } else {
+        ScanTask::start(vec![root], ScanLimits::default())
+    }
+    .map_err(|error| scan_error_code(&error))?;
     registry.purges.insert(
         handle,
         Arc::new(Mutex::new(PurgeJob::Preview(Box::new(PurgePreviewJob {

@@ -128,7 +128,7 @@ pub fn volume_info_with_diagnostics(
 }
 
 /// Uses the native package resource property, not filename suffix inference.
-pub(crate) fn is_package(path: &Path) -> io::Result<bool> {
+pub fn is_package(path: &Path) -> io::Result<bool> {
     with_policy(|| boolean(&directory_url(path)?, Flag::Package))
 }
 

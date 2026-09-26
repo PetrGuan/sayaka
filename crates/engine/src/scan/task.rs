@@ -34,6 +34,16 @@ impl ScanTask {
         Self::spawn(move |cancel, progress| super::scan(&roots, &limits, cancel, progress))
     }
 
+    pub fn start_prune_native_packages(
+        roots: Vec<PathBuf>,
+        limits: ScanLimits,
+    ) -> Result<Self, ScanError> {
+        validate_roots(&roots, &limits)?;
+        Self::spawn(move |cancel, progress| {
+            super::scan_prune_native_packages(&roots, &limits, cancel, progress)
+        })
+    }
+
     fn spawn(
         operation: impl FnOnce(
             &Cancellation,
