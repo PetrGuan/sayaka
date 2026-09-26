@@ -594,6 +594,7 @@ mod tests {
                 ],
             }],
             developer_caches: vec![],
+            finder_metadata: vec![],
             unsupported_operations: purge_preview::profile_unsupported_operations(
                 purge_preview::PurgeProfile::Projects,
             ),

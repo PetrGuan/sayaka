@@ -412,6 +412,32 @@ SAYAKA_API int32_t sayaka_purge_unsupported_operations_v1(uint8_t *buffer,
                                                         size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_purge_release_v1(uint64_t handle);
 
+typedef struct SayakaUninstallRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    SayakaPathV1 bundle;      /* One explicit .app within copies_root. */
+    SayakaPathV1 copies_root; /* User-granted parent; copy scan is evidence only. */
+} SayakaUninstallRequestV1;
+
+/* Retains one explicit bundle preview and its native sealed Trash plan. The
+ * caller holds a read-write security scope on copies_root until release.
+ * No other copy is ever an execution target. Calls must be made off the UI
+ * thread. Result supports a zero-capacity size probe; execute is one-shot
+ * and requires the exact UTF-8 token "uninstall <bundle filename>" plus a
+ * private journal directory. An OK execute return means terminal JSON was
+ * retained, not that Trash succeeded; inspect its exact state/report.
+ * Release can return BUSY during execute and must be retried before unloading
+ * the library or relinquishing the caller's security scope. Vendor
+ * uninstallers are guidance only. */
+SAYAKA_API int32_t sayaka_uninstall_preview_start_v1(
+    const SayakaUninstallRequestV1 *request, uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_uninstall_result_v1(uint64_t handle, uint8_t *buffer,
+                                             size_t capacity, size_t *required);
+SAYAKA_API int32_t sayaka_uninstall_execute_v1(
+    uint64_t handle, const uint8_t *approval_token, size_t approval_token_length,
+    SayakaPathV1 state_dir);
+SAYAKA_API int32_t sayaka_uninstall_release_v1(uint64_t handle);
+
 #ifdef __cplusplus
 }
 #endif

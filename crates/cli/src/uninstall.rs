@@ -242,6 +242,15 @@ fn write_json(out: &mut impl Write, preview: &UninstallPreview) -> io::Result<()
         "executables_observed": preview.executables_observed,
         "running": running_json(&preview.running),
         "copies": copies_json(preview),
+        "vendor_uninstaller": preview.vendor_uninstaller.map(|vendor| serde_json::json!({
+            "name": vendor.name,
+            "instruction": vendor.instruction,
+            "source_url": vendor.source_url,
+            "may_remove_user_data": vendor.may_remove_user_data,
+            "authorization": vendor.authorization,
+            "restart": vendor.restart,
+            "execution": "guidance_only",
+        })),
         "protections": preview.protections,
         "recovery": preview.recovery,
         "refusals": preview.refusals.iter().map(refusal_json).collect::<Vec<_>>(),
@@ -309,6 +318,13 @@ fn write_human(out: &mut impl Write, preview: &UninstallPreview) -> io::Result<(
         }
         writeln!(out, "  note: {}", preview.copies.note)?;
     }
+    if let Some(vendor) = preview.vendor_uninstaller {
+        writeln!(out, "vendor_uninstaller: {} (guidance only)", vendor.name)?;
+        writeln!(out, "  {}", vendor.instruction)?;
+        writeln!(out, "  source: {}", vendor.source_url)?;
+        writeln!(out, "  authorization: {}", vendor.authorization)?;
+        writeln!(out, "  restart: {}", vendor.restart)?;
+    }
     writeln!(out, "protections:")?;
     for protection in &preview.protections {
         writeln!(out, "  - {protection}")?;
@@ -334,7 +350,7 @@ mod tests {
         let bundle = root.path().join("Fixture.app");
         let macos = bundle.join("Contents").join("MacOS");
         fs::create_dir_all(&macos).expect("tree");
-        fs::write(bundle.join("Contents").join("Info.plist"), b"plist").expect("plist");
+        fs::write(bundle.join("Contents").join("Info.plist"), b"<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.example.fixture</string><key>CFBundleExecutable</key><string>Run</string></dict></plist>").expect("plist");
         fs::write(macos.join("Run"), b"inert").expect("exe");
         let preview = app_uninstall::preview_bundle_uninstall(&bundle);
         let mut out = Vec::new();
@@ -347,6 +363,7 @@ mod tests {
         assert_eq!(value["execution"], app_uninstall::EXECUTION_DEFERRED);
         assert_eq!(value["running"]["state"], "not_running");
         assert_eq!(value["copies"]["state"], "not_checked");
+        assert!(value["vendor_uninstaller"].is_null());
         assert!(
             value["copies"]["note"]
                 .as_str()

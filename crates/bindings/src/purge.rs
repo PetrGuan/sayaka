@@ -1697,9 +1697,11 @@ mod tests {
                 stale_artifacts: 1,
                 excluded: 0,
                 developer_caches: 0,
+                finder_metadata: 0,
                 unsupported_operations: 0,
             },
             developer_caches: Vec::new(),
+            finder_metadata: Vec::new(),
             unsupported_operations: purge_preview::profile_unsupported_operations(
                 purge_preview::PurgeProfile::Projects,
             ),

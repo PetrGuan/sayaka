@@ -11,7 +11,7 @@
 use crate::app_inventory::{
     AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, AppInventoryStatus,
     BundleIdentifierRead, RunningObservation, StringState, inventory_apps, read_bundle_identifier,
-    running_process_paths,
+    read_bundle_identifier_with_digest, running_process_paths,
 };
 use crate::model::{Cancellation, FileIdentity};
 use crate::scan::{ScanLimits, scan_prune_app_bundles};
@@ -35,6 +35,7 @@ pub enum UninstallRefusalCode {
     SystemLocation,
     NonLocalVolume,
     Running,
+    VendorUninstaller,
     UnsupportedPlatform,
     Internal,
 }
@@ -51,6 +52,7 @@ impl UninstallRefusalCode {
             Self::SystemLocation => "system_location",
             Self::NonLocalVolume => "non_local_volume",
             Self::Running => "running",
+            Self::VendorUninstaller => "vendor_uninstaller",
             Self::UnsupportedPlatform => "unsupported_platform",
             Self::Internal => "internal_error",
         }
@@ -322,10 +324,64 @@ pub struct UninstallPreview {
     /// Coexisting copies of the same bundle identifier, observed only when
     /// the caller explicitly supplies roots; evidence, never targets.
     pub copies: CopiesEvidence,
+    /// Vendor-owned removal workflow; the sandbox never launches it.
+    pub vendor_uninstaller: Option<VendorUninstaller>,
     pub protections: Vec<&'static str>,
     pub recovery: &'static str,
     pub execution: &'static str,
     pub refusals: Vec<UninstallRefusal>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct VendorUninstaller {
+    pub name: &'static str,
+    pub instruction: &'static str,
+    pub source_url: &'static str,
+    pub may_remove_user_data: bool,
+    pub authorization: &'static str,
+    pub restart: &'static str,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BundleUninstallClassification {
+    pub vendor: Option<VendorUninstaller>,
+    pub manifest_digest: [u8; 32],
+    pub manifest_device: u64,
+    pub manifest_inode: u64,
+}
+
+/// Only exact vendor identifiers with a documented macOS removal workflow are
+/// recognized. Name/path guessing would produce unsafe instructions.
+pub fn classify_bundle_uninstaller(
+    bundle: &Path,
+) -> Result<BundleUninstallClassification, &'static str> {
+    let (field, manifest_digest, manifest_device, manifest_inode) =
+        read_bundle_identifier_with_digest(bundle)?;
+    let identifier = match (field.state, field.value) {
+        (StringState::Present, Some(identifier)) => identifier,
+        (StringState::Missing, _) => return Err("bundle identifier is missing"),
+        (StringState::Duplicate, _) => return Err("bundle identifier is duplicated"),
+        (StringState::NotString, _) => return Err("bundle identifier is not a string"),
+        (StringState::TooLong, _) => return Err("bundle identifier exceeds parser limit"),
+        _ => return Err("bundle identifier is unavailable"),
+    };
+    let vendor = match identifier.as_str() {
+        "com.docker.docker" => Some(VendorUninstaller {
+            name: "Docker Desktop",
+            instruction: "Back up containers, images and volumes first. Use Docker Desktop > Troubleshoot > Uninstall, or follow Docker's documented Mac uninstaller; then move Docker.app to Trash as instructed by Docker. SayakaCleaner will not launch or replace that workflow.",
+            source_url: "https://docs.docker.com/desktop/uninstall/",
+            may_remove_user_data: true,
+            authorization: "Vendor workflow may request authorization; SayakaCleaner cannot perform it",
+            restart: "Not established by the cited Docker instructions; verify the vendor result",
+        }),
+        _ => None,
+    };
+    Ok(BundleUninstallClassification {
+        vendor,
+        manifest_digest,
+        manifest_device,
+        manifest_inode,
+    })
 }
 
 impl UninstallPreview {
@@ -359,6 +415,7 @@ fn base_preview(bundle_path: PathBuf) -> UninstallPreview {
         executables_observed: None,
         running: RunningObservation::NotChecked,
         copies: CopiesEvidence::not_checked(),
+        vendor_uninstaller: None,
         protections: protections(),
         recovery: RECOVERY_NOTE,
         execution: EXECUTION_DEFERRED,
@@ -456,6 +513,22 @@ pub fn preview_bundle_uninstall(bundle: &Path) -> UninstallPreview {
             format!("cannot inspect Contents/Info.plist: {error}"),
             &error,
         )),
+    }
+    match classify_bundle_uninstaller(&absolute) {
+        Ok(classification) => preview.vendor_uninstaller = classification.vendor,
+        Err(reason) => preview.refusals.push(UninstallRefusal::new(
+            UninstallRefusalCode::Internal,
+            format!("vendor workflow cannot be classified: {reason}"),
+        )),
+    }
+    if let Some(vendor) = preview.vendor_uninstaller {
+        preview.refusals.push(UninstallRefusal::new(
+            UninstallRefusalCode::VendorUninstaller,
+            format!(
+                "{} has a documented vendor uninstaller; use that workflow",
+                vendor.name
+            ),
+        ));
     }
     observe_running(&mut preview, &absolute);
     preview
@@ -652,12 +725,7 @@ mod tests {
     use std::fs;
 
     fn fixture_bundle(root: &Path, name: &str) -> PathBuf {
-        let bundle = root.join(name);
-        let macos = bundle.join("Contents").join("MacOS");
-        fs::create_dir_all(&macos).expect("create bundle tree");
-        fs::write(bundle.join("Contents").join("Info.plist"), b"plist").expect("write plist");
-        fs::write(macos.join("Run"), b"inert").expect("write executable");
-        bundle
+        fixture_bundle_with_id(root, name, "com.example.fixture")
     }
 
     fn fixture_bundle_with_id(root: &Path, name: &str, id: &str) -> PathBuf {
@@ -674,6 +742,43 @@ mod tests {
         fs::write(bundle.join("Contents").join("Info.plist"), plist).expect("write plist");
         fs::write(macos.join("Run"), b"inert").expect("write executable");
         bundle
+    }
+
+    #[test]
+    fn vendor_classification_requires_a_valid_exact_identifier_and_seals_content() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = fixture_bundle_with_id(root.path(), "Docker.app", "com.docker.docker");
+        let docker = classify_bundle_uninstaller(&bundle).expect("valid Docker manifest");
+        assert_eq!(
+            docker.vendor.map(|vendor| vendor.name),
+            Some("Docker Desktop")
+        );
+        assert!(
+            preview_bundle_uninstall(&bundle)
+                .refusals
+                .iter()
+                .any(|refusal| refusal.code == UninstallRefusalCode::VendorUninstaller)
+        );
+
+        let plist = bundle.join("Contents/Info.plist");
+        let original = fs::read_to_string(&plist).expect("read fixture");
+        fs::write(
+            &plist,
+            original.replace("com.docker.docker", "com.docker.docker.helper"),
+        )
+        .expect("rewrite same plist pathname");
+        let near_miss = classify_bundle_uninstaller(&bundle).expect("valid near-miss manifest");
+        assert!(near_miss.vendor.is_none());
+        assert_ne!(near_miss.manifest_digest, docker.manifest_digest);
+
+        fs::write(&plist, b"not a plist").expect("write malformed manifest");
+        assert!(classify_bundle_uninstaller(&bundle).is_err());
+        assert!(
+            preview_bundle_uninstall(&bundle)
+                .refusals
+                .iter()
+                .any(|refusal| refusal.message.contains("cannot be classified"))
+        );
     }
 
     #[test]
