@@ -287,3 +287,24 @@ The displayed sizes (14–46 B fixture bytes) are handled fixture bytes, not
 freed space. The real Trash was never enumerated beyond the recorded
 destinations; all fixture items were restored and no fixture process was
 left running.
+# Protected paths in the App Store client
+
+The macOS App Store client uses the core's `exclusions-v1.json` policy contract
+for both project artifacts and developer caches. Its sandbox stores the policy
+in its own Application Support/`SayakaCleaner/Policy` directory; the CLI uses
+its configured policy directory, so the two front ends share the format and
+identity rules but do not silently share a writable file. Settings lists,
+adds and removes entries through `sayaka_exclusions_v1` under a user-authorized
+root. Missing or replaced entries require attention.
+
+`sayaka_purge_preview_start_policy_v1` captures the same root policy and marks
+overlapping preview items `policy_excluded`, with the
+`protected_by_user` reason. An unresolved entry marks the whole preview
+`policy_needs_attention`. Execution refuses protected selections and policy
+changes before preparing a Trash plan; the execution guard rechecks the
+snapshot before each native effect. The older preview entry points remain
+available for existing clients but do not opt into a policy directory.
+
+Optimize currently has no effectful operation, so there is no optimize
+execution set to filter. Any future optimize effect must take the same
+policy snapshot and guard before it can be enabled in the App Store client.

@@ -943,8 +943,27 @@ impl CacheSession {
         cancellation: &Cancellation,
         store: &Store,
     ) -> io::Result<ExecutionReport> {
+        self.execute_with_exclusions(preview, approval, cancellation, store, None)
+    }
+
+    pub fn execute_with_exclusions(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+        policy: Option<(&ConfigPath, &Path, &PolicySnapshot)>,
+    ) -> io::Result<ExecutionReport> {
         let selections = self.selections.clone();
         let mut guard = move |point: GuardPoint, path: &Path| -> io::Result<GuardDecision> {
+            if let Some((config, root, snapshot)) = policy {
+                match clean_policy::guard_snapshot(config, root, snapshot)? {
+                    PolicyGuardStatus::Unchanged => {}
+                    PolicyGuardStatus::Refused(reason) => {
+                        return Ok(GuardDecision::Refused(reason));
+                    }
+                }
+            }
             if matches!(point, GuardPoint::LastNative)
                 && let Some(selection) = selections.iter().find(|selection| selection.path == path)
                 && let Err(error) = purge_preview::revalidate_developer_cache_selection(selection)
@@ -1221,7 +1240,26 @@ impl PurgeSession {
         cancellation: &Cancellation,
         store: &Store,
     ) -> io::Result<ExecutionReport> {
+        self.execute_with_exclusions(preview, approval, cancellation, store, None)
+    }
+
+    pub fn execute_with_exclusions(
+        &mut self,
+        preview: &Plan,
+        approval: &Approval,
+        cancellation: &Cancellation,
+        store: &Store,
+        policy: Option<(&ConfigPath, &Path, &PolicySnapshot)>,
+    ) -> io::Result<ExecutionReport> {
         let mut guard = move |point: GuardPoint, path: &Path| -> io::Result<GuardDecision> {
+            if let Some((config, root, snapshot)) = policy {
+                match clean_policy::guard_snapshot(config, root, snapshot)? {
+                    PolicyGuardStatus::Unchanged => {}
+                    PolicyGuardStatus::Refused(reason) => {
+                        return Ok(GuardDecision::Refused(reason));
+                    }
+                }
+            }
             // Last native guard per item: re-evaluate nesting immediately
             // before its sole Foundation call. Identity, marker and
             // ancestry revalidation run inside the native candidate itself.
