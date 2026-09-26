@@ -11,6 +11,7 @@
 
 pub mod ai_footprint;
 pub mod app_inventory;
+pub mod app_orphans;
 pub mod app_related;
 pub mod app_uninstall;
 pub mod clean_policy;

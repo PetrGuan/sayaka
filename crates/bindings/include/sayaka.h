@@ -102,6 +102,20 @@ SAYAKA_API int32_t sayaka_maintenance_catalog_v1(
     const SayakaMaintenanceCatalogRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+typedef struct SayakaOrphanPreviewRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    SayakaPathV1 app_root; /* Explicitly granted app inventory folder. */
+    SayakaPathV1 caches_root; /* Explicitly granted Library/Caches folder. */
+    uint64_t reserved; /* Must be zero. */
+} SayakaOrphanPreviewRequestV1;
+
+/* One-shot, read-only possible-remnant preview. Call off the UI thread with a
+   4 MiB buffer; no zero-capacity query. No row is selected or executable. */
+SAYAKA_API int32_t sayaka_orphan_preview_v1(
+    const SayakaOrphanPreviewRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 typedef struct SayakaExclusionsRequestV1 {
     uint32_t abi_version;
     uint32_t struct_size;
