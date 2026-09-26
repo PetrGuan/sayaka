@@ -9,7 +9,7 @@
       "title": "Finder preview and icon caches",
       "status": "unsupported",
       "reason": "No sandbox-safe, user-approved cache refresh operation is implemented.",
-      "operation": "Refresh Quick Look and icon services, then move only the three named user cache directories to Trash.",
+      "operation": "Refresh Quick Look and icon services, then offer only ~/Library/Caches/com.apple.QuickLook.thumbnailcache, ~/Library/Caches/com.apple.iconservices.store and ~/Library/Caches/com.apple.iconservices for individual Trash selection.",
       "threat": "Refreshing services or moving an active cache can disrupt Finder previews and recreate data while it is inspected.",
       "recovery": "Trash Put Back may restore moved cache files; macOS can regenerate caches, but prior thumbnails and timing are not guaranteed."
     },
