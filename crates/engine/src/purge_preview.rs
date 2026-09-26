@@ -1496,17 +1496,17 @@ fn revalidate_developer_cache_selection_with_home(
 
 #[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
-    let (bundle, lock) = match tool {
+    let (bundles, lock) = match tool {
         "chrome" => (
-            "Google Chrome",
+            &["Google Chrome.app"][..],
             Some(account_home.join("Library/Application Support/Google/Chrome/SingletonLock")),
         ),
         "edge" => (
-            "Microsoft Edge",
+            &["Microsoft Edge.app"][..],
             Some(account_home.join("Library/Application Support/Microsoft Edge/SingletonLock")),
         ),
-        "firefox" => ("Firefox", None),
-        "teams-classic" => ("Microsoft Teams", None),
+        "firefox" => (&["Firefox.app"][..], None),
+        "teams-classic" => (&["Microsoft Teams classic.app", "Microsoft Teams.app"][..], None),
         _ => return false,
     };
     if lock.is_some_and(|path| std::fs::symlink_metadata(path).is_ok()) {
@@ -1527,10 +1527,25 @@ fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
             Err(_) => return true,
         }
     }
-    match sayaka_platform_macos::status::current_user_executable_paths_complete(65_536) {
-        Ok(processes) => processes
-            .iter()
-            .any(|path| path.to_string_lossy().contains(&format!("/{bundle}.app/"))),
+    process_paths_active_or_unknown(
+        sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
+        bundles,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn process_paths_active_or_unknown<E>(
+    paths: Result<Vec<PathBuf>, E>,
+    bundles: &[&str],
+) -> bool {
+    match paths {
+        Ok(paths) => paths.iter().any(|path| {
+            path.components().any(|component| {
+                bundles
+                    .iter()
+                    .any(|bundle| component.as_os_str() == std::ffi::OsStr::new(bundle))
+            })
+        }),
         Err(_) => true,
     }
 }
@@ -1818,12 +1833,16 @@ mod tests {
         let support = home.join("Library/Application Support/Microsoft/Teams");
         let shared = home.join("Library/Group Containers/UBF8T346G9.com.microsoft.teams");
         let preference = home.join("Library/Preferences/com.microsoft.teams.plist");
+        let credential = home.join("Library/Keychains/Teams.keychain-db");
         fs::create_dir_all(&cache).expect("classic cache");
         fs::create_dir_all(&support).expect("application support");
         fs::create_dir_all(&shared).expect("shared data");
         fs::create_dir_all(preference.parent().expect("preferences parent"))
             .expect("preferences");
         fs::write(&preference, b"user preference").expect("preference");
+        fs::create_dir_all(credential.parent().expect("keychain parent"))
+            .expect("keychain directory");
+        fs::write(&credential, b"credential fixture").expect("credential");
 
         let preview = developer_cache_preview_at(&home, &home);
         let matches = preview
@@ -1835,8 +1854,23 @@ mod tests {
         assert_eq!(matches[0].path, cache);
         assert_eq!(matches[0].rule_id, "com.microsoft.teams.classic_cache.macos");
         assert!(!preview.developer_caches.iter().any(|item| {
-            item.path == support || item.path == shared || item.path == preference
+            item.path == support || item.path == shared || item.path == preference || item.path == credential
         }));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn classic_teams_activity_detection_recognizes_both_bundle_names_and_unknown() {
+        let bundles = &["Microsoft Teams classic.app", "Microsoft Teams.app"];
+        for name in bundles {
+            let executable = PathBuf::from(format!("/Applications/{name}/Contents/MacOS/Teams"));
+            assert!(process_paths_active_or_unknown(Ok::<_, ()>(vec![executable]), bundles));
+        }
+        assert!(process_paths_active_or_unknown(Err::<Vec<PathBuf>, ()>(()), bundles));
+        assert!(!process_paths_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from("/Applications/Microsoft Teams Fake.app/Contents/MacOS/Teams")]),
+            bundles,
+        ));
     }
 
     #[test]
