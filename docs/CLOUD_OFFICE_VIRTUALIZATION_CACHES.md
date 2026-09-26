@@ -1,9 +1,10 @@
 # Cloud, office, utility and virtualization cleanup boundary (issue 143)
 
 This is the Mac App Store catalog for the application families below. The
-directly relevant supported app-cache examples are Classic Teams and Discord,
-added under issue 140; developer-tool download caches are documented
-separately in [the native binding catalog](BINDINGS.md). The
+supported app-cache rules in this catalog are Classic Teams and Discord,
+added under issue 140. Xcode, CoreSimulator and Homebrew are developer-tool
+rules outside issue 143's cloud/office/utility/virtualization app catalog;
+their paths are documented separately in [the native binding catalog](BINDINGS.md). The
 `developer_caches` preview reports each excluded operation, while its candidate
 list and execution plan remain an exact allowlist of separately documented
 rules. A name containing `cache` does not establish rebuildability.
