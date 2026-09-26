@@ -349,7 +349,7 @@ fn developer_cache_items_json(
                 "execution_unsupported_reason": if !cache.complete {
                     Some("developer cache scan coverage is incomplete; refresh or grant narrower access before execution")
                 } else if !cache.cleanup_supported {
-                    Some("developer cache cleanup is refused while activity evidence such as a lock file is observed")
+                    Some("cache cleanup is refused while the related application is active or its process state is unknown")
                 } else {
                     None
                 },
