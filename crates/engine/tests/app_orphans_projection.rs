@@ -11,6 +11,7 @@ use sayaka_engine::app_orphans::project_orphan_caches;
 use sayaka_engine::model::{Cancellation, FileIdentity};
 use sayaka_engine::scan::{ScanLimits, scan};
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
 fn field(value: &str) -> StringField {
@@ -86,6 +87,11 @@ fn exact_bundle_id_match_does_not_conflate_same_display_name_and_protects_shared
     ] {
         fs::create_dir_all(caches.join(name)).unwrap();
     }
+    symlink(
+        caches.join("com.example.alpha"),
+        caches.join("com.example.link"),
+    )
+    .unwrap();
     let report = scan(
         std::slice::from_ref(&caches),
         &ScanLimits {
@@ -122,6 +128,16 @@ fn exact_bundle_id_match_does_not_conflate_same_display_name_and_protects_shared
         find("com.apple.control").disposition,
         "protected_shared_or_system"
     );
+    assert!(!preview.library_scan_complete);
+    assert!(preview.skipped_direct_children.iter().any(|child| {
+        child.path.ends_with("com.example.link") && child.reason == "symlink_not_followed"
+    }));
+    assert!(
+        preview
+            .candidates
+            .iter()
+            .all(|c| c.bundle_id_hint != "com.example.link")
+    );
     assert!(
         preview
             .candidates
@@ -134,6 +150,43 @@ fn exact_bundle_id_match_does_not_conflate_same_display_name_and_protects_shared
             .candidates
             .iter()
             .all(|c| c.uncertainty.contains(&"app_inventory_incomplete"))
+    );
+    let mut dataless = report.clone();
+    dataless.complete = false;
+    dataless
+        .entries
+        .iter_mut()
+        .find(|e| e.path == caches.join("com.example.beta"))
+        .unwrap()
+        .dataless = true;
+    let cloud = project_orphan_caches(&inventory(true), &dataless);
+    assert!(!cloud.library_scan_complete);
+    assert!(
+        cloud
+            .candidates
+            .iter()
+            .all(|c| c.bundle_id_hint != "com.example.beta")
+    );
+    assert!(cloud.skipped_direct_children.iter().any(|child| {
+        child.path.ends_with("com.example.beta")
+            && child.reason == "cloud_placeholder_not_materialized"
+    }));
+    let groups = root.join("Library/Group Containers");
+    fs::create_dir_all(groups.join("group.example.shared")).unwrap();
+    let group_scan = scan(
+        std::slice::from_ref(&groups),
+        &ScanLimits {
+            max_depth: 1,
+            ..ScanLimits::default()
+        },
+        &Cancellation::default(),
+        |_| {},
+    )
+    .unwrap();
+    assert!(
+        project_orphan_caches(&inventory(true), &group_scan)
+            .candidates
+            .is_empty()
     );
     let _ = fs::remove_dir_all(root);
 }

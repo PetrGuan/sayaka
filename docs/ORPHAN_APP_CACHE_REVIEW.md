@@ -12,7 +12,10 @@ The report distinguishes `installed_app_observed`,
 only *possibly* orphaned when no exact identifier match was observed. Even a
 complete scan of the selected Applications folder is not a complete inventory
 of the Mac: app copies may live in other folders or volumes. Partial scans,
-row/path limits and missing metadata are explicit uncertainty, never zero apps.
+row/path limits, skipped symlinks/cloud placeholders and missing metadata are
+explicit uncertainty, never zero apps. Skipped direct children are listed
+separately and make selected-library coverage incomplete even if the generic
+scanner considers a no-follow symlink skip within its normal policy.
 No row is preselected or authorized for Trash by this report.
 
 The first scope is deliberately limited to `Library/Caches/<bundle ID>`.

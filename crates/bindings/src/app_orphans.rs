@@ -113,3 +113,6 @@ pub unsafe extern "C" fn sayaka_orphan_preview_v1(
         }
     })
 }
+
+#[cfg(test)]
+mod tests;

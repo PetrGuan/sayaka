@@ -4,8 +4,9 @@
 
 use crate::app_inventory::{AppInventory, StringState};
 use crate::model::ResourceKind;
-use crate::scan::ScanReport;
+use crate::scan::{ScanCode, ScanReport};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 const MAX_ROWS: usize = 256;
@@ -19,9 +20,16 @@ pub struct OrphanCachePreview {
     pub globally_complete: bool,
     pub effects_performed: bool,
     pub truncated: bool,
+    pub skipped_direct_children: Vec<SkippedChild>,
     pub inventory_roots: Vec<String>,
     pub library_roots: Vec<String>,
     pub candidates: Vec<OrphanCacheCandidate>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkippedChild {
+    pub path: String,
+    pub reason: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +53,58 @@ pub fn project_orphan_caches(
 ) -> OrphanCachePreview {
     let mut candidates = Vec::new();
     let mut truncated = false;
+    let mut skipped = BTreeMap::new();
+    for entry in &library_scan.entries {
+        if let Some((_, _)) = library_scan
+            .roots
+            .iter()
+            .find_map(|root| cache_bundle_id(&entry.path, root).map(|id| (root, id)))
+        {
+            if entry.kind == ResourceKind::Link {
+                skipped.insert(entry.path.clone(), "symlink_not_followed");
+            } else if entry.dataless {
+                skipped.insert(entry.path.clone(), "cloud_placeholder_not_materialized");
+            }
+        }
+    }
+    for issue in &library_scan.issues {
+        let Some(path) = &issue.path else { continue };
+        if library_scan
+            .roots
+            .iter()
+            .any(|root| cache_bundle_id(path, root).is_some())
+        {
+            match issue.code {
+                ScanCode::LinkSkipped => {
+                    skipped.insert(path.clone(), "symlink_not_followed");
+                }
+                ScanCode::CloudDirectorySkipped => {
+                    skipped.insert(path.clone(), "cloud_placeholder_not_materialized");
+                }
+                _ => {}
+            }
+        }
+    }
+    let skipped_count = skipped.len();
+    let skipped_direct_children = skipped
+        .into_iter()
+        .filter_map(|(path, reason)| {
+            if path.as_os_str().len() > 1024 {
+                truncated = true;
+                return None;
+            }
+            Some(SkippedChild {
+                path: path.display().to_string(),
+                reason,
+            })
+        })
+        .take(MAX_ROWS)
+        .collect::<Vec<_>>();
+    if skipped_count > skipped_direct_children.len() {
+        truncated = true;
+    }
+    let library_scan_complete =
+        library_scan.complete && skipped_count == 0 && library_scan.issues_omitted == 0;
     for entry in &library_scan.entries {
         if entry.kind != ResourceKind::Directory || entry.dataless {
             continue;
@@ -95,7 +155,7 @@ pub fn project_orphan_caches(
         if !inventory.complete {
             uncertainty.push("app_inventory_incomplete");
         }
-        if !library_scan.complete {
+        if !library_scan_complete {
             uncertainty.push("library_scan_incomplete");
         }
         if protected_family {
@@ -124,10 +184,11 @@ pub fn project_orphan_caches(
         schema_version: 1,
         kind: "orphan_app_cache_preview",
         inventory_complete_in_selected_roots: inventory.complete,
-        library_scan_complete: library_scan.complete,
+        library_scan_complete,
         globally_complete: false,
         effects_performed: false,
         truncated,
+        skipped_direct_children,
         inventory_roots: inventory
             .roots
             .iter()
