@@ -10,6 +10,8 @@ mod browse;
 pub use browse::*;
 mod ai_footprint;
 pub use ai_footprint::*;
+mod app_orphans;
+pub use app_orphans::*;
 mod diagnostics;
 pub use diagnostics::*;
 mod exclusions;
