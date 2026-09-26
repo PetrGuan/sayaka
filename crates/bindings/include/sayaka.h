@@ -86,6 +86,19 @@ SAYAKA_API int32_t sayaka_system_status_v1(
     const SayakaSystemStatusRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+typedef struct SayakaMaintenanceCatalogRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t reserved; /* Must be zero. */
+} SayakaMaintenanceCatalogRequestV1;
+
+/* Versioned, read-only macOS App Store maintenance availability. No user data
+   is read and no maintenance operation is authorized. A zero-capacity probe
+   returns SAYAKA_BUFFER_TOO_SMALL and the exact required byte count. */
+SAYAKA_API int32_t sayaka_maintenance_catalog_v1(
+    const SayakaMaintenanceCatalogRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 typedef struct SayakaScanSnapshotV1 {
     uint32_t abi_version;
     uint32_t struct_size;

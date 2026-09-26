@@ -19,6 +19,7 @@ pub mod history;
 pub mod installation;
 pub mod installer_preview;
 pub mod journal;
+pub mod maintenance_catalog;
 pub mod model;
 pub mod plan;
 pub mod purge_preview;

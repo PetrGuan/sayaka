@@ -161,6 +161,36 @@ unsupported/authorization-required states each keep recorded evidence.
 
 ## C0 status table
 
+### Mac App Store user-scope operation contracts (#151)
+
+The nine user-scope tasks below have **no App effect implementation**. Their
+current `unsupported` availability is published by the versioned, read-only
+[maintenance catalog](../crates/engine/assets/maintenance_catalog_v1.json),
+which the native App obtains through `sayaka_maintenance_catalog_v1`. A drafted
+contract, a CLI diagnostic, an accessible path or a user bookmark does not
+make a mutation supported. Any future status change requires an operation
+specific preview, owner/concurrency check, per-item approval and journal,
+revalidation at the native effect boundary, and disposable-host evidence.
+
+| Task | Proposed operation / exact target class | Threat and admission condition | Recovery boundary |
+| --- | --- | --- | --- |
+| `cache_refresh` | Refresh Quick Look/icon services; offer only `~/Library/Caches/com.apple.QuickLook.thumbnailcache`, `~/Library/Caches/com.apple.iconservices.store`, and `~/Library/Caches/com.apple.iconservices` for individual Trash selection | Finder and cache services may be writing; broad `~/Library/Caches` deletion is not admitted | Cache regeneration is expected but is not a rollback; Put Back applies only to the exact moved files before Trash is emptied |
+| `saved_state_cleanup` | Individually select old `*.savedState` bundles in the user's Saved Application State directory; full contract in [SAVED_STATE_CLEANUP.md](SAVED_STATE_CLEANUP.md) | A running owner or unknown bundle identity blocks; losing window/resume state is a disclosed cost | Put Back before Trash is emptied; subsequent app writes may prevent a faithful restore |
+| `fix_broken_configs` | Lint individually attributed third-party preference plists, then offer only confirmed damaged files for Trash | A lint error alone does not establish disposability; active writers and shared/credential preferences block | Put Back the exact plist; settings changed after the move may conflict |
+| `sqlite_vacuum` | Integrity-check and VACUUM individually selected Mail, Safari or Messages databases | TCC/sandbox access, live owners, WAL companions and free-space needs are unresolved; refuse all without a consistent backup | Requires a verified same-snapshot backup and owner-specific restore; unavailable today |
+| `quarantine_cleanup` | Select download-provenance rows in `QuarantineEventsV2`, without altering file quarantine flags | Gatekeeper history is sensitive metadata; live database and schema ownership are unresolved | Requires a verified database backup and exact restore; unavailable today |
+| `shared_file_list_repair` | Inspect selected `.sfl2`/`.sfl3` lists, excluding recent-document lists; Trash only proven damaged files | Lint alone can discard useful Finder/Dock state; active service ownership must be known | Put Back before Trash is emptied; service ordering may still require manual repair |
+| `launch_agents_cleanup` | Identify a user LaunchAgent with a truly missing absolute executable, then explicitly disable and Trash its plist | An unmounted volume, path search or running service can make a valid agent appear broken; owner evidence is required | Put Back restores the file while retained in Trash; launchd re-enable is a separate explicit operation |
+| `notification_cleanup` | Select old delivered notification records in the Notification Center database | Service-owned and often in a group container; concurrent writes or schema changes can lose notifications | Requires a verified database snapshot and service-aware restore; unavailable today |
+| `coreduet_cleanup` | Inspect the Knowledge database with WAL/SHM companions, then offer a named per-database action | Live CoreDuet writes make deleting companions or rewriting the database unsafe | Requires a consistent snapshot and service-aware restore; unavailable today |
+
+All nine report `unsupported` in the Mac App Store catalog. This is an honest
+capability status, not a scan result, an empty candidate set or a reason to
+request broader access. The catalog includes a per-operation reason and the
+proposed operation, threat and recovery text for display. It does not read any
+of the paths named above. The three existing read-only CLI diagnostics are
+outside these user-scope effect contracts and do not imply App support.
+
 | Task | Class | Status |
 | --- | --- | --- |
 | system_maintenance | D (DNS flush) | gap (privilege design pending); diagnostic `mdutil -s` part: partial (read-only CLI slice, real-host observation recorded 2026-09-22) |

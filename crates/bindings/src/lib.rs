@@ -14,6 +14,8 @@ mod diagnostics;
 pub use diagnostics::*;
 mod installer;
 pub use installer::*;
+mod maintenance_catalog;
+pub use maintenance_catalog::*;
 mod purge;
 pub use purge::*;
 mod system_status;

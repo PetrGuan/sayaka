@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "kind": "maintenance_catalog",
+  "platform": "macos_app_store",
+  "source": "Mole V1.53.0 / 1b9023b5f151c2d963bbcb9cb658f4824137b8aa",
+  "items": [
+    {
+      "id": "cache_refresh",
+      "title": "Finder preview and icon caches",
+      "status": "unsupported",
+      "reason": "No sandbox-safe, user-approved cache refresh operation is implemented.",
+      "operation": "Refresh Quick Look and icon services, then offer only ~/Library/Caches/com.apple.QuickLook.thumbnailcache, ~/Library/Caches/com.apple.iconservices.store and ~/Library/Caches/com.apple.iconservices for individual Trash selection.",
+      "threat": "Refreshing services or moving an active cache can disrupt Finder previews and recreate data while it is inspected.",
+      "recovery": "Trash Put Back may restore moved cache files; macOS can regenerate caches, but prior thumbnails and timing are not guaranteed."
+    },
+    {
+      "id": "saved_state_cleanup",
+      "title": "Saved application state",
+      "status": "unsupported",
+      "reason": "A design contract exists, but native preview, running-app guards and Trash execution are not implemented.",
+      "operation": "Move explicitly selected, old application saved-state bundles to Trash after checking the owning app is closed.",
+      "threat": "An active app can rewrite its saved state; removal loses window and resume state.",
+      "recovery": "Finder Put Back is possible while the bundle remains in Trash; emptied Trash cannot restore prior window state."
+    },
+    {
+      "id": "fix_broken_configs",
+      "title": "Damaged application preferences",
+      "status": "unsupported",
+      "reason": "No attributed preference-file preview or safe native effect is implemented.",
+      "operation": "Lint and individually select damaged third-party preference plists under an authorized user directory, then move them to Trash.",
+      "threat": "A failed lint is not proof that an application's preference is disposable; moving it resets settings and may race a running app.",
+      "recovery": "Put Back can restore the exact original file before Trash is emptied, but later app writes may conflict."
+    },
+    {
+      "id": "sqlite_vacuum",
+      "title": "Mail, Messages and Safari databases",
+      "status": "unsupported",
+      "reason": "Protected application databases and live-writer coordination cannot be safely handled in this sandboxed App.",
+      "operation": "After an integrity check and verified closed-owner state, VACUUM each explicitly selected database with a bounded native operation.",
+      "threat": "A locked or live database, WAL companions, insufficient free space or an interrupted rewrite can corrupt user history or messages.",
+      "recovery": "Requires a verified same-snapshot backup and an owner-specific restore procedure; no such recovery path is implemented."
+    },
+    {
+      "id": "quarantine_cleanup",
+      "title": "Download quarantine history",
+      "status": "unsupported",
+      "reason": "The Gatekeeper history database is protected user metadata and no safe per-record preview or restore path is implemented.",
+      "operation": "Delete selected records from the user's QuarantineEventsV2 database and compact it without changing per-file quarantine flags.",
+      "threat": "Clearing download provenance is privacy-sensitive and a live database rewrite can lose or corrupt metadata.",
+      "recovery": "Would require a verified database backup and exact restore with the owning service stopped; currently unavailable."
+    },
+    {
+      "id": "shared_file_list_repair",
+      "title": "Shared file lists",
+      "status": "unsupported",
+      "reason": "No native ownership, format and active-service checks exist for shared file-list files.",
+      "operation": "Inspect selected .sfl2/.sfl3 files while excluding recent-document lists; move only proven damaged files to Trash.",
+      "threat": "A malformed-file heuristic can discard Dock, Finder or application lists that are still useful or actively written.",
+      "recovery": "Put Back can restore the moved file before Trash is emptied; list ordering and service state may not return automatically."
+    },
+    {
+      "id": "launch_agents_cleanup",
+      "title": "User Launch Agents",
+      "status": "unsupported",
+      "reason": "A missing executable does not by itself prove an agent is obsolete; no owner-aware admission and rollback are implemented.",
+      "operation": "Inspect selected user LaunchAgent plists and their executable paths, then disable and move only proven orphaned plists to Trash.",
+      "threat": "Network volumes can be temporarily unmounted, and disabling a legitimate agent can stop sync or security software.",
+      "recovery": "Put Back restores the plist while it remains in Trash; re-enabling its launchd service is a separate explicit step."
+    },
+    {
+      "id": "notification_cleanup",
+      "title": "Notification history",
+      "status": "unsupported",
+      "reason": "The live Notification Center database is service-owned and not available for safe mutation in this sandbox.",
+      "operation": "Select old delivered records in the user notification database and compact the database after its owner is closed.",
+      "threat": "A concurrent notification writer or schema change can lose notifications or damage the database.",
+      "recovery": "Would require a verified database backup and service-aware restore; no such path exists."
+    },
+    {
+      "id": "coreduet_cleanup",
+      "title": "Knowledge usage database",
+      "status": "unsupported",
+      "reason": "The Knowledge database is service-owned, and safe sandbox access, snapshot and restore are unproven.",
+      "operation": "Inspect the user Knowledge database and WAL companions, then compact or retire only explicitly approved data.",
+      "threat": "Removing WAL/SHM files or rewriting an active database can lose usage history and corrupt its next opening.",
+      "recovery": "Would require a consistent database snapshot and service-aware restore; no such path exists."
+    }
+  ]
+}
