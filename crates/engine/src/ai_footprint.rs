@@ -61,6 +61,8 @@ fn matches_kind(name: &str, kind: ResourceKind) -> bool {
             | ".credentials.json"
             | "config.toml"
             | "auth.json"
+            | "version.json"
+            | "session_index.jsonl"
             | "config.json"
             | "session-store.db"
             | "folder_paths.py"
@@ -76,7 +78,7 @@ fn matches_kind(name: &str, kind: ResourceKind) -> bool {
 const CLAUDE_DOC: &str = "https://code.claude.com/docs/en/claude-directory";
 const COPILOT_DOC: &str =
     "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference";
-const CODEX_DOC: &str = "https://github.com/openai/codex/blob/main/codex-rs/core/src/config/mod.rs";
+const CODEX_DOC: &str = "https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/core/src/config/mod.rs";
 const COMFY_DOC: &str = "https://github.com/Comfy-Org/ComfyUI/blob/master/folder_paths.py";
 
 const CLAUDE: &[Rule] = &[
@@ -130,6 +132,18 @@ const CLAUDE: &[Rule] = &[
     },
 ];
 const CODEX: &[Rule] = &[
+    Rule {
+        name: "session_index.jsonl",
+        role: "recoverable_state",
+        consequence: "Session names and lookup history may be lost.",
+        evidence: "https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/rollout/src/session_index.rs",
+    },
+    Rule {
+        name: "version.json",
+        role: "tool_marker",
+        consequence: "Cached update information may be lost; retained as recognition evidence only.",
+        evidence: "https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/tui/src/updates_cache.rs",
+    },
     Rule {
         name: "sessions",
         role: "recoverable_state",
@@ -318,8 +332,13 @@ pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
                     || has(".credentials.json"))
         }
         Tool::Codex => {
-            has("sessions")
-                && (has("config.toml") || has("history.jsonl") || has("archived_sessions"))
+            (has("sessions")
+                && (has("config.toml") || has("history.jsonl") || has("archived_sessions")))
+                || (has("session_index.jsonl") && (has("config.toml") || has("auth.json")))
+                || (has("archived_sessions") && has("config.toml"))
+                // File-auth/update-cache layout can exist before the first saved session.
+                // No single generic config/auth/log name establishes ownership.
+                || (has("config.toml") && has("auth.json") && has("version.json"))
         }
         Tool::Copilot => {
             has("session-state")
@@ -379,7 +398,7 @@ pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
         schema_version: 1,
         kind: "ai_footprint",
         tool: tool.code(),
-        rule_version: 1,
+        rule_version: if tool == Tool::Codex { 2 } else { 1 },
         recognized,
         scan_complete: summary.complete,
         logical_bytes_known: summary.logical_bytes_known,
@@ -389,3 +408,6 @@ pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
         running: None,
     })
 }
+
+#[cfg(test)]
+mod tests;
