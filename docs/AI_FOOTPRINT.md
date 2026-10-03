@@ -8,8 +8,7 @@ any child is attributed to the selected tool. A custom directory is supported
 only when the user chooses its actual root and the marker matches; this feature
 does not infer ownership from `.claude`, `.codex`, `.copilot`, `output`, file
 extensions, or a path elsewhere on disk. Recognition requires `projects` plus
-one of Claude's history/checkpoint/memory/credential entries; Codex `sessions`
-plus configuration/history/archive evidence; Copilot `session-state` plus
+one of Claude's history/checkpoint/memory/credential entries; Codex combinations described below; Copilot `session-state` plus
 configuration/log/index evidence; or ComfyUI's `folder_paths.py` and `main.py`.
 Generic `settings.json`, `config.toml`, and `logs` names alone never establish
 ownership. A newer or sparse installation may stay unrecognized until these
@@ -27,14 +26,47 @@ evidence and Reveal in Finder targets only.
 | [Claude Code directory](https://code.claude.com/docs/en/claude-directory) | `projects`, `history.jsonl`, `file-history`, `agent-memory` | Sessions, history, checkpoints and memory. Keep; removing them loses resume or recall. |
 | Claude Code | `debug`, `cache` | Logs/cache. May be recreated, but an active session may still use them. Preview only. |
 | Claude Code | `settings.json`, `.credentials.json` | Settings and credentials. Never a cleanup candidate. Claude offers retention settings and `claude project purge --dry-run` for project-scoped state; this App never invokes it. |
-| [Codex configuration source](https://github.com/openai/codex/blob/main/codex-rs/core/src/config/mod.rs) | `sessions`, `archived_sessions`, `history.jsonl`, `memories`, `log` | Sessions/history/memory are user state; logs are diagnostics. Layout must be rechecked for supported versions before any cleanup rule. |
+| [Codex configuration source](https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/core/src/config/mod.rs) | `sessions`, `archived_sessions`, `history.jsonl`, `memories`, `log` | Sessions/history/memory are user state; logs are diagnostics. Layout must be rechecked for supported versions before any cleanup rule. |
 | Codex | `config.toml`, `auth.json` | Settings and authentication. Never a cleanup candidate. `CODEX_HOME` can relocate the actual root. |
 | [Copilot CLI directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) | `logs`, `session-state`, `command-history-state`, `session-store.db`, `plugin-data` | Logs differ from session restore, command history, cross-session index and plugin state. Only logs are documented as safely deletable; this version still previews only. `COPILOT_HOME` can relocate the root and its cache lives elsewhere. |
 | Copilot CLI | `settings.json`, `config.json`, `mcp-secrets` | Settings, authentication and secrets. Never a cleanup candidate. |
 | [ComfyUI path source](https://github.com/Comfy-Org/ComfyUI/blob/master/folder_paths.py) | `folder_paths.py`, `output`, `input`, `models`, `user`, `temp` | `folder_paths.py` marks a source tree. Output/input are media assets, models are weights, `user` holds workflows/settings, and `temp` may be in use. All are preview-only. CLI options and setters can redirect these directories; users must select their actual root and this version does not claim redirected paths. |
 
-Rules are version 1 and intentionally incomplete. Unknown children contribute
+Rules are version 1, except Codex version 2, and intentionally incomplete. Unknown children contribute
 to the root's total but receive no tool-specific classification. Never treat a
 reported zero as an empty folder when scan coverage or byte measurement is
 unknown. A future Trash capability requires separate per-rule evidence and a
 new identity-bound, revalidated execution contract; this report grants none.
+
+
+## Codex rule version 2
+
+Evidence is pinned to official OpenAI Codex source revision
+`b741e480e203f037ca726bc2a76d99a8e8668e66`. Only top-level file names and native
+resource kinds are inspected; config, credential, index and database contents
+are never read. The configured root may be relocated with `CODEX_HOME`.
+
+Recognized combinations:
+
+- `sessions` directory plus `config.toml`, `history.jsonl`, or `archived_sessions`
+  (the existing layout).
+- `archived_sessions` directory plus `config.toml` (archive-only layout).
+- `session_index.jsonl` regular file plus `config.toml` or `auth.json`.
+- `config.toml`, `auth.json` and `version.json`, all regular files (file-auth and
+  update-cache layout, which does not require a saved session).
+
+Generic config/auth names alone, a log directory alone, links, and wrong-kind
+markers do not establish ownership. Sparse/keyring-only or future layouts may
+remain unrecognized; the rule does not claim every installation is covered.
+The original reported user's directory has not been inspected or reproduced.
+
+Sources at the pinned revision:
+[config and log root](https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/core/src/config/mod.rs),
+[file auth](https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/login/src/auth/storage.rs),
+[session index](https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/rollout/src/session_index.rs),
+[update cache](https://github.com/openai/codex/blob/b741e480e203f037ca726bc2a76d99a8e8668e66/codex-rs/tui/src/updates_cache.rs).
+
+The session index is recoverable user state, and update metadata is retained as
+a tool marker. Neither is a logs/cache cleanup candidate. Recognition grants no
+execution authority. Added positive/negative in-memory fixtures are compiled,
+not executed, under the consuming app owner's no-unit/UI-test instruction.
