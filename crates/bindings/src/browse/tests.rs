@@ -699,3 +699,28 @@ mod native {
         assert_eq!(data["issues"][7]["message"], "denied 7");
     }
 }
+
+#[test]
+fn node_wire_distinguishes_unknown_modification_time_from_epoch() {
+    let path = std::path::Path::new("/synthetic-observation");
+    for observed in [None, Some(0), Some(-500), Some(1_700_000_000_123)] {
+        let value = serde_json::to_value(Node {
+            reference: reference(7, 1),
+            resource_id: "synthetic/1".into(),
+            parent: None,
+            path: wire::NativePath(path),
+            kind: "file",
+            modified_unix_ms: observed,
+            logical_bytes: Some(1),
+            allocated_bytes: Some(1),
+            directory_summary: None,
+            child_count: None,
+            dataless: false,
+        })
+        .unwrap();
+        match observed {
+            Some(time) => assert_eq!(value["modified_unix_ms"].as_i64(), Some(time)),
+            None => assert!(value["modified_unix_ms"].is_null()),
+        }
+    }
+}

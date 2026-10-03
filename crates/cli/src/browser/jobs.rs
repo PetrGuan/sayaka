@@ -398,6 +398,7 @@ mod tests {
             },
             logical_bytes: Some(1),
             allocated_bytes: None,
+            modified_unix_ms: None,
             dataless: false,
             counted: true,
             depth: 1,

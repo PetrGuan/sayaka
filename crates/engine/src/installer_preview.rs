@@ -3169,6 +3169,7 @@ mod tests {
             identity: unix_identity(path),
             logical_bytes: Some(bytes),
             allocated_bytes: Some(bytes),
+            modified_unix_ms: None,
             dataless: false,
             counted: true,
             depth: 1,

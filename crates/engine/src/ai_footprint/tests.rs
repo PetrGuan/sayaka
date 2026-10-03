@@ -27,6 +27,7 @@ fn footprint(children: &[(&str, ResourceKind)]) -> Footprint {
             },
             logical_bytes: (kind == ResourceKind::File).then_some(0),
             allocated_bytes: (kind == ResourceKind::File).then_some(0),
+            modified_unix_ms: None,
             dataless: false,
             counted: false,
             depth: usize::MAX,

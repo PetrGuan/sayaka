@@ -309,6 +309,15 @@ fn stamp(stat: &Stat) -> Stamp {
     )
 }
 
+fn unix_millis(seconds: i64, nanoseconds: i64) -> Option<i64> {
+    if !(0..1_000_000_000).contains(&nanoseconds) {
+        return None;
+    }
+    seconds
+        .checked_mul(1_000)?
+        .checked_add(nanoseconds / 1_000_000)
+}
+
 fn from_stat(stat: &Stat) -> Metadata {
     let kind = match stat.st_mode & libc::S_IFMT {
         libc::S_IFREG => ResourceKind::File,
@@ -330,6 +339,9 @@ fn from_stat(stat: &Stat) -> Metadata {
                     .ok()
                     .and_then(|blocks| blocks.checked_mul(512))
             })
+            .flatten(),
+        modified_unix_ms: regular
+            .then(|| unix_millis(stat.st_mtime, stat.st_mtime_nsec))
             .flatten(),
         // Public SF_DATALESS is synthetic/read-only and cannot be set by tests
         // using chflags; native cloud behavior is not inferred from fake flags.
@@ -387,6 +399,17 @@ pub(super) fn scan_native(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_time_preserves_epoch_and_rejects_invalid_or_overflowing_values() {
+        assert_eq!(unix_millis(0, 0), Some(0));
+        assert_eq!(unix_millis(123, 456_789_012), Some(123_456));
+        assert_eq!(unix_millis(-1, 500_000_000), Some(-500));
+        assert_eq!(unix_millis(1, -1), None);
+        assert_eq!(unix_millis(1, 1_000_000_000), None);
+        assert_eq!(unix_millis(i64::MAX, 0), None);
+        assert_eq!(unix_millis(i64::MIN, 0), None);
+    }
 
     #[test]
     fn volume_classification_never_defaults_unknown_to_internal() {

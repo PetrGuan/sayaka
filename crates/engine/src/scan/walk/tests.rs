@@ -173,6 +173,7 @@ fn metadata(inode: u64, kind: ResourceKind, bytes: Option<u64>) -> Metadata {
         kind,
         logical_bytes: bytes,
         allocated_bytes: bytes,
+        modified_unix_ms: None,
         dataless: false,
     }
 }
