@@ -469,6 +469,34 @@ SAYAKA_API int32_t sayaka_uninstall_execute_v1(
     SayakaPathV1 state_dir);
 SAYAKA_API int32_t sayaka_uninstall_release_v1(uint64_t handle);
 
+/* Explicit regular files only (1..32), under one authorized root. This is
+ * not an automatic-cache or arbitrary-directory cleanup API. config_dir is
+ * required: current protected-path policy is retained and guarded at execution.
+ * Caller holds root access until release returns OK. All nested bytes copied.
+ * Preview/execution are asynchronous; result returns NOT_READY while active. */
+typedef struct SayakaPickedPreviewRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    SayakaPathV1 root;
+    const SayakaPathV1 *paths;
+    size_t path_count;
+    SayakaPathV1 config_dir;
+    uint64_t reserved;
+} SayakaPickedPreviewRequestV1;
+SAYAKA_API int32_t sayaka_picked_preview_start_v1(
+    const SayakaPickedPreviewRequestV1 *request, uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_picked_result_v1(uint64_t handle, uint8_t *buffer,
+                                         size_t capacity, size_t *required);
+/* After fresh user confirmation, echo this preview's exact approval_token.
+ * Executes the entire retained eligible selection ONCE; to change the subset,
+ * release and preview anew. State directory is mandatory, cannot contain targets.
+ * OK means execution started, not success. Read each terminal journal item. */
+SAYAKA_API int32_t sayaka_picked_execute_v1(uint64_t handle,
+    const uint8_t *approval_token, size_t approval_token_length, SayakaPathV1 state_dir);
+SAYAKA_API int32_t sayaka_picked_cancel_v1(uint64_t handle);
+/* Cancels and joins owned work. BUSY: retain handle/scopes and retry later. */
+SAYAKA_API int32_t sayaka_picked_release_v1(uint64_t handle);
+
 #ifdef __cplusplus
 }
 #endif

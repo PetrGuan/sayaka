@@ -20,6 +20,8 @@ mod installer;
 pub use installer::*;
 mod maintenance_catalog;
 pub use maintenance_catalog::*;
+mod picked;
+pub use picked::*;
 mod purge;
 pub use purge::*;
 mod system_status;
@@ -103,6 +105,7 @@ struct Job {
 
 struct Registry {
     next_handle: u64,
+    picked: HashMap<u64, Arc<picked::PickedJob>>,
     jobs: HashMap<u64, Arc<Mutex<Job>>>,
     installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
     purges: HashMap<u64, Arc<Mutex<purge::PurgeJob>>>,
@@ -111,7 +114,7 @@ struct Registry {
 
 impl Registry {
     fn allocate_handle(&mut self) -> Result<u64, i32> {
-        if self.jobs.len() + self.installers.len() + self.purges.len() + self.uninstalls.len()
+        if self.jobs.len() + self.installers.len() + self.purges.len() + self.uninstalls.len() + self.picked.len()
             >= MAX_TASKS
         {
             return Err(LIMIT_EXCEEDED);
@@ -127,6 +130,7 @@ fn registry() -> &'static Mutex<Registry> {
     REGISTRY.get_or_init(|| {
         Mutex::new(Registry {
             next_handle: 1,
+            picked: HashMap::new(),
             jobs: HashMap::new(),
             installers: HashMap::new(),
             purges: HashMap::new(),
