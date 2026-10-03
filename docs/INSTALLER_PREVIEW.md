@@ -193,3 +193,30 @@ or third-party parser code/prose.
 
 This command reports bounded structural evidence only. It does **not** prove a
 DMG is mountable or a PKG is installable/authentic.
+
+## Read/write and read-only disk images
+
+Apple's macOS `hdiutil(1)` manual (`convert` formats) names UDRW as UDIF
+read/write and UDRO as UDIF read-only. A conversion mode is not inferred from a
+`.dmg` suffix or a single footer observation. This inspector does not mount,
+convert, run `hdiutil`, or parse filesystem/container payloads to determine that
+mode.
+
+A valid supported final 512-byte `koly` structure yields `udif_dmg / recognized`,
+regardless of the creator's mode; this is structural evidence, not mountability
+or installer verification. Unsupported footer versions stay unsupported and
+invalid claimed footer ranges stay corrupt.
+
+If the final footer has no `koly` signature, the result is `unknown / unsupported`
+with `named_dmg_without_koly_footer` (formerly `named_dmg_not_udif`). This means
+only that the bounded probe did not observe that signature. It does not prove
+that the image is invalid, non-UDIF, raw, writable, or safe to discard. Such
+images remain ineligible for installer selection execution. A user-reported
+UDRW image fell in this case, while its converted UDZO image was recognized;
+that report has not been independently reproduced here and no universal claim
+about UDRW/UDRO trailer presence is made.
+
+Synthetic footer fixtures cover absent signature, supported signature, future
+version, and truncated footer handling without assigning conversion modes.
+They were compiled, not executed. Real image generation/mount/convert acceptance
+remains owner-driven; no real user disk images were opened for this change.

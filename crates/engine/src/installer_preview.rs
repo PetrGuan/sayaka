@@ -1010,35 +1010,50 @@ fn parse_dmg(
         .ok_or_else(|| PreviewError::new(InstallerIssueCode::Corrupt, "invalid footer offset"))?;
     let footer =
         inspected.read_exact(offset, context.limits.max_dmg_footer_bytes, budget, context)?;
-    match parse_udif_footer(&footer, inspected.size) {
-        UdifResult::Recognized => Ok(CandidateFormat {
+    Ok(dmg_footer_format(&footer, inspected.size))
+}
+
+fn dmg_footer_format(footer: &[u8], file_size: u64) -> CandidateFormat {
+    match parse_udif_footer(footer, file_size) {
+        UdifResult::Recognized => CandidateFormat {
             family: FormatFamily::UdifDmg,
             status: FormatStatus::Recognized,
             detection_level: "udif_koly_footer",
             evidence: vec!["bounded_footer", "koly_magic", "version_4", "header_512"],
             limitations: common_limitations(),
-        }),
-        UdifResult::Unsupported => Ok(CandidateFormat {
+        },
+        UdifResult::Unsupported => CandidateFormat {
             family: FormatFamily::UdifDmg,
             status: FormatStatus::Unsupported,
             detection_level: "dmg_unsupported_or_unknown",
             evidence: vec!["bounded_footer", "koly_magic"],
             limitations: common_limitations(),
-        }),
-        UdifResult::Corrupt => Ok(CandidateFormat {
+        },
+        UdifResult::Corrupt => CandidateFormat {
             family: FormatFamily::UdifDmg,
             status: FormatStatus::Corrupt,
             detection_level: "corrupt_or_truncated",
             evidence: vec!["bounded_footer", "koly_magic"],
             limitations: common_limitations(),
-        }),
-        UdifResult::NotUdif => Ok(CandidateFormat {
+        },
+        UdifResult::NoKolyFooter => CandidateFormat {
             family: FormatFamily::Unknown,
             status: FormatStatus::Unsupported,
-            detection_level: "named_dmg_not_udif",
-            evidence: vec!["named_candidate_only"],
-            limitations: common_limitations(),
-        }),
+            detection_level: "named_dmg_without_koly_footer",
+            evidence: vec![
+                "named_candidate_only",
+                "bounded_footer",
+                "koly_footer_not_observed",
+            ],
+            limitations: {
+                let mut limitations = common_limitations();
+                limitations.extend([
+                    "missing_footer_does_not_prove_invalid_image",
+                    "image_read_write_mode_not_determined",
+                ]);
+                limitations
+            },
+        },
     }
 }
 
@@ -1465,7 +1480,7 @@ enum UdifResult {
     Recognized,
     Unsupported,
     Corrupt,
-    NotUdif,
+    NoKolyFooter,
 }
 
 fn be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
@@ -1483,7 +1498,7 @@ fn parse_udif_footer(footer: &[u8], file_size: u64) -> UdifResult {
         return UdifResult::Corrupt;
     }
     if footer.get(0..4) != Some(b"koly") {
-        return UdifResult::NotUdif;
+        return UdifResult::NoKolyFooter;
     }
     let Some(version) = be_u32(footer, 4) else {
         return UdifResult::Corrupt;
@@ -2704,6 +2719,64 @@ mod tests {
         assert_eq!(
             std::fs::read(root.join("original.pkg")).unwrap(),
             b"original regular file"
+        );
+    }
+
+    #[test]
+    fn absent_koly_is_unsupported_evidence_not_an_invalid_image_claim() {
+        let format = dmg_footer_format(&[0u8; 512], 2 * 1024 * 1024);
+        assert_eq!(format.family, FormatFamily::Unknown);
+        assert_eq!(format.status, FormatStatus::Unsupported);
+        assert_eq!(format.detection_level, "named_dmg_without_koly_footer");
+        assert_eq!(
+            format.evidence,
+            vec![
+                "named_candidate_only",
+                "bounded_footer",
+                "koly_footer_not_observed"
+            ]
+        );
+        let mut expected_limitations = common_limitations();
+        expected_limitations.extend([
+            "missing_footer_does_not_prove_invalid_image",
+            "image_read_write_mode_not_determined",
+        ]);
+        assert_eq!(format.limitations, expected_limitations);
+        assert!(
+            format
+                .limitations
+                .contains(&"missing_footer_does_not_prove_invalid_image")
+        );
+        assert!(
+            format
+                .limitations
+                .contains(&"image_read_write_mode_not_determined")
+        );
+    }
+
+    #[test]
+    fn bounded_footer_evidence_does_not_assign_an_image_conversion_mode() {
+        let mut footer = [0u8; 512];
+        footer[..4].copy_from_slice(b"koly");
+        footer[4..8].copy_from_slice(&4u32.to_be_bytes());
+        footer[8..12].copy_from_slice(&512u32.to_be_bytes());
+        let format = dmg_footer_format(&footer, 2048);
+        assert_eq!(format.family, FormatFamily::UdifDmg);
+        assert_eq!(format.status, FormatStatus::Recognized);
+        assert_eq!(format.detection_level, "udif_koly_footer");
+        assert_eq!(
+            format.evidence,
+            vec!["bounded_footer", "koly_magic", "version_4", "header_512"]
+        );
+        assert_eq!(format.limitations, common_limitations());
+        footer[4..8].copy_from_slice(&5u32.to_be_bytes());
+        assert_eq!(
+            dmg_footer_format(&footer, 2048).status,
+            FormatStatus::Unsupported
+        );
+        assert_eq!(
+            dmg_footer_format(&footer[..128], 2048).status,
+            FormatStatus::Corrupt
         );
     }
 
