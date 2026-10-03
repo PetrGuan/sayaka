@@ -14,6 +14,7 @@ pub(super) struct Metadata {
     pub kind: ResourceKind,
     pub logical_bytes: Option<u64>,
     pub allocated_bytes: Option<u64>,
+    pub modified_unix_ms: Option<i64>,
     pub dataless: bool,
 }
 
@@ -783,6 +784,7 @@ fn record_entry(
         identity: metadata.identity,
         logical_bytes: metadata.logical_bytes,
         allocated_bytes: metadata.allocated_bytes,
+        modified_unix_ms: metadata.modified_unix_ms,
         dataless: metadata.dataless,
         counted,
         depth,

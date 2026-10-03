@@ -202,3 +202,24 @@ Initial local evidence on macOS 26.6.2 arm64, three fresh CLI processes:
 
 These values cover only the declared fixture and mechanical terminal checks.
 Real Trash and system viewers were not executed in this M7 validation.
+
+### Observed file modification time
+
+Scan entries and bounded node JSON include optional `modified_unix_ms` (signed
+Unix milliseconds). macOS regular files use the same no-follow native metadata
+observation already used for kind, identity and size; no additional file content
+read or path traversal is introduced. Nanoseconds are truncated to milliseconds.
+Invalid subsecond values and arithmetic overflow yield null, distinct from a
+real epoch timestamp of zero. Directory/link/other nodes and currently Windows
+observations remain null.
+
+The timestamp describes the immutable scan observation, not live state, access
+time or last use. Old modification time alone is not a deletion recommendation,
+installation evidence or execution authority. Consumers must retain explicit
+selection and a fresh native preview/revalidation before any effect. Older
+consumers can ignore this additive JSON field; newer consumers must tolerate
+its absence from older cores. Existing ABI struct layouts are unchanged.
+
+Validation for this addition compiles workspace/test sources only; no unit/UI
+tests or runtime filesystem fixtures are executed by the agent. Windows runtime
+behavior is not certified by a macOS compile.

@@ -625,6 +625,7 @@ mod tests {
                 },
                 logical_bytes: Some(id),
                 allocated_bytes: Some(id),
+                modified_unix_ms: None,
                 dataless: false,
                 counted: true,
                 depth: 1,

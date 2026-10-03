@@ -28,6 +28,7 @@ fn entry(id: u64, relative: &str, kind: ResourceKind) -> ScanEntry {
         },
         logical_bytes: (kind == ResourceKind::File).then_some(8),
         allocated_bytes: (kind == ResourceKind::File).then_some(4096),
+        modified_unix_ms: None,
         dataless: false,
         counted: false,
         depth: usize::MAX,

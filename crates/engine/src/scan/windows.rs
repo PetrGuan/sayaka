@@ -65,6 +65,7 @@ fn metadata(info: &sayaka_platform_windows::Metadata) -> Metadata {
         kind,
         logical_bytes: info.logical_bytes,
         allocated_bytes: info.allocated_bytes,
+        modified_unix_ms: None,
         dataless: info.dataless,
     }
 }

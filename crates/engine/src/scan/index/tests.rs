@@ -29,6 +29,7 @@ fn entry(id: u64, relative: &str, kind: ResourceKind) -> ScanEntry {
         identity: identity(id),
         logical_bytes: None,
         allocated_bytes: None,
+        modified_unix_ms: None,
         dataless: false,
         counted: false,
         depth: usize::MAX,

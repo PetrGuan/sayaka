@@ -335,6 +335,8 @@ pub struct ScanEntry {
     pub identity: FileIdentity,
     pub logical_bytes: Option<u64>,
     pub allocated_bytes: Option<u64>,
+    /// Observed modification time; not last use or permission to clean.
+    pub modified_unix_ms: Option<i64>,
     pub dataless: bool,
     /// Only the first occurrence of a regular-file identity contributes bytes.
     pub counted: bool,
