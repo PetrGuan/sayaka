@@ -1,6 +1,6 @@
 # Simulator and runtime cleanup contract (draft for review)
 
-Status: **contract only — not implemented.** This is the implementation contract
+Status: **contract approved for slice 1a — not implemented.** This is the implementation contract
 required before write code for the first developer-tool slice. Nothing described
 here is exported, callable or shipped until an implementation lands with its own
 review and evidence.
@@ -168,8 +168,9 @@ Whole request:
   bundle identifier is Xcode (`com.apple.dt.Xcode`), Simulator
   (`com.apple.iphonesimulator`), `xcodebuild`, `xctest`, `simctl`, or
   `xcrun` with a `simctl` child. Command-line test runs are detected through
-  `xcodebuild`/`xctest`, not only GUI apps. If the process table cannot be read,
-  the request fails closed.
+  `xcodebuild`/`xctest`, not only GUI apps. Sayaka's own `xcrun`/`simctl`
+  children (identified by their process group) are excluded. If the process
+  table cannot be read, the request fails closed.
 - `tool_changed`, `tool_unavailable`, `unsupported_tool_version`.
 - `busy` (another devtools execution), `expired` (preview older than 120 s on
   the monotonic clock, matching picked-file sessions), `invalid_request`
@@ -179,8 +180,12 @@ Per candidate:
 
 - device `state` is not exactly `Shutdown` (`Booted`, `Booting`,
   `Shutting Down`, `Creating`, `Unknown` and future states are all refused);
-- device is a member of a pair, unless every pair member is in the same request
-  and the confirmation lists the pair;
+- device is a member of a pair, unless the request is a **delete** containing
+  every member of that pair; the confirmation then lists the pair as one entry
+  with both devices and their (possibly different) runtimes. Paired devices are
+  never offered for erase;
+- device is unavailable (`isAvailable` false) and the operation is erase:
+  unavailable devices are offered for delete only;
 - device name matches Xcode's parallel-testing clones (`Clone N of …`); clones
   are transient and owned by test runs;
 - (1b) image not `deletable`; `kind` not in the allow-list (`Disk Image`,
@@ -217,8 +222,9 @@ no approval boolean without the token, and no imported JSON approval.
      was non-zero, otherwise `unknown`;
    - erase: exit status 0 **and** device present and `Shutdown` with a changed
      data-directory observation (data size or modification time) → `succeeded`;
-     exit 0 without an observable change → `unknown`; non-zero exit →
-     `failed`;
+     exit 0 without an observable change → `unknown` (expected for a device that
+     was already empty; hosts explain this rather than reporting a failure);
+     non-zero exit → `failed`;
    - timeout, interruption or cap exceedance → `unknown`.
 5. Write the journal outcome. Outcomes: `succeeded`, `refused`, `failed`,
    `unknown`. `unknown` is reconciled by a later re-list, never by retry.
@@ -267,20 +273,27 @@ Narrows the pinned Mole developer-cleanup gap recorded in
 simulator devices; runtime deletion stays a gap until 1b. It does not claim
 parity or a throughput result. Size/runtime budget: no new crate dependency.
 Process launch uses the standard library; verifying `/usr/bin/xcrun`'s code
-signature adds a link to the system Security framework (the platform crate
-currently links CoreFoundation, Foundation and IOKit), with no bundled code.
+signature adds a link to the system Security framework (at the time of writing
+the platform crate links CoreFoundation, Foundation and IOKit; re-check at
+implementation), with no bundled code. The new link receives the same native
+audit as the existing ones.
 
-## Open decisions
+## Decisions
 
-1. Approve the new effect class `permanent_tool_operation_v1` and the
-   `AGENTS.md` amendment it requires (maintainer).
-2. Offer `erase` in 1a (keeps the device, loses its contents)?
-3. Runtime default rule: refuse images matching `chosenRuntimeBuild` **or**
-   `defaultBuild` for any SDK (as above), or only `chosenRuntimeBuild`?
-4. **(Blocks 1b)** Measure whether `simctl runtime delete` needs administrator
-   rights for each kind. Observed so far: `--dry-run` succeeds unprivileged
+Approved by the maintainer (2026-10-06):
+
+1. The new effect class `permanent_tool_operation_v1`, and the `AGENTS.md`
+   amendment it requires, landing with the implementation.
+2. Erase is offered in 1a (available, unpaired devices only).
+3. The runtime default rule in **Refusals** (chosen **or** default build for any
+   SDK) is the rule; it is defined there only.
+
+Open, blocking 1b only:
+
+4. Measure whether `simctl runtime delete` needs administrator rights for
+   each kind. Observed so far: `--dry-run` succeeds unprivileged
    ("Would delete …"), which does not prove the real deletion does. If a kind
    needs administrator rights, it moves to the privileged-helper contract.
-5. **(Blocks 1b)** For MobileAsset-managed cryptex images, confirm `simctl` is
-   the supported removal path, decide `--keep-asset`, and verify that the
-   reported `sizeBytes` matches the space actually freed.
+5. For MobileAsset-managed cryptex images, confirm `simctl` is the supported
+   removal path, decide `--keep-asset`, and verify that the reported
+   `sizeBytes` matches the space actually freed.
