@@ -371,6 +371,7 @@ pub enum Mismatch {
     Missing,
     IdentityChanged,
     NotShutdown,
+    AvailabilityChanged,
     PairingChanged,
 }
 
@@ -392,6 +393,9 @@ pub fn revalidate(
     }
     if device.state != "Shutdown" {
         return Err(Mismatch::NotShutdown);
+    }
+    if device.is_available != before.is_available {
+        return Err(Mismatch::AvailabilityChanged);
     }
     let partner = current_pairs.iter().find_map(|(watch, phone)| {
         if *watch == device.udid {
@@ -678,6 +682,16 @@ mod tests {
         assert_eq!(
             revalidate(phone, &devices, &[]),
             Err(Mismatch::PairingChanged)
+        );
+        let mut unavailable = devices.clone();
+        unavailable
+            .iter_mut()
+            .find(|d| d.udid == PHONE)
+            .unwrap()
+            .is_available = false;
+        assert_eq!(
+            revalidate(phone, &unavailable, &pairs),
+            Err(Mismatch::AvailabilityChanged)
         );
         let without: Vec<_> = devices
             .iter()

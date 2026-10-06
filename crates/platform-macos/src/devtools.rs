@@ -68,6 +68,11 @@ pub trait ToolRunner {
 }
 
 /// The production runner: `/usr/bin/xcrun` with the allow-listed environment.
+///
+/// Descriptor inheritance: only stdin (`/dev/null`), stdout and stderr are
+/// set up for the child. Other host descriptors must be close-on-exec, which
+/// holds for everything opened through Rust's standard library (including the
+/// journal lock); hosts must not hand this process inheritable descriptors.
 pub struct XcrunRunner {
     env: Vec<(OsString, OsString)>,
 }
@@ -84,6 +89,9 @@ impl XcrunRunner {
 
 impl ToolRunner for XcrunRunner {
     fn run(&self, args: &[String], timeout: Duration) -> Result<ToolOutput, ToolError> {
+        // Re-verified before every launch, narrowing the window between the
+        // signature check and exec to this call.
+        verify_code_requirement(Path::new(XCRUN), XCRUN_REQUIREMENT)?;
         run_bounded(
             Path::new(XCRUN),
             args,
@@ -108,19 +116,29 @@ pub fn allowed_environment() -> io::Result<Vec<(OsString, OsString)>> {
 }
 
 fn account_home() -> io::Result<PathBuf> {
-    // SAFETY: getpwuid returns a pointer into static storage or null; the
-    // directory string is copied before any other passwd call.
-    unsafe {
-        let entry = libc::getpwuid(libc::getuid());
-        if entry.is_null() || (*entry).pw_dir.is_null() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "account home unavailable",
-            ));
-        }
-        let bytes = std::ffi::CStr::from_ptr((*entry).pw_dir).to_bytes();
-        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    let mut record: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buffer = vec![0 as c_char; 16 * 1024];
+    let mut result = std::ptr::null_mut();
+    // SAFETY: every pointer is valid for the call; getpwuid_r is reentrant and
+    // writes strings only into `buffer`.
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            &mut record,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if status != 0 || result.is_null() || record.pw_dir.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "account home unavailable",
+        ));
     }
+    // SAFETY: pw_dir points to a NUL-terminated string inside `buffer`.
+    let bytes = unsafe { std::ffi::CStr::from_ptr(record.pw_dir) }.to_bytes();
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
 }
 
 fn user_temp_dir() -> io::Result<PathBuf> {
@@ -144,18 +162,52 @@ fn user_temp_dir() -> io::Result<PathBuf> {
     Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
 }
 
-/// Kills the child's process group unless the child was fully reaped first.
-/// Covers timeouts, output caps, errors and panics during a call.
+/// Owns the child. Unless disarmed after a clean reap, dropping it kills the
+/// whole process group and reaps the leader, so timeouts, caps, early errors
+/// and panics never leave the group running or a zombie behind.
 struct GroupGuard {
-    pgid: i32,
+    child: Child,
     armed: bool,
+}
+
+impl GroupGuard {
+    fn pgid(&self) -> i32 {
+        self.child.id() as i32
+    }
+
+    /// True once the leader has exited. Uses `WNOWAIT`, so the leader stays a
+    /// zombie: its pid, which is also the group id, cannot be reused while the
+    /// group is still being terminated.
+    fn exited_without_reaping(&self) -> io::Result<bool> {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is writable; WNOWAIT leaves the child unreaped.
+        let status = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                self.child.id(),
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if status != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: si_pid is valid to read after waitid; it is 0 when nothing exited.
+        Ok(unsafe { info.si_pid() } != 0)
+    }
+
+    fn kill_group(&self) {
+        // SAFETY: killpg only sends a signal. The leader is alive or an
+        // unreaped zombie, so the group id still names this group; ESRCH is fine.
+        unsafe { libc::killpg(self.pgid(), libc::SIGKILL) };
+    }
 }
 
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         if self.armed {
-            // SAFETY: killpg only sends a signal; ESRCH is fine.
-            unsafe { libc::killpg(self.pgid, libc::SIGKILL) };
+            self.kill_group();
+            let _ = self.child.wait();
         }
     }
 }
@@ -187,7 +239,8 @@ fn spawn_reader<R: Read + Send + 'static>(
 }
 
 /// Launches `program` without a shell in its own process group and enforces
-/// caps while reading and a wall-clock timeout.
+/// caps while reading and a wall-clock timeout. During execution calls, every
+/// error from this function means the outcome is `unknown`.
 pub fn run_bounded(
     program: &Path,
     args: &[String],
@@ -196,7 +249,7 @@ pub fn run_bounded(
     stdout_cap: usize,
     stderr_cap: usize,
 ) -> Result<ToolOutput, ToolError> {
-    let mut child: Child = Command::new(program)
+    let child = Command::new(program)
         .args(args)
         .env_clear()
         .envs(env.iter().map(|(key, value)| (key, value)))
@@ -206,54 +259,36 @@ pub fn run_bounded(
         .process_group(0)
         .spawn()
         .map_err(ToolError::Spawn)?;
-    let mut guard = GroupGuard {
-        pgid: child.id() as i32,
-        armed: true,
-    };
-    let stdout = spawn_reader(
-        child
-            .stdout
-            .take()
-            .ok_or(ToolError::Io(io::ErrorKind::BrokenPipe.into()))?,
-        stdout_cap,
-    );
-    let stderr = spawn_reader(
-        child
-            .stderr
-            .take()
-            .ok_or(ToolError::Io(io::ErrorKind::BrokenPipe.into()))?,
-        stderr_cap,
-    );
+    let mut guard = GroupGuard { child, armed: true };
+    let broken = || ToolError::Io(io::ErrorKind::BrokenPipe.into());
+    let stdout = spawn_reader(guard.child.stdout.take().ok_or_else(broken)?, stdout_cap);
+    let stderr = spawn_reader(guard.child.stderr.take().ok_or_else(broken)?, stderr_cap);
     let started = Instant::now();
     let mut stdout_result = None;
     let mut stderr_result = None;
-    let status = loop {
+    loop {
         for (receiver, slot) in [(&stdout, &mut stdout_result), (&stderr, &mut stderr_result)] {
             if slot.is_none()
                 && let Ok(result) = receiver.try_recv()
             {
                 if matches!(result, Err(ToolError::OutputCap)) {
-                    // Dropping the guard kills the group; reap to avoid a zombie.
-                    drop(guard);
-                    let _ = child.wait();
-                    return Err(ToolError::OutputCap);
+                    return Err(ToolError::OutputCap); // guard kills and reaps
                 }
                 *slot = Some(result);
             }
         }
-        match child.try_wait().map_err(ToolError::Io)? {
-            Some(status) => break status,
-            None if started.elapsed() >= timeout => {
-                drop(guard);
-                let _ = child.wait();
-                return Err(ToolError::Timeout);
-            }
-            None => std::thread::sleep(POLL),
+        if guard.exited_without_reaping().map_err(ToolError::Io)? {
+            break;
         }
-    };
-    // The leader exited; terminate anything left in its group so the pipes close.
-    // SAFETY: killpg only sends a signal; ESRCH means nothing is left.
-    unsafe { libc::killpg(guard.pgid, libc::SIGKILL) };
+        if started.elapsed() >= timeout {
+            return Err(ToolError::Timeout); // guard kills and reaps
+        }
+        std::thread::sleep(POLL);
+    }
+    // The leader exited but is not reaped yet, so the group id is still ours:
+    // terminate anything left in the group so the pipes close, then reap.
+    guard.kill_group();
+    let status = guard.child.wait().map_err(ToolError::Io)?;
     guard.armed = false;
     let collect = |slot: Option<Result<Vec<u8>, ToolError>>,
                    receiver: &mpsc::Receiver<Result<Vec<u8>, ToolError>>| {
@@ -535,11 +570,85 @@ mod tests {
         )
         .unwrap();
         let text = String::from_utf8(output.stdout).unwrap();
-        let names: Vec<_> = text
+        // std passes the environment sorted; macOS may add its own
+        // __CF_USER_TEXT_ENCODING to every process.
+        let names: std::collections::BTreeSet<_> = text
             .lines()
             .filter_map(|line| line.split('=').next())
+            .filter(|name| *name != "__CF_USER_TEXT_ENCODING")
             .collect();
-        assert_eq!(names, vec!["PATH", "HOME", "LANG", "TMPDIR"]);
+        assert_eq!(
+            names,
+            ["HOME", "LANG", "PATH", "TMPDIR"].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn stderr_cap_is_enforced_too() {
+        let result = run_bounded(
+            Path::new("/bin/sh"),
+            &args(&["-c", "yes >&2"]),
+            &[],
+            LIST_TIMEOUT,
+            1024,
+            4096,
+        );
+        assert!(matches!(result, Err(ToolError::OutputCap)));
+    }
+
+    #[test]
+    fn background_grandchild_in_the_group_cannot_hold_the_call_open() {
+        let started = Instant::now();
+        let output = run_bounded(
+            Path::new("/bin/sh"),
+            &args(&["-c", "sleep 30 & echo started"]),
+            &[],
+            LIST_TIMEOUT,
+            1024,
+            1024,
+        )
+        .unwrap();
+        assert!(output.success);
+        assert_eq!(output.stdout, b"started\n");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    struct Stub(Vec<u8>, bool);
+
+    impl ToolRunner for Stub {
+        fn run(&self, args: &[String], _: Duration) -> Result<ToolOutput, ToolError> {
+            assert_eq!(args, ["--find", "simctl"]);
+            Ok(ToolOutput {
+                success: self.1,
+                code: Some(if self.1 { 0 } else { 1 }),
+                stdout: self.0.clone(),
+                stderr: b"no developer directory".to_vec(),
+            })
+        }
+    }
+
+    #[test]
+    fn tool_evidence_records_identity_and_rejects_bad_answers() {
+        let evidence = tool_evidence(&Stub(b"/bin/echo\n".to_vec(), true)).unwrap();
+        assert_eq!(evidence.simctl_path, PathBuf::from("/bin/echo"));
+        assert!(evidence.inode > 0 && evidence.size > 0);
+        assert_eq!(
+            evidence,
+            tool_evidence(&Stub(b"/bin/echo\n".to_vec(), true)).unwrap()
+        );
+        assert!(tool_evidence(&Stub(b"relative/simctl".to_vec(), true)).is_err());
+        assert!(tool_evidence(&Stub(b"/bin\n".to_vec(), true)).is_err());
+        assert!(matches!(
+            tool_evidence(&Stub(Vec::new(), false)),
+            Err(ToolError::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn data_observation_reads_modification_time() {
+        let fixture = std::env::temp_dir();
+        assert!(modified_unix_ns(&fixture).is_some());
+        assert!(modified_unix_ns(Path::new("/nonexistent/sayaka-test")).is_none());
     }
 
     #[test]
