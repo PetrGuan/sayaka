@@ -116,6 +116,7 @@ pub fn allowed_environment() -> io::Result<Vec<(OsString, OsString)>> {
 }
 
 fn account_home() -> io::Result<PathBuf> {
+    // SAFETY: passwd is a plain C struct; all-zero is a valid initial value.
     let mut record: libc::passwd = unsafe { std::mem::zeroed() };
     let mut buffer = vec![0 as c_char; 16 * 1024];
     let mut result = std::ptr::null_mut();
@@ -179,6 +180,7 @@ impl GroupGuard {
     /// zombie: its pid, which is also the group id, cannot be reused while the
     /// group is still being terminated.
     fn exited_without_reaping(&self) -> io::Result<bool> {
+        // SAFETY: siginfo_t is a plain C struct; all-zero is a valid initial value.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         // SAFETY: `info` is writable; WNOWAIT leaves the child unreaped.
         let status = unsafe {
