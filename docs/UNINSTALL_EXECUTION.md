@@ -65,7 +65,26 @@ minimum deltas:
   lifted for the target because the target *is* the package.
 - **Ancestors/protections/volume**: unchanged from the M3 candidate
   (ordinary authority, writable/untrusted ancestry refusal, hidden/system
-  roots, Library, cloud roots, volume identity and device binding).
+  roots, Library, cloud roots, volume identity and device binding), with one
+  bundle-only exception (owner decision 2026-10-06, sayaka#93): a root-owned
+  ancestor in the `admin` group (gid 80) may be group-writable. Stock
+  `/Applications` is `root:admin 0775`. The bundle target, and the moved
+  bundle after the Trash move, likewise tolerate group write when their group
+  is `admin`. Other-write, setuid/setgid/sticky bits and every other group
+  stay refused, and file, purge and cache candidates keep the strict rule,
+  including their post-move destination check.
+  Members of `admin` can already administer the Mac, so that bit gives no one
+  new access.
+- **Bundle attributes**: an `.app` target may also carry `com.apple.macl`, the
+  app-management label macOS adds to most installed apps (same decision). Its
+  value is never read. File, purge and cache sources still refuse it.
+- **`/Applications` root**: `/Applications` is a protected root, but a bundle
+  directly inside it (bundle target parent and scope exactly `/Applications`)
+  is admitted (same decision). Nested folders such as `/Applications/Utilities`
+  and every other protected root stay refused.
+- **Refusal surface**: when the bundle passes preview but its native Trash plan
+  cannot be prepared, the binding reports a `trash_plan_unavailable` refusal
+  with the native message. It never returns a silently ineligible preview.
 - **Identity**: bundle directory device/inode/size/mtime plus
   `Contents/Info.plist` identity, revalidated after approval and again by
   the last native guard before the move, using the same revalidation

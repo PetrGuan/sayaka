@@ -866,7 +866,7 @@ impl Candidate {
                 Evidence::open_metadata_observed(parent, Binding::Safety, &mut stage.operation)?
             };
             stage.operation = "ancestor_admission";
-            admissible_ancestor(&evidence.stamp, uid)?;
+            admissible_shaped_ancestor(&evidence.stamp, uid, shape)?;
             stage.operation = "package_classification";
             reject_package(&evidence)?;
             ancestors.push(evidence);
@@ -894,7 +894,7 @@ impl Candidate {
             None
         };
         stage.operation = "cloud_attributes";
-        reject_cloud_attributes(target.required_file()?)?;
+        reject_target_attributes(target.required_file()?, shape)?;
         stage.phase = "purge_marker";
         let purge_marker_evidence = Self::capture_purge_markers(
             scope,
@@ -1116,7 +1116,7 @@ impl Candidate {
         }
         for ancestor in &self.ancestors {
             ancestor.revalidate()?;
-            admissible_ancestor(&ancestor.stamp, self.uid)?;
+            admissible_shaped_ancestor(&ancestor.stamp, self.uid, self.shape)?;
             reject_package(ancestor)?;
         }
         self.target.revalidate()?;
@@ -1144,7 +1144,7 @@ impl Candidate {
                 admissible_file(&self.target.stamp, self.uid)?;
             }
         }
-        reject_cloud_attributes(self.target.required_file()?)?;
+        reject_target_attributes(self.target.required_file()?, self.shape)?;
         if let Some(source) = &self.source {
             source.revalidate()?;
             admissible_file(&source.stamp, self.uid)?;
@@ -1231,6 +1231,9 @@ impl Candidate {
             };
             let protected = if self.shape == TargetShape::CacheDirectory {
                 cache_directory_protected(checked)
+            } else if self.shape == TargetShape::Bundle && is_applications_root(checked) {
+                // A bundle directly inside /Applications (sayaka#93).
+                false
             } else {
                 standard_protected(checked)
             };
@@ -1401,7 +1404,7 @@ impl Candidate {
         }
         match self.shape {
             TargetShape::Bundle => {
-                admissible_moved_bundle(&stamp, self.uid)?;
+                admissible_moved_bundle(&stamp, self.uid, self.shape)?;
                 let manifest = self
                     .bundle_manifest
                     .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
@@ -1412,7 +1415,7 @@ impl Candidate {
                 }
             }
             TargetShape::PurgeArtifact | TargetShape::CacheDirectory => {
-                admissible_moved_bundle(&stamp, self.uid)?;
+                admissible_moved_bundle(&stamp, self.uid, self.shape)?;
             }
             TargetShape::File => {
                 admissible_file(&stamp, self.uid)?;
@@ -1429,7 +1432,7 @@ impl Candidate {
             ));
         }
         if self.shape.is_directory() {
-            admissible_moved_bundle(&held, self.uid)?;
+            admissible_moved_bundle(&held, self.uid, self.shape)?;
         } else {
             admissible_file(&held, self.uid)?;
         }
@@ -1690,12 +1693,46 @@ fn admissible_ancestor(stamp: &Stamp, uid: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// macOS's administrators group. `/Applications` is `root:admin 0775` on a
+/// stock install, and apps copied there are often `user:admin 0775`.
+const ADMIN_GID: u32 = 80;
+
+/// The write bits a stamp may not carry. Group write is tolerated only for
+/// the admin group, and only where `admin_group_ok` says so: its members can
+/// already administer the Mac, so that bit grants no one new access.
+fn forbidden_bits(stamp: &Stamp, admin_group_ok: bool) -> u32 {
+    if admin_group_ok && stamp.gid == ADMIN_GID {
+        0o7002
+    } else {
+        0o7022
+    }
+}
+
+/// Ancestor admission by target shape. Bundle uninstall also accepts
+/// root-owned `admin`-group ancestors such as `/Applications`; every other
+/// shape keeps the strict rule.
+fn admissible_shaped_ancestor(stamp: &Stamp, uid: u32, shape: TargetShape) -> io::Result<()> {
+    if shape == TargetShape::Bundle && stamp.uid == 0 && stamp.gid == ADMIN_GID {
+        if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
+            || stamp.mode & forbidden_bits(stamp, true) != 0
+            || stamp.flags & !(ORDINARY_FLAGS | SF_RESTRICTED | SF_NOUNLINK) != 0
+            || stamp.inode == 0
+        {
+            return Err(refused(
+                "untrusted, writable, special, or dataless ancestor",
+            ));
+        }
+        return Ok(());
+    }
+    admissible_ancestor(stamp, uid)
+}
+
 /// T9 bundle target: an ordinary user-owned directory named `*.app`.
 /// Unlike file targets there is no single-link rule (directories always
 /// have extra links) and the package itself is the intended target.
 fn admissible_bundle_target(stamp: &Stamp, uid: u32, path: &Path) -> io::Result<()> {
     if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
-        || stamp.mode & 0o7022 != 0
+        || stamp.mode & forbidden_bits(stamp, true) != 0
         || stamp.uid != uid
         || stamp.flags & !ORDINARY_FLAGS != 0
         || stamp.inode == 0
@@ -1714,11 +1751,12 @@ fn admissible_bundle_target(stamp: &Stamp, uid: u32, path: &Path) -> io::Result<
     Ok(())
 }
 
-/// A bundle directory after a reported move: same admission as at capture,
-/// without the name rule (Trash may rename on conflict).
-fn admissible_moved_bundle(stamp: &Stamp, uid: u32) -> io::Result<()> {
+/// A directory after a reported move: same admission as at capture, without
+/// the name rule (Trash may rename on conflict). The admin-group tolerance
+/// applies to bundles only; purge and cache directories keep the strict rule.
+fn admissible_moved_bundle(stamp: &Stamp, uid: u32, shape: TargetShape) -> io::Result<()> {
     if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
-        || stamp.mode & 0o7022 != 0
+        || stamp.mode & forbidden_bits(stamp, shape == TargetShape::Bundle) != 0
         || stamp.uid != uid
         || stamp.flags & !ORDINARY_FLAGS != 0
         || stamp.inode == 0
@@ -1837,6 +1875,15 @@ fn reject_cloud_attributes(file: &File) -> io::Result<()> {
     inspect_attributes(file, AttributePhase::Source)
 }
 
+/// Target admission by shape: an app bundle may also carry the system
+/// `com.apple.macl` label (see `AttributePhase::BundleSource`).
+fn reject_target_attributes(file: &File, shape: TargetShape) -> io::Result<()> {
+    match shape {
+        TargetShape::Bundle => inspect_attributes(file, AttributePhase::BundleSource),
+        _ => reject_cloud_attributes(file),
+    }
+}
+
 fn reject_destination_attributes(file: &File) -> io::Result<()> {
     inspect_attributes(file, AttributePhase::PostEffectDestination)
 }
@@ -1844,6 +1891,11 @@ fn reject_destination_attributes(file: &File) -> io::Result<()> {
 #[derive(Clone, Copy)]
 enum AttributePhase {
     Source,
+    /// An `.app` bundle directory before the move. macOS adds
+    /// `com.apple.macl` (an app-management access label) to most installed
+    /// apps; it is not cloud or resource-fork data (owner decision
+    /// 2026-10-06, sayaka#93).
+    BundleSource,
     PostEffectDestination,
 }
 
@@ -1875,11 +1927,14 @@ fn check_attribute_names(bytes: &[u8], phase: AttributePhase) -> io::Result<()> 
             name,
             b"com.apple.quarantine" | b"com.apple.FinderInfo" | b"com.apple.provenance"
         ) || name.starts_with(b"com.apple.metadata:");
-        // MACL was observed as system-added after a verified-source move.
-        // This exception is exact and post-effect only; source admission
-        // never accepts it. No value is read, inferred, or modified.
-        let generated_destination_attribute =
-            matches!(phase, AttributePhase::PostEffectDestination) && name == b"com.apple.macl";
+        // MACL was observed as system-added after a verified-source move, and
+        // is present on most installed apps. This exception is exact: it holds
+        // post-effect and for bundle sources only; file, purge and cache source
+        // admission never accepts it. No value is read, inferred, or modified.
+        let generated_destination_attribute = matches!(
+            phase,
+            AttributePhase::PostEffectDestination | AttributePhase::BundleSource
+        ) && name == b"com.apple.macl";
         if !(source_allowed || generated_destination_attribute) {
             return Err(refused(
                 "unknown or cloud/resource-fork extended attributes",
@@ -1903,6 +1958,33 @@ fn fold(value: &OsStr) -> Vec<u8> {
     match value.to_str() {
         Some(value) => value.to_lowercase().into_bytes(),
         None => value.as_bytes().to_ascii_lowercase(),
+    }
+}
+
+/// Exactly `/Applications` (or its Data-volume path). Bundle uninstall may
+/// target an app directly inside it; nested folders such as
+/// `/Applications/Utilities` and everything else under it stay protected
+/// (owner decision 2026-10-06, sayaka#93).
+fn is_applications_root(path: &Path) -> bool {
+    let mut components = path.components();
+    if components.next() != Some(Component::RootDir) {
+        return false;
+    }
+    let parts: Option<Vec<_>> = components
+        .map(|part| match part {
+            Component::Normal(value) => Some(fold(value)),
+            _ => None,
+        })
+        .collect();
+    match parts.as_deref() {
+        Some([only]) => only == b"applications",
+        Some([system, volumes, data, applications]) => {
+            system == b"system"
+                && volumes == b"volumes"
+                && data == b"data"
+                && applications == b"applications"
+        }
+        _ => false,
     }
 }
 
@@ -2027,3 +2109,109 @@ fn developer_cache_rule_suffix(path: &Path) -> bool {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod admin_group_admission_tests {
+    use super::*;
+
+    fn directory(mode: u32, uid: u32, gid: u32) -> Stamp {
+        Stamp {
+            device: 1,
+            inode: 2,
+            mode: u32::from(libc::S_IFDIR) | mode,
+            uid,
+            gid,
+            links: 3,
+            size: 96,
+            blocks: 0,
+            flags: 0,
+            modified: (1, 0),
+            changed: (1, 0),
+            created: (1, 0),
+        }
+    }
+
+    #[test]
+    fn applications_folder_admits_bundles_only() {
+        let applications = directory(0o775, 0, ADMIN_GID);
+        assert!(admissible_shaped_ancestor(&applications, 501, TargetShape::Bundle).is_ok());
+        for shape in [
+            TargetShape::File,
+            TargetShape::PurgeArtifact,
+            TargetShape::CacheDirectory,
+        ] {
+            assert!(admissible_shaped_ancestor(&applications, 501, shape).is_err());
+        }
+    }
+
+    #[test]
+    fn bundle_ancestor_relaxation_is_admin_group_write_only() {
+        // Other-write, sticky/setid, a non-admin group or a non-root owner stay refused.
+        for (mode, uid, gid) in [
+            (0o777, 0, ADMIN_GID),
+            (0o1775, 0, ADMIN_GID),
+            (0o775, 0, 0),
+            (0o775, 502, ADMIN_GID),
+        ] {
+            assert!(
+                admissible_shaped_ancestor(&directory(mode, uid, gid), 501, TargetShape::Bundle)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn applications_root_is_exact() {
+        assert!(is_applications_root(Path::new("/Applications")));
+        assert!(is_applications_root(Path::new(
+            "/System/Volumes/Data/Applications"
+        )));
+        for path in [
+            "/Applications/Utilities",
+            "/Users/me/Applications",
+            "Applications",
+            "/",
+            "/Applications/../Library",
+            "/System/Volumes/Data/Applications/Utilities",
+            "/Applications/Foo.app",
+        ] {
+            assert!(!is_applications_root(Path::new(path)), "{path}");
+        }
+    }
+
+    #[test]
+    fn bundle_source_alone_accepts_macl() {
+        assert!(check_attribute_names(b"com.apple.macl\0", AttributePhase::BundleSource).is_ok());
+        assert!(check_attribute_names(b"com.apple.macl\0", AttributePhase::Source).is_err());
+        for name in [
+            &b"com.apple.ResourceFork\0"[..],
+            b"com.apple.fileprovider.fpfs#P\0",
+        ] {
+            assert!(check_attribute_names(name, AttributePhase::BundleSource).is_err());
+        }
+    }
+
+    #[test]
+    fn bundle_target_tolerates_admin_group_write() {
+        let path = Path::new("/Applications/Example.app");
+        assert!(admissible_bundle_target(&directory(0o775, 501, ADMIN_GID), 501, path).is_ok());
+        assert!(
+            admissible_moved_bundle(&directory(0o775, 501, ADMIN_GID), 501, TargetShape::Bundle)
+                .is_ok()
+        );
+        // Purge and cache destinations keep the strict rule.
+        for shape in [TargetShape::PurgeArtifact, TargetShape::CacheDirectory] {
+            assert!(
+                admissible_moved_bundle(&directory(0o775, 501, ADMIN_GID), 501, shape).is_err()
+            );
+        }
+        for (mode, gid) in [(0o775, 20), (0o777, ADMIN_GID), (0o2775, ADMIN_GID)] {
+            assert!(admissible_bundle_target(&directory(mode, 501, gid), 501, path).is_err());
+            assert!(
+                admissible_moved_bundle(&directory(mode, 501, gid), 501, TargetShape::Bundle)
+                    .is_err()
+            );
+        }
+        assert!(admissible_bundle_target(&directory(0o775, 502, ADMIN_GID), 501, path).is_err());
+    }
+}
