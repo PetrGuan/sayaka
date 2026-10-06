@@ -871,16 +871,20 @@ running `developer_activity` (execution is refused while it is non-empty).
 `SayakaSimulatorExecuteRequestV1` carries the 64-hex `plan_digest`, `1..32`
 unique preview item ids (a pair needs both members), `approval == 1`, the exact
 token `erase N simulators` or `delete N simulators` with `N == item_count`, and
-an optional state directory (`has_state_dir`), which must not lie inside a
-selected device. Any mismatch, expiry, cancellation or a second execution
-returns `INVALID_CANDIDATE` without effects. Execution JSON
-(`kind: "sayaka.simulator_execution"`) is `refused` (no effects; for example
-`busy`, `developer_activity`, `journal_unavailable`) or `finished`/`unknown`
-with the schema-6 journal record. Per item, `Succeeded` is confirmed by a
-re-list, `Skipped` carries the refusal or stop reason, `Failed` means `simctl`
-reported failure and the device remains, and `Unknown` (timeout, interruption,
-post-check failure, or erase without an observable change) is reconciled by a
-fresh preview, never retried. Cancellation skips batches not yet started; it
+an optional state directory (`has_state_dir`), which must not lie inside any
+previewed device (compared by real path; otherwise `INVALID_ARGUMENT`). Any
+digest, token, id or pairing mismatch, expiry, cancellation or a second
+execution returns `INVALID_CANDIDATE` without effects; hosts cannot tell
+expiry from a mismatch, so on `INVALID_CANDIDATE` they preview again. Execution
+JSON (`kind: "sayaka.simulator_execution"`) is `refused` (no effects; for
+example `busy`, `developer_activity`, `journal_unavailable`) or
+`finished`/`unknown` with the schema-6 journal record. A refused execution
+ends the handle: release it and preview again. Per item, `Succeeded` is
+confirmed by a re-list, `Skipped` carries the refusal or stop reason, `Failed`
+means `simctl` reported failure and no change to the device was observed, and
+`Unknown` (timeout, interruption, post-check failure, a delete still listed
+after success, a failing erase with changed data, or an erase without an
+observable change) is reconciled by a fresh preview, never retried. Cancellation skips batches not yet started; it
 never interrupts a running `simctl` call (up to 10 minutes).
 
 ## AI Footprint projection

@@ -46,7 +46,6 @@ struct Preview {
     session: SimulatorSession<MacHost>,
     /// `udids[id - 1]` is the device behind preview item `id`.
     udids: Vec<String>,
-    data_paths: Vec<PathBuf>,
     bytes: Vec<u8>,
 }
 
@@ -132,6 +131,8 @@ fn session_refused(kind: &str, handle: u64, error: SessionError) -> Result<Outco
 #[cfg(target_os = "macos")]
 fn prepare(handle: u64, operation: Operation, cancel: Cancellation) -> Result<Outcome, i32> {
     const KIND: &str = "sayaka.simulator_preview";
+    // The engine's TTL starts before listing; never advertise a later expiry.
+    let expires = std::time::SystemTime::now() + PREVIEW_TTL;
     if let Err(reason) = capability() {
         return refused(
             KIND,
@@ -150,7 +151,6 @@ fn prepare(handle: u64, operation: Operation, cancel: Cancellation) -> Result<Ou
         Err(error) => return session_refused(KIND, handle, error),
     };
     let preview = session.preview();
-    let expires = std::time::SystemTime::now() + PREVIEW_TTL;
     let ids: std::collections::HashMap<&str, usize> = preview
         .candidates
         .iter()
@@ -210,11 +210,6 @@ fn prepare(handle: u64, operation: Operation, cancel: Cancellation) -> Result<Ou
             .candidates
             .iter()
             .map(|c| c.device.udid.clone())
-            .collect(),
-        data_paths: preview
-            .candidates
-            .iter()
-            .map(|c| PathBuf::from(&c.device.data_path))
             .collect(),
         session,
         bytes,
@@ -464,15 +459,13 @@ pub unsafe extern "C" fn sayaka_simulators_execute_v1(
                     .and_then(|id| id.checked_sub(1))
                     .filter(|index| *index < preview.udids.len())
                     .ok_or(INVALID_CANDIDATE)?;
-                // The journal must not live inside a device that is about to go.
-                if preview.data_paths[index]
-                    .parent()
-                    .is_some_and(|device| state_dir.starts_with(device))
-                {
-                    return Err(INVALID_ARGUMENT);
-                }
                 items.push(preview.udids[index].clone());
             }
+            // The journal must not live inside any previewed device.
+            preview
+                .session
+                .check_state_dir(&state_dir)
+                .map_err(|_| INVALID_ARGUMENT)?;
             let execute_request = ExecuteRequest {
                 plan_digest: digest,
                 items,

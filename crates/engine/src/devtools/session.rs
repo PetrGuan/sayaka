@@ -94,6 +94,18 @@ impl std::fmt::Display for SessionError {
             SessionError::DeveloperActivity { executables } => {
                 write!(f, "developer_activity: {}", executables.join(", "))
             }
+            SessionError::UnsupportedToolVersion { macos, xcode } => write!(
+                f,
+                "unsupported_tool_version: macOS {} and Xcode {} (need {MIN_MACOS_MAJOR}+ and {MIN_XCODE_MAJOR}+)",
+                macos.as_deref().unwrap_or("unknown"),
+                xcode.as_deref().unwrap_or("unknown")
+            ),
+            SessionError::Busy => {
+                f.write_str("busy: another Sayaka operation holds the journal lock")
+            }
+            SessionError::Expired => {
+                f.write_str("expired: the preview is older than 120 seconds; preview again")
+            }
             other => f.write_str(other.code()),
         }
     }
@@ -291,6 +303,9 @@ impl<H: Host> SimulatorSession<H> {
             return Err(SessionError::Cancelled);
         }
         let (devices, pairs) = list(&host)?;
+        if cancellation.is_cancelled() {
+            return Err(SessionError::Cancelled);
+        }
         if host.tool_identity().map_err(ToolFailure::into_error)? != tool {
             return Err(SessionError::ToolChanged);
         }
@@ -374,8 +389,8 @@ impl<H: Host> SimulatorSession<H> {
         journal: &impl ToolJournal,
     ) -> Result<ExecutionReport, SessionError> {
         self.check_approval(request)?;
-        self.consumed = true;
         if cancellation.is_cancelled() {
+            self.consumed = true;
             return Err(SessionError::Cancelled);
         }
         let activity =
@@ -390,8 +405,12 @@ impl<H: Host> SimulatorSession<H> {
             });
         }
         if self.host.tool_identity().map_err(ToolFailure::into_error)? != self.preview.tool {
+            self.consumed = true;
             return Err(SessionError::ToolChanged);
         }
+        // From here on the approval is spent, whatever happens. Refusals above
+        // (developer activity) leave the preview usable until it expires.
+        self.consumed = true;
 
         let operation = self.preview.operation;
         let batches = pair_batches(&self.preview.candidates, &request.items);
@@ -521,6 +540,7 @@ impl<H: Host> SimulatorSession<H> {
                 Err(failure) => (CallEnd::Indeterminate, Some(failure.reason())),
             };
             let after = list(&self.host);
+            let mut ambiguous = false;
             for (index, candidate) in range.clone().zip(&ordered[range.clone()]) {
                 let row = &mut report.record.items[index];
                 row.updated_unix_ms = journal::now_ms().unwrap_or(row.updated_unix_ms);
@@ -544,14 +564,42 @@ impl<H: Host> SimulatorSession<H> {
                             before[index - range.start],
                             data_after,
                         );
-                        let reason = match outcome {
-                            Outcome::Succeeded => None,
-                            Outcome::Unknown
-                                if matches!(end, CallEnd::Exited { success: true }) =>
-                            {
+                        let failure = || {
+                            call_reason
+                                .clone()
+                                .unwrap_or_else(|| "tool_reported_failure".into())
+                        };
+                        let reason = match (outcome, operation, end) {
+                            (Outcome::Succeeded, ..) => None,
+                            (
+                                Outcome::Unknown,
+                                Operation::Erase,
+                                CallEnd::Exited { success: true },
+                            ) if current.is_some_and(|d| d.state == "Shutdown") => {
+                                // Expected for an already-empty device; not ambiguous.
                                 Some("exited_without_observable_change".to_owned())
                             }
-                            _ => call_reason.clone().or(Some("tool_reported_failure".into())),
+                            (
+                                Outcome::Unknown,
+                                Operation::Erase,
+                                CallEnd::Exited { success: true },
+                            ) => {
+                                ambiguous = true;
+                                Some("erase_post_check_mismatch".to_owned())
+                            }
+                            (
+                                Outcome::Unknown,
+                                Operation::Delete,
+                                CallEnd::Exited { success: true },
+                            ) => {
+                                ambiguous = true;
+                                Some("still_listed_after_success_exit".to_owned())
+                            }
+                            (Outcome::Unknown, _, CallEnd::Exited { success: false }) => {
+                                ambiguous = true;
+                                Some(format!("failed_after_data_changed: {}", failure()))
+                            }
+                            _ => Some(failure()),
                         };
                         (outcome, reason)
                     }
@@ -564,7 +612,7 @@ impl<H: Host> SimulatorSession<H> {
                 };
                 row.reason = reason.map(|reason| bounded_reason(&reason));
             }
-            if after.is_err() || end == CallEnd::Indeterminate {
+            if ambiguous || after.is_err() || end == CallEnd::Indeterminate {
                 // CoreSimulatorService may still be working; never continue
                 // past an ambiguous call.
                 stop = Some("stopped_after_ambiguous_outcome".into());
@@ -692,6 +740,40 @@ pub fn open_journal(state_dir: &Path) -> Result<Store, SessionError> {
     })
 }
 
+/// Resolves links where the path (or its parent) exists, so a state
+/// directory reached through a symlink is compared by its real location.
+fn resolved(path: &Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => std::fs::canonicalize(parent)
+            .map(|parent| parent.join(name))
+            .unwrap_or_else(|_| path.to_path_buf()),
+        _ => path.to_path_buf(),
+    }
+}
+
+impl<H: Host> SimulatorSession<H> {
+    /// Refuses a journal directory inside any previewed device: an erase or
+    /// delete would otherwise remove the journal after its intent.
+    pub fn check_state_dir(&self, state_dir: &Path) -> Result<(), SessionError> {
+        let real = resolved(state_dir);
+        for candidate in &self.preview.candidates {
+            let Some(device_dir) = Path::new(&candidate.device.data_path).parent() else {
+                continue;
+            };
+            if state_dir.starts_with(device_dir) || real.starts_with(resolved(device_dir)) {
+                return Err(SessionError::InvalidRequest {
+                    message: "the journal directory lies inside a simulator device".into(),
+                    refusal: None,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Reads one top-level string value from a small XML property list.
 fn plist_string(bytes: &[u8], wanted: &str) -> Option<String> {
     use quick_xml::Reader;
@@ -769,6 +851,18 @@ fn xcode_version_plist(simctl: &Path) -> Option<PathBuf> {
         .then(|| contents.join("version.plist"))
 }
 
+/// Serializes this process's `xcrun` calls with developer-activity scans, so a
+/// scan never sees another session's own `simctl` child.
+#[cfg(target_os = "macos")]
+static TOOL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(target_os = "macos")]
+fn tool_lock() -> std::sync::MutexGuard<'static, ()> {
+    TOOL_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Production host: the signed `xcrun` runner and native metadata.
 #[cfg(target_os = "macos")]
 pub struct MacHost {
@@ -801,6 +895,7 @@ fn tool_failure(error: sayaka_platform_macos::devtools::ToolError) -> ToolFailur
 #[cfg(target_os = "macos")]
 impl Host for MacHost {
     fn tool_identity(&self) -> Result<ToolIdentity, ToolFailure> {
+        let _serialized = tool_lock();
         let evidence =
             sayaka_platform_macos::devtools::tool_evidence(&self.runner).map_err(tool_failure)?;
         Ok(ToolIdentity {
@@ -827,6 +922,7 @@ impl Host for MacHost {
         } else {
             LIST_TIMEOUT
         };
+        let _serialized = tool_lock();
         self.runner
             .run(args, timeout)
             .map(|output| ToolResult {
@@ -838,8 +934,9 @@ impl Host for MacHost {
     }
 
     fn developer_activity(&self) -> io::Result<Vec<String>> {
-        // No `xcrun` child of this session is alive between calls, so none
-        // needs excluding.
+        // Holding the tool lock guarantees no `xcrun` child of this process
+        // is alive, so none needs excluding.
+        let _serialized = tool_lock();
         Ok(sayaka_platform_macos::devtools::developer_activity(None)?
             .into_iter()
             .map(|path| path.display().to_string())

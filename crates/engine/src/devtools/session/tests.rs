@@ -43,6 +43,8 @@ struct Fake {
     macos: RefCell<Option<String>>,
     xcode: RefCell<Option<String>>,
     mtime: Cell<i128>,
+    /// Models a device whose data does not change on erase.
+    freeze_mtime: Cell<bool>,
     elapsed: Cell<Duration>,
     base: Option<Instant>,
 }
@@ -86,7 +88,9 @@ impl Host for Rc<Fake> {
             if let Some(failure) = self.execute_failure.borrow_mut().take() {
                 return Err(failure);
             }
-            self.mtime.set(self.mtime.get() + 1);
+            if !self.freeze_mtime.get() {
+                self.mtime.set(self.mtime.get() + 1);
+            }
             return Ok(ToolResult {
                 success: self.execute_success.get(),
                 stdout: Vec::new(),
@@ -286,7 +290,13 @@ fn developer_activity_refuses_the_whole_request() {
     assert_eq!(error.code(), "developer_activity");
     assert!(journal.records.borrow().is_empty());
     assert!(executions(&host).is_empty());
-    // One-shot: a refused execution still consumes the session.
+    // An activity refusal keeps the preview; after Xcode quits it can run once.
+    host.activity.borrow_mut().clear();
+    *host.after.borrow_mut() = Some(devices(&[]));
+    let report = session
+        .execute_with(&request(&session, &[A]), &Cancellation::default(), &journal)
+        .unwrap();
+    assert_eq!(report.record.items[0].state, ItemState::Succeeded);
     assert_eq!(
         session
             .execute_with(&request(&session, &[A]), &Cancellation::default(), &journal)
@@ -576,4 +586,81 @@ fn tool_records_are_valid_and_trash_records_reject_tool_intent() {
     assert!(as_trash.validate().is_err());
     record.items[0].destination = Some(NativePath::from_path(Path::new("/x/.Trash/data")));
     assert!(record.validate().is_err());
+}
+
+fn many(prefix: &str, count: usize) -> Vec<String> {
+    (1..=count)
+        .map(|n| format!("{prefix}-0000-0000-0000-{n:012}"))
+        .collect()
+}
+
+#[test]
+fn delete_still_listed_after_success_exit_stops_later_batches() {
+    let udids = many("DDDDDDDD", 10);
+    let list: Vec<_> = udids
+        .iter()
+        .map(|udid| device(udid, "Phone", "Shutdown", 1))
+        .collect();
+    let host = fake(&list);
+    let mut session = prepare(&host, Operation::Delete);
+    let refs: Vec<&str> = udids.iter().map(String::as_str).collect();
+    let report = run(&mut session, &refs);
+    assert_eq!(executions(&host).len(), 1);
+    assert!(report.record.items[..MAX_BATCH].iter().all(|item| {
+        item.state == ItemState::Unknown
+            && item.reason.as_deref() == Some("still_listed_after_success_exit")
+    }));
+    assert!(
+        report.record.items[MAX_BATCH..]
+            .iter()
+            .all(|item| item.state == ItemState::Skipped)
+    );
+}
+
+#[test]
+fn erase_of_already_empty_devices_continues_with_later_batches() {
+    let udids = many("EEEEEEEE", 10);
+    let list: Vec<_> = udids
+        .iter()
+        .map(|udid| device(udid, "Phone", "Shutdown", 1))
+        .collect();
+    let host = fake(&list);
+    host.freeze_mtime.set(true);
+    let mut session = prepare(&host, Operation::Erase);
+    let refs: Vec<&str> = udids.iter().map(String::as_str).collect();
+    let report = run(&mut session, &refs);
+    assert_eq!(executions(&host).len(), 2);
+    assert!(report.record.items.iter().all(|item| {
+        item.state == ItemState::Unknown
+            && item.reason.as_deref() == Some("exited_without_observable_change")
+    }));
+}
+
+#[test]
+fn failing_erase_batch_with_changed_data_is_unknown_not_failed() {
+    let host = fake(&[device(A, "iPhone", "Shutdown", 10)]);
+    host.execute_success.set(false);
+    *host.after.borrow_mut() = Some(devices(&[device(A, "iPhone", "Shutdown", 1)]));
+    let mut session = prepare(&host, Operation::Erase);
+    let report = run(&mut session, &[A]);
+    assert_eq!(report.record.items[0].state, ItemState::Unknown);
+    assert!(
+        report.record.items[0]
+            .reason
+            .as_deref()
+            .unwrap()
+            .starts_with("failed_after_data_changed")
+    );
+}
+
+#[test]
+fn journal_inside_a_device_is_refused() {
+    let host = fake(&[device(A, "iPhone", "Shutdown", 10)]);
+    let session = prepare(&host, Operation::Delete);
+    let inside = PathBuf::from(format!("/fixture/Devices/{A}/journal"));
+    assert_eq!(
+        session.check_state_dir(&inside).unwrap_err().code(),
+        "invalid_request"
+    );
+    assert!(session.check_state_dir(Path::new("/fixture/state")).is_ok());
 }

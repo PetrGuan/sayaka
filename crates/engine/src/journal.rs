@@ -424,6 +424,16 @@ impl Record {
                         || device.name.len() > 1024
                         || device.runtime_identifier.len() > 1024
                 })
+                // A paired device is only ever handled together with its partner.
+                || operation.devices.iter().any(|device| {
+                    device.paired_with.as_ref().is_some_and(|partner| {
+                        partner == &device.udid
+                            || !operation.devices.iter().any(|other| {
+                                &other.udid == partner
+                                    && other.paired_with.as_ref() == Some(&device.udid)
+                            })
+                    })
+                })
             {
                 return Err(invalid("invalid tool operation intent"));
             }

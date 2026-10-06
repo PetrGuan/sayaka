@@ -182,9 +182,12 @@ Whole request:
   without reading each bundle. Processes whose path cannot be read (other
   users' or protected processes) are skipped; they cannot be this user's
   Xcode or simulators. Command-line test runs are detected through
-  `xcodebuild`/`xctest`, not only GUI apps. Sayaka's own `xcrun`/`simctl`
-  children (identified by their process group) are excluded. If the process
-  table cannot be read, the request fails closed.
+  `xcodebuild`/`xctest`, not only GUI apps. Sayaka never sees its own
+  `xcrun`/`simctl` children: all of a process's tool calls and activity scans
+  are serialized, so no child of this process is alive during a scan. If the
+  process table cannot be read, the request fails closed. This refusal does
+  not spend the engine session: after the tools quit, the same unexpired
+  preview can execute (the C bindings still end the handle; see BINDINGS.md).
 - `tool_changed`, `tool_unavailable`, `unsupported_tool_version`.
 - `busy` (another devtools execution), `expired` (preview older than 120 s on
   the monotonic clock, matching picked-file sessions), `invalid_request`
@@ -197,7 +200,8 @@ Per candidate:
 - device is a member of a pair, unless the request is a **delete** containing
   every member of that pair; the confirmation then lists the pair as one entry
   with both devices and their (possibly different) runtimes. Paired devices are
-  never offered for erase;
+  never offered for erase. A device that belongs to more than one pair is never
+  offered (`multiple_pairs`);
 - device is unavailable (`isAvailable` false) and the operation is erase:
   unavailable devices are offered for delete only;
 - device name matches Xcode's parallel-testing clones (`Clone N of …`); clones
@@ -238,7 +242,9 @@ no approval boolean without the token, and no imported JSON approval.
      data-directory observation (data size or modification time) → `succeeded`;
      exit 0 without an observable change → `unknown` (expected for a device that
      was already empty; hosts explain this rather than reporting a failure);
-     non-zero exit → `failed`;
+     non-zero exit → `failed` without an observable change, otherwise
+     `unknown` (a failing batch may have wiped some devices before one failed),
+     so `failed` never reports a changed device as untouched;
    - timeout, interruption, cap exceedance, or any other tool or I/O error
      during the call → `unknown`.
 5. Write the journal outcome. Outcomes: `succeeded`, `refused`, `failed`,
@@ -246,15 +252,30 @@ no approval boolean without the token, and no imported JSON approval.
 
 Pair members are always placed in the same batch. Host cancellation skips
 batches that have not started; it never interrupts a running call. After an
-indeterminate call or a failed post-check, later batches are skipped
-(`stopped_after_ambiguous_outcome`). Journal items record the device's data
+indeterminate call, a failed post-check, or any ambiguous `unknown` (a delete
+still listed after exit 0, an erased device that is gone or not `Shutdown`, a
+failing erase with changed data), later batches are skipped
+(`stopped_after_ambiguous_outcome`). Only the expected erase case — exit 0, the
+device present and `Shutdown`, no observable change — continues. Each `unknown`
+carries a specific reason (`exited_without_observable_change`,
+`still_listed_after_success_exit`, `erase_post_check_mismatch`,
+`failed_after_data_changed`, `timeout`, `post_check_failed`). If the CLI or host
+process is interrupted mid-call, the journal keeps `started`, which reads back
+as `unknown`. If publishing `started` fails, no call is made and the report
+marks the batch `skipped`; a partially durable `started` still reads back as
+`unknown`, which is the conservative interpretation.
+
+The journal directory must not lie inside any previewed device, compared by
+real path after resolving links; such a request is refused before the journal
+opens. Journal items record the device's data
 directory as the path (identity is the UDID in `tool_operation`); a refused
 batch is recorded as `skipped` with its reason.
 
 Error codes surfaced to hosts: `capability_unavailable`, `tool_unavailable`,
 `unsupported_tool_version`, `tool_changed`, `developer_activity`, `busy`,
 `expired`, `invalid_request`, `parse_failed`, `output_cap_exceeded`, `timeout`,
-`journal_unavailable`. Journal records are schema-versioned; an unknown schema
+`journal_unavailable`, `cancelled` (cancelled before any call) and `consumed`
+(the session already executed). Journal records are schema-versioned; an unknown schema
 version is read-only evidence, never resumed.
 
 Residual risk, disclosed: between revalidation and the call, another process

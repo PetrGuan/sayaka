@@ -179,6 +179,9 @@ mod imp {
             return Err(invalid("--only requires --execute"));
         }
         let cancellation = Cancellation::default();
+        let signal = cancellation.clone();
+        // Ctrl-C skips batches not yet started; a running simctl call finishes.
+        ctrlc::set_handler(move || signal.cancel()).map_err(io::Error::other)?;
         let host = MacHost::new().map_err(session_error)?;
         let mut session =
             SimulatorSession::prepare(host, operation, &cancellation).map_err(session_error)?;
@@ -263,11 +266,13 @@ mod imp {
         }
         let mut answer = String::new();
         io::stdin().lock().take(128).read_line(&mut answer)?;
-        if !crate::trash::confirmed(&answer, &expected) {
+        if !crate::trash::confirmed(&answer, &expected) || cancellation.is_cancelled() {
             writeln!(io::stderr().lock(), "Cancelled; nothing changed.")?;
             return Ok(130);
         }
-        let store = open_journal(&crate::trash::state_directory(args)?).map_err(session_error)?;
+        let state_dir = crate::trash::state_directory(args)?;
+        session.check_state_dir(&state_dir).map_err(session_error)?;
+        let store = open_journal(&state_dir).map_err(session_error)?;
         let report = session
             .execute(&request, &cancellation, &store)
             .map_err(session_error)?;

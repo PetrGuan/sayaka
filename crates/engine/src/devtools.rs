@@ -209,6 +209,8 @@ pub enum CandidateRefusal {
     UnavailableErase,
     /// Paired devices are never erased; deleted only as a whole pair.
     PairedErase,
+    /// Member of more than one pair; never offered.
+    MultiplePairs,
 }
 
 /// One device as offered for an operation.
@@ -240,16 +242,22 @@ pub fn candidates(
     pairs: &[(String, String)],
     operation: Operation,
 ) -> Vec<Candidate> {
-    let mut partner = BTreeMap::new();
+    let mut partners: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
     for (watch, phone) in pairs {
-        partner.insert(watch.clone(), phone.clone());
-        partner.insert(phone.clone(), watch.clone());
+        partners.entry(watch).or_default().push(phone);
+        partners.entry(phone).or_default().push(watch);
     }
     devices
         .iter()
         .map(|device| {
-            let paired_with = partner.get(&device.udid).cloned();
+            let mine = partners.get(device.udid.as_str());
+            let paired_with = mine
+                .and_then(|list| list.first())
+                .map(|udid| (*udid).clone());
             let mut refusals = Vec::new();
+            if mine.is_some_and(|list| list.len() > 1) {
+                refusals.push(CandidateRefusal::MultiplePairs);
+            }
             if device.state != "Shutdown" {
                 refusals.push(CandidateRefusal::NotShutdown);
             }
@@ -341,7 +349,7 @@ pub fn plan_digest(operation: Operation, tool_evidence: &str, candidates: &[Cand
     hasher.update(EFFECT_CLASS.as_bytes());
     hasher.update([0]);
     hasher.update(operation.verb().as_bytes());
-    hasher.update([0]);
+    hasher.update((tool_evidence.len() as u64).to_le_bytes());
     hasher.update(tool_evidence.as_bytes());
     let mut ordered: Vec<_> = candidates.iter().collect();
     ordered.sort_by(|a, b| a.device.udid.cmp(&b.device.udid));
@@ -355,7 +363,7 @@ pub fn plan_digest(operation: Operation, tool_evidence: &str, candidates: &[Cand
             device.state.as_str(),
             candidate.paired_with.as_deref().unwrap_or(""),
         ] {
-            hasher.update([0]);
+            hasher.update((field.len() as u64).to_le_bytes());
             hasher.update(field.as_bytes());
         }
     }
@@ -399,16 +407,19 @@ pub fn revalidate(
     if device.is_available != before.is_available {
         return Err(Mismatch::AvailabilityChanged);
     }
-    let partner = current_pairs.iter().find_map(|(watch, phone)| {
-        if *watch == device.udid {
-            Some(phone.clone())
-        } else if *phone == device.udid {
-            Some(watch.clone())
-        } else {
-            None
-        }
-    });
-    if partner != previewed.paired_with {
+    let partners: Vec<_> = current_pairs
+        .iter()
+        .filter_map(|(watch, phone)| {
+            if *watch == device.udid {
+                Some(phone.clone())
+            } else if *phone == device.udid {
+                Some(watch.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if partners.len() > 1 || partners.first() != previewed.paired_with.as_ref() {
         return Err(Mismatch::PairingChanged);
     }
     Ok(())
@@ -459,12 +470,17 @@ pub fn classify(
             (Some(_), true) => Outcome::Unknown,
         },
         Operation::Erase => {
-            if !success {
-                return Outcome::Failed;
-            }
             let observable_change = (data_before.size.is_some()
                 || data_before.modified_unix_ns.is_some())
                 && data_before != data_after;
+            if !success {
+                // A failing batch may have wiped some devices before one failed.
+                return if observable_change {
+                    Outcome::Unknown
+                } else {
+                    Outcome::Failed
+                };
+            }
             match after {
                 Some(device) if device.state == "Shutdown" && observable_change => {
                     Outcome::Succeeded
@@ -752,11 +768,57 @@ mod tests {
         );
         assert_eq!(
             classify(Operation::Erase, failed, Some(phone), before, after),
+            Outcome::Unknown
+        );
+        assert_eq!(
+            classify(Operation::Erase, failed, Some(phone), before, before),
             Outcome::Failed
         );
         assert_eq!(
             classify(Operation::Erase, ok, None, before, after),
             Outcome::Unknown
+        );
+    }
+
+    #[test]
+    fn a_device_in_several_pairs_is_never_offered() {
+        let json = |udid: &str| {
+            format!(
+                r#"{{"udid":"{udid}","name":"x","state":"Shutdown","isAvailable":true,"dataPath":"/d/{udid}","deviceTypeIdentifier":"t"}}"#
+            )
+        };
+        let phone = "AAAAAAAA-0000-0000-0000-00000000000A";
+        let watch_a = "AAAAAAAA-0000-0000-0000-00000000000B";
+        let watch_b = "AAAAAAAA-0000-0000-0000-00000000000C";
+        let devices = parse_devices(
+            format!(
+                r#"{{"devices":{{"r":[{},{},{}]}}}}"#,
+                json(phone),
+                json(watch_a),
+                json(watch_b)
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let pairs = vec![
+            (watch_a.to_string(), phone.to_string()),
+            (watch_b.to_string(), phone.to_string()),
+        ];
+        let offered = candidates(&devices, &pairs, Operation::Delete);
+        let phone_candidate = offered.iter().find(|c| c.device.udid == phone).unwrap();
+        assert!(
+            phone_candidate
+                .refusals
+                .contains(&CandidateRefusal::MultiplePairs)
+        );
+        let single = Candidate {
+            paired_with: Some(watch_a.into()),
+            refusals: vec![],
+            ..phone_candidate.clone()
+        };
+        assert_eq!(
+            revalidate(&single, &devices, &pairs),
+            Err(Mismatch::PairingChanged)
         );
     }
 

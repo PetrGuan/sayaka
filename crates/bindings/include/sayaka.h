@@ -541,7 +541,8 @@ SAYAKA_API int32_t sayaka_simulators_result_v1(uint64_t handle, uint8_t *buffer,
                                              size_t capacity, size_t *required);
 /* Once per handle, within 120 s of the preview. INVALID_CANDIDATE: digest,
  * token, ids, pairing or expiry did not match; make a fresh preview. OK means
- * execution started, not success: read every journal item in the result. */
+ * execution started, not success: read every journal item in the result.
+ * INVALID_ARGUMENT also covers a state_dir inside any previewed device. */
 SAYAKA_API int32_t sayaka_simulators_execute_v1(
     uint64_t handle, const SayakaSimulatorExecuteRequestV1 *request);
 /* Skips batches not yet started; never interrupts a running simctl call. */
