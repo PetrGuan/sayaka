@@ -29,6 +29,8 @@ pub use acl::has_extended_acl;
 pub mod status;
 
 #[cfg(target_os = "macos")]
+pub mod devtools;
+#[cfg(target_os = "macos")]
 mod installer_provenance;
 #[cfg(target_os = "macos")]
 pub use installer_provenance::{InstallerOrigin, MetadataState, read_installer_origin};

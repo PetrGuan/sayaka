@@ -1,6 +1,12 @@
 # Simulator and runtime cleanup contract (draft for review)
 
-Status: **contract approved for slice 1a — not implemented.** This is the implementation contract
+Status: **contract approved for slice 1a — partially implemented, not exposed.**
+The policy (`sayaka-engine::devtools`: parsing, candidates, refusals, request
+validation, plan digest, revalidation, outcome classification) and the launch
+boundary (`sayaka-platform-macos::devtools`: signed `xcrun`, environment
+allow-list, process group, caps, timeouts, tool evidence, developer-activity
+probe) exist. No session, journal record, binding or CLI command calls them
+yet, so nothing can delete or erase a simulator. This is the implementation contract
 required before write code for the first developer-tool slice. Nothing described
 here is exported, callable or shipped until an implementation lands with its own
 review and evidence.
