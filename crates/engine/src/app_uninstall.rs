@@ -36,6 +36,8 @@ pub enum UninstallRefusalCode {
     NonLocalVolume,
     Running,
     VendorUninstaller,
+    /// The native Trash plan could not be prepared (capture refused it).
+    TrashPlanUnavailable,
     UnsupportedPlatform,
     Internal,
 }
@@ -53,6 +55,7 @@ impl UninstallRefusalCode {
             Self::NonLocalVolume => "non_local_volume",
             Self::Running => "running",
             Self::VendorUninstaller => "vendor_uninstaller",
+            Self::TrashPlanUnavailable => "trash_plan_unavailable",
             Self::UnsupportedPlatform => "unsupported_platform",
             Self::Internal => "internal_error",
         }
@@ -67,6 +70,15 @@ pub struct UninstallRefusal {
 }
 
 impl UninstallRefusal {
+    /// The bundle passed preview but its native Trash plan was refused.
+    pub fn trash_plan_unavailable(message: impl Into<String>, os_code: Option<i32>) -> Self {
+        Self {
+            code: UninstallRefusalCode::TrashPlanUnavailable,
+            message: message.into(),
+            os_code,
+        }
+    }
+
     fn new(code: UninstallRefusalCode, message: impl Into<String>) -> Self {
         Self {
             code,

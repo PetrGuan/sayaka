@@ -866,7 +866,7 @@ impl Candidate {
                 Evidence::open_metadata_observed(parent, Binding::Safety, &mut stage.operation)?
             };
             stage.operation = "ancestor_admission";
-            admissible_ancestor(&evidence.stamp, uid)?;
+            admissible_shaped_ancestor(&evidence.stamp, uid, shape)?;
             stage.operation = "package_classification";
             reject_package(&evidence)?;
             ancestors.push(evidence);
@@ -1116,7 +1116,7 @@ impl Candidate {
         }
         for ancestor in &self.ancestors {
             ancestor.revalidate()?;
-            admissible_ancestor(&ancestor.stamp, self.uid)?;
+            admissible_shaped_ancestor(&ancestor.stamp, self.uid, self.shape)?;
             reject_package(ancestor)?;
         }
         self.target.revalidate()?;
@@ -1690,12 +1690,46 @@ fn admissible_ancestor(stamp: &Stamp, uid: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// macOS's administrators group. `/Applications` is `root:admin 0775` on a
+/// stock install, and apps copied there are often `user:admin 0775`.
+const ADMIN_GID: u32 = 80;
+
+/// The write bits a stamp may not carry. Group write is tolerated only for
+/// the admin group, and only where `admin_group_ok` says so: its members can
+/// already administer the Mac, so that bit grants no one new access.
+fn forbidden_bits(stamp: &Stamp, admin_group_ok: bool) -> u32 {
+    if admin_group_ok && stamp.gid == ADMIN_GID {
+        0o7002
+    } else {
+        0o7022
+    }
+}
+
+/// Ancestor admission by target shape. Bundle uninstall also accepts
+/// root-owned `admin`-group ancestors such as `/Applications`; every other
+/// shape keeps the strict rule.
+fn admissible_shaped_ancestor(stamp: &Stamp, uid: u32, shape: TargetShape) -> io::Result<()> {
+    if shape == TargetShape::Bundle && stamp.uid == 0 && stamp.gid == ADMIN_GID {
+        if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
+            || stamp.mode & forbidden_bits(stamp, true) != 0
+            || stamp.flags & !(ORDINARY_FLAGS | SF_RESTRICTED | SF_NOUNLINK) != 0
+            || stamp.inode == 0
+        {
+            return Err(refused(
+                "untrusted, writable, special, or dataless ancestor",
+            ));
+        }
+        return Ok(());
+    }
+    admissible_ancestor(stamp, uid)
+}
+
 /// T9 bundle target: an ordinary user-owned directory named `*.app`.
 /// Unlike file targets there is no single-link rule (directories always
 /// have extra links) and the package itself is the intended target.
 fn admissible_bundle_target(stamp: &Stamp, uid: u32, path: &Path) -> io::Result<()> {
     if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
-        || stamp.mode & 0o7022 != 0
+        || stamp.mode & forbidden_bits(stamp, true) != 0
         || stamp.uid != uid
         || stamp.flags & !ORDINARY_FLAGS != 0
         || stamp.inode == 0
@@ -1718,7 +1752,7 @@ fn admissible_bundle_target(stamp: &Stamp, uid: u32, path: &Path) -> io::Result<
 /// without the name rule (Trash may rename on conflict).
 fn admissible_moved_bundle(stamp: &Stamp, uid: u32) -> io::Result<()> {
     if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
-        || stamp.mode & 0o7022 != 0
+        || stamp.mode & forbidden_bits(stamp, true) != 0
         || stamp.uid != uid
         || stamp.flags & !ORDINARY_FLAGS != 0
         || stamp.inode == 0
@@ -2027,3 +2061,66 @@ fn developer_cache_rule_suffix(path: &Path) -> bool {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod admin_group_admission_tests {
+    use super::*;
+
+    fn directory(mode: u32, uid: u32, gid: u32) -> Stamp {
+        Stamp {
+            device: 1,
+            inode: 2,
+            mode: u32::from(libc::S_IFDIR) | mode,
+            uid,
+            gid,
+            links: 3,
+            size: 96,
+            blocks: 0,
+            flags: 0,
+            modified: (1, 0),
+            changed: (1, 0),
+            created: (1, 0),
+        }
+    }
+
+    #[test]
+    fn applications_folder_admits_bundles_only() {
+        let applications = directory(0o775, 0, ADMIN_GID);
+        assert!(admissible_shaped_ancestor(&applications, 501, TargetShape::Bundle).is_ok());
+        for shape in [
+            TargetShape::File,
+            TargetShape::PurgeArtifact,
+            TargetShape::CacheDirectory,
+        ] {
+            assert!(admissible_shaped_ancestor(&applications, 501, shape).is_err());
+        }
+    }
+
+    #[test]
+    fn bundle_ancestor_relaxation_is_admin_group_write_only() {
+        // Other-write, sticky/setid, a non-admin group or a non-root owner stay refused.
+        for (mode, uid, gid) in [
+            (0o777, 0, ADMIN_GID),
+            (0o1775, 0, ADMIN_GID),
+            (0o775, 0, 0),
+            (0o775, 502, ADMIN_GID),
+        ] {
+            assert!(
+                admissible_shaped_ancestor(&directory(mode, uid, gid), 501, TargetShape::Bundle)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn bundle_target_tolerates_admin_group_write() {
+        let path = Path::new("/Applications/Example.app");
+        assert!(admissible_bundle_target(&directory(0o775, 501, ADMIN_GID), 501, path).is_ok());
+        assert!(admissible_moved_bundle(&directory(0o775, 501, ADMIN_GID), 501).is_ok());
+        for (mode, gid) in [(0o775, 20), (0o777, ADMIN_GID), (0o2775, ADMIN_GID)] {
+            assert!(admissible_bundle_target(&directory(mode, 501, gid), 501, path).is_err());
+            assert!(admissible_moved_bundle(&directory(mode, 501, gid), 501).is_err());
+        }
+        assert!(admissible_bundle_target(&directory(0o775, 502, ADMIN_GID), 501, path).is_err());
+    }
+}

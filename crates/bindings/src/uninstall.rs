@@ -306,7 +306,36 @@ pub unsafe extern "C" fn sayaka_uninstall_preview_start_v1(
             let scope = Scope::new(parent.to_path_buf(), vec![]).map_err(|_| INVALID_ARGUMENT)?;
             match BundleUninstallSession::prepare(scope, &bundle, &Cancellation::default()) {
                 Ok(session) if !session.preview().items().is_empty() => Some(session),
-                _ => None,
+                // Report why instead of a silently ineligible preview.
+                Ok(session) => {
+                    let (message, os_code) = session
+                        .issues()
+                        .first()
+                        .map(|issue| (issue.message.clone(), issue.os_code))
+                        .or_else(|| {
+                            session
+                                .refusals()
+                                .first()
+                                .map(|item| (item.reason.clone(), None))
+                        })
+                        .unwrap_or_else(|| ("the Trash plan has no item".to_owned(), None));
+                    preview
+                        .refusals
+                        .push(app_uninstall::UninstallRefusal::trash_plan_unavailable(
+                            format!("a safe Trash move could not be prepared: {message}"),
+                            os_code,
+                        ));
+                    None
+                }
+                Err(error) => {
+                    preview
+                        .refusals
+                        .push(app_uninstall::UninstallRefusal::trash_plan_unavailable(
+                            format!("a safe Trash move could not be prepared: {error}"),
+                            error.raw_os_error(),
+                        ));
+                    None
+                }
             }
         } else {
             None
