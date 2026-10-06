@@ -71,7 +71,8 @@ minimum deltas:
   `/Applications` is `root:admin 0775`. The bundle target, and the moved
   bundle after the Trash move, likewise tolerate group write when their group
   is `admin`. Other-write, setuid/setgid/sticky bits and every other group
-  stay refused, and file, purge and cache candidates keep the strict rule.
+  stay refused, and file, purge and cache candidates keep the strict rule,
+  including their post-move destination check.
   Members of `admin` can already administer the Mac, so that bit gives no one
   new access.
 - **Bundle attributes**: an `.app` target may also carry `com.apple.macl`, the

@@ -1404,7 +1404,7 @@ impl Candidate {
         }
         match self.shape {
             TargetShape::Bundle => {
-                admissible_moved_bundle(&stamp, self.uid)?;
+                admissible_moved_bundle(&stamp, self.uid, self.shape)?;
                 let manifest = self
                     .bundle_manifest
                     .ok_or_else(|| refused("bundle manifest identity was not captured"))?;
@@ -1415,7 +1415,7 @@ impl Candidate {
                 }
             }
             TargetShape::PurgeArtifact | TargetShape::CacheDirectory => {
-                admissible_moved_bundle(&stamp, self.uid)?;
+                admissible_moved_bundle(&stamp, self.uid, self.shape)?;
             }
             TargetShape::File => {
                 admissible_file(&stamp, self.uid)?;
@@ -1432,7 +1432,7 @@ impl Candidate {
             ));
         }
         if self.shape.is_directory() {
-            admissible_moved_bundle(&held, self.uid)?;
+            admissible_moved_bundle(&held, self.uid, self.shape)?;
         } else {
             admissible_file(&held, self.uid)?;
         }
@@ -1751,11 +1751,12 @@ fn admissible_bundle_target(stamp: &Stamp, uid: u32, path: &Path) -> io::Result<
     Ok(())
 }
 
-/// A bundle directory after a reported move: same admission as at capture,
-/// without the name rule (Trash may rename on conflict).
-fn admissible_moved_bundle(stamp: &Stamp, uid: u32) -> io::Result<()> {
+/// A directory after a reported move: same admission as at capture, without
+/// the name rule (Trash may rename on conflict). The admin-group tolerance
+/// applies to bundles only; purge and cache directories keep the strict rule.
+fn admissible_moved_bundle(stamp: &Stamp, uid: u32, shape: TargetShape) -> io::Result<()> {
     if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
-        || stamp.mode & forbidden_bits(stamp, true) != 0
+        || stamp.mode & forbidden_bits(stamp, shape == TargetShape::Bundle) != 0
         || stamp.uid != uid
         || stamp.flags & !ORDINARY_FLAGS != 0
         || stamp.inode == 0
@@ -2171,6 +2172,8 @@ mod admin_group_admission_tests {
             "Applications",
             "/",
             "/Applications/../Library",
+            "/System/Volumes/Data/Applications/Utilities",
+            "/Applications/Foo.app",
         ] {
             assert!(!is_applications_root(Path::new(path)), "{path}");
         }
@@ -2192,10 +2195,22 @@ mod admin_group_admission_tests {
     fn bundle_target_tolerates_admin_group_write() {
         let path = Path::new("/Applications/Example.app");
         assert!(admissible_bundle_target(&directory(0o775, 501, ADMIN_GID), 501, path).is_ok());
-        assert!(admissible_moved_bundle(&directory(0o775, 501, ADMIN_GID), 501).is_ok());
+        assert!(
+            admissible_moved_bundle(&directory(0o775, 501, ADMIN_GID), 501, TargetShape::Bundle)
+                .is_ok()
+        );
+        // Purge and cache destinations keep the strict rule.
+        for shape in [TargetShape::PurgeArtifact, TargetShape::CacheDirectory] {
+            assert!(
+                admissible_moved_bundle(&directory(0o775, 501, ADMIN_GID), 501, shape).is_err()
+            );
+        }
         for (mode, gid) in [(0o775, 20), (0o777, ADMIN_GID), (0o2775, ADMIN_GID)] {
             assert!(admissible_bundle_target(&directory(mode, 501, gid), 501, path).is_err());
-            assert!(admissible_moved_bundle(&directory(mode, 501, gid), 501).is_err());
+            assert!(
+                admissible_moved_bundle(&directory(mode, 501, gid), 501, TargetShape::Bundle)
+                    .is_err()
+            );
         }
         assert!(admissible_bundle_target(&directory(0o775, 502, ADMIN_GID), 501, path).is_err());
     }
