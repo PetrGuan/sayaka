@@ -167,9 +167,18 @@ revision. Observed changes and unsupported capabilities still refuse the effect;
 the stronger atomic-binding guarantee remains unavailable.
 
 No permanent-delete fallback for trash errors, permission escalation on failure,
-shell interpolation, or implicit user-data cleanup. External tools are deferred;
-when added, require a known executable, structured arguments, constrained
-environment, affected-scope evidence, and observable timeout/cancellation.
+shell interpolation, or implicit user-data cleanup. External tools require a
+known executable, structured arguments, constrained environment, affected-scope
+evidence, and observable timeout/cancellation.
+
+Effect classes: Trash (`revalidated_trash_v1` and its bundle/purge/cache
+variants) and, separately owned, `permanent_tool_operation_v1`: simulator erase
+and delete by UDID through the signed `/usr/bin/xcrun` boundary in
+`sayaka-platform-macos::devtools`, with the engine's `devtools::session`
+deciding candidates, approval, revalidation and outcomes. Its contract,
+residual race and argument table are in
+[SIMULATOR_CLEANUP.md](SIMULATOR_CLEANUP.md). It is never offered inside a Trash
+flow.
 
 ## Task and result semantics
 

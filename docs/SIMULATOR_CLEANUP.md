@@ -1,15 +1,13 @@
-# Simulator and runtime cleanup contract (draft for review)
+# Simulator and runtime cleanup contract
 
-Status: **contract approved for slice 1a — partially implemented, not exposed.**
-The policy (`sayaka-engine::devtools`: parsing, candidates, refusals, request
-validation, plan digest, revalidation, outcome classification) and the launch
-boundary (`sayaka-platform-macos::devtools`: signed `xcrun`, environment
-allow-list, process group, caps, timeouts, tool evidence, developer-activity
-probe) exist. No session, journal record, binding or CLI command calls them
-yet, so nothing can delete or erase a simulator. This is the implementation contract
-required before write code for the first developer-tool slice. Nothing described
-here is exported, callable or shipped until an implementation lands with its own
-review and evidence.
+Status: **slice 1a implemented; native acceptance on throwaway devices pending.**
+The policy (`sayaka-engine::devtools`), the launch boundary
+(`sayaka-platform-macos::devtools`), the session (`sayaka-engine::devtools::session`),
+journal schema 6, the `sayaka_simulators_*_v1` bindings
+([BINDINGS.md](BINDINGS.md)) and `sayaka devtools simulators` implement device
+erase and delete. Their unit tests are written against an injected host and
+journal; the opt-in real-platform cases below have not been run, so no native
+outcome is claimed yet. Slice 1b (runtimes) is not implemented.
 
 Xcode simulators and simulator runtimes are often the largest part of the
 macOS Storage "Developer" and "System Data" categories. One measured developer
@@ -58,13 +56,13 @@ restored by the app. They form a new, separately owned effect class,
 - its argument table is fixed in this document, so it is not an "arbitrary
   command" in the sense of `AGENTS.md`.
 
-Dependent document updates land **with the implementation**, not with this
-draft: `AGENTS.md` (Trash is no longer the only executable effect class; the
+Dependent document updates landed with the slice 1a implementation:
+`AGENTS.md` (Trash is no longer the only executable effect class; the
 permanent-deletion non-goal gains this explicit, separately confirmed
 exception), `docs/EXECUTION.md` and `docs/ARCHITECTURE.md` (effect classes),
 `ROADMAP.md`/`docs/IMPLEMENTATION.md` (T10 status) and `docs/COMPETITIVE.md`
-(ledger row). The maintainer must approve the `AGENTS.md` amendment explicitly;
-approving the confirmation UX alone is not that approval.
+(ledger row). The maintainer approved the `AGENTS.md` amendment explicitly
+(decision 1 below).
 
 Callers: the CLI, and a bindings host that is not sandboxed (the Developer ID
 application). A sandboxed host receives `capability_unavailable` with a reason.
@@ -245,6 +243,13 @@ no approval boolean without the token, and no imported JSON approval.
      during the call → `unknown`.
 5. Write the journal outcome. Outcomes: `succeeded`, `refused`, `failed`,
    `unknown`. `unknown` is reconciled by a later re-list, never by retry.
+
+Pair members are always placed in the same batch. Host cancellation skips
+batches that have not started; it never interrupts a running call. After an
+indeterminate call or a failed post-check, later batches are skipped
+(`stopped_after_ambiguous_outcome`). Journal items record the device's data
+directory as the path (identity is the UDID in `tool_operation`); a refused
+batch is recorded as `skipped` with its reason.
 
 Error codes surfaced to hosts: `capability_unavailable`, `tool_unavailable`,
 `unsupported_tool_version`, `tool_changed`, `developer_activity`, `busy`,

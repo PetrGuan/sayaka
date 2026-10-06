@@ -295,6 +295,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                 contract: preview.execution_contract().as_str().into(),
                 scope: self.platform.journal_path(preview.scope()),
                 clean_policy,
+                tool_operation: None,
                 created_unix_ms: now,
                 items,
             },

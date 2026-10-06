@@ -21,6 +21,8 @@ pub const MAX_DEVICES: usize = 512;
 pub const MAX_REQUEST_DEVICES: usize = 32;
 /// Devices per `simctl erase|delete` call.
 pub const MAX_BATCH: usize = 8;
+/// Preview lifetime on the monotonic clock, matching picked-file sessions.
+pub const PREVIEW_TTL: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -490,6 +492,9 @@ pub fn argument_vector(operation: Operation, batch: &[String]) -> Option<Vec<Str
     }
     Some(args)
 }
+
+#[cfg(target_os = "macos")]
+pub mod session;
 
 #[cfg(test)]
 mod tests {

@@ -21,6 +21,16 @@ execute its own approved `revalidated_trash_v1` plan. Follow
 a last-check/path-replacement race and must never be described as race-free.
 Preserve the no-effects boundary of existing M1 and scanning APIs.
 
+Trash is not the only executable effect class. The maintainer approved
+(2026-10-06) one explicit, separately owned exception to the no-permanent-deletion
+rule: `permanent_tool_operation_v1`, where Apple's `simctl` erases or deletes
+simulator devices named by UDID under
+[docs/SIMULATOR_CLEANUP.md](docs/SIMULATOR_CLEANUP.md). It runs only from its own
+`SimulatorSession` with its own typed approval, never as a Trash fallback or
+inside Trash review, and hosts must present it in a separate, strong
+confirmation. Its argument table is fixed in that document; extending it, or
+adding any other permanent effect, needs a new contract and maintainer approval.
+
 ## Implementation
 
 Keep changes surgical. The fourth crate, `sayaka-platform-macos`, is an explicitly
@@ -28,7 +38,8 @@ approved audit boundary for native FFI; keep `sayaka-engine` unsafe-free and do 
 spread native FFI into its model/scan logic. Use native path types internally, opaque resource IDs
 at client boundaries, explicit capability/error states, and one shared policy
 path. No arbitrary commands, approval booleans, privilege escalation fallbacks,
-or permanent deletion after a failed trash operation.
+or permanent deletion after a failed trash operation. Process launch is limited
+to the signed `/usr/bin/xcrun` boundary in `sayaka-platform-macos::devtools`.
 
 The browser's terminal, input and worker lifecycle belongs in `sayaka-cli`;
 the immutable scan tree and directory accounting stay in the engine. Follow

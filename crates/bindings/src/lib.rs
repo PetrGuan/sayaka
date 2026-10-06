@@ -24,6 +24,8 @@ mod picked;
 pub use picked::*;
 mod purge;
 pub use purge::*;
+mod simulators;
+pub use simulators::*;
 mod system_status;
 pub use system_status::*;
 mod uninstall;
@@ -110,11 +112,17 @@ struct Registry {
     installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
     purges: HashMap<u64, Arc<Mutex<purge::PurgeJob>>>,
     uninstalls: HashMap<u64, Arc<Mutex<uninstall::UninstallJob>>>,
+    simulators: HashMap<u64, Arc<simulators::SimulatorJob>>,
 }
 
 impl Registry {
     fn allocate_handle(&mut self) -> Result<u64, i32> {
-        if self.jobs.len() + self.installers.len() + self.purges.len() + self.uninstalls.len() + self.picked.len()
+        if self.jobs.len()
+            + self.installers.len()
+            + self.purges.len()
+            + self.uninstalls.len()
+            + self.picked.len()
+            + self.simulators.len()
             >= MAX_TASKS
         {
             return Err(LIMIT_EXCEEDED);
@@ -135,6 +143,7 @@ fn registry() -> &'static Mutex<Registry> {
             installers: HashMap::new(),
             purges: HashMap::new(),
             uninstalls: HashMap::new(),
+            simulators: HashMap::new(),
         })
     })
 }
