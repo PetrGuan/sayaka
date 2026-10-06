@@ -1,178 +1,286 @@
 # Simulator and runtime cleanup contract (draft for review)
 
-Status: **contract only — not implemented.** This document is the required
-implementation contract for the first slice of developer-tool operations. It
-must pass independent feasibility and scope review before any write code lands.
+Status: **contract only — not implemented.** This is the implementation contract
+required before write code for the first developer-tool slice. Nothing described
+here is exported, callable or shipped until an implementation lands with its own
+review and evidence.
 
 Xcode simulators and simulator runtimes are often the largest part of the
-macOS Storage "Developer" and "System Data" categories. A measured developer Mac
-had 34 GB of simulator device data across 59 devices, against 17 GB of
-DerivedData, plus six runtimes totalling about 40 GB: one classic disk image
-(7.3 GB, under `/Library/Developer/CoreSimulator/Images`) and five
-"Patchable Cryptex" images (3.8–8.5 GB each, under
-`/System/Library/AssetsV2`, managed by MobileAsset and counted as System Data). They are not file-level caches: CoreSimulator owns their records,
-and removing them correctly means asking Apple's `simctl` tool to do it. The
-existing purge profile therefore lists `xcrun simctl delete unavailable` as an
-unsupported operation and never touches `CoreSimulator/Devices`.
+macOS Storage "Developer" and "System Data" categories. One measured developer
+Mac had 34 GB of simulator device data across 59 devices (17 GB of DerivedData
+for comparison) and six runtimes totalling about 40 GB: one classic disk image
+(7.3 GB, `/Library/Developer/CoreSimulator/Images`) and five "Patchable Cryptex"
+images (3.8–8.5 GB each, `/System/Library/AssetsV2`, managed by MobileAsset and
+counted as System Data).
 
-This slice adds a **separately owned, permanent tool-operation session** for
-unsandboxed hosts (the Developer ID application and the CLI). It is distinct
-from `revalidated_trash_v1`: nothing here moves to Trash, and nothing here may
-be offered as a Trash fallback or a Trash failure path.
+These are not file-level caches. CoreSimulator owns their records, and removing
+them correctly means asking Apple's `simctl` to do it. The `developer_caches`
+purge profile therefore lists `xcrun simctl delete` as an unsupported external
+operation and never touches `CoreSimulator/Devices`.
 
-## Scope
+## Slices and dependencies
 
-In scope (macOS only):
+| Slice | Operations | Status |
+| --- | --- | --- |
+| 1a | Erase devices; delete devices (including devices `simctl` marks unavailable), always by explicit UDID | This contract |
+| 1b | Delete runtime images | **Blocked** on open decisions 4–5; must not be implemented with 1a |
+| Later | Package-manager cleanups (`brew cleanup`, `npm cache clean`, `pnpm store prune`, `yarn cache clean`, `pip cache purge`) | Separate contract; their caches already have recoverable Trash rules |
 
-| Operation | `simctl` argument vector | Effect | Recovery |
-| --- | --- | --- | --- |
-| Delete unavailable devices | `delete unavailable` | Removes devices whose runtime is no longer supported by the selected Xcode | None for their contents; a new device can be created |
-| Erase devices | `erase <udid> [<udid> …]` | Resets contents and settings; the device record stays | None for erased contents |
-| Delete devices | `delete <udid> [<udid> …]` | Removes the device record and all its data | None for its contents; a new device can be created |
-| Delete runtimes | `runtime delete <identifier>` (one per call) | Removes a runtime from CoreSimulator storage; devices using it become unavailable | Re-download from Xcode Settings ▸ Components or `xcodebuild -downloadPlatform` |
+Never in scope: `delete unavailable`, `delete all`, `erase all`, `runtime delete
+all`, `--notUsedSinceDays`, `--unusable`, `--outdated`, device names or the
+`booted` alias as targets; simulator app containers, logs, Xcode Archives,
+DerivedData (a purge rule already), DeviceSupport, documentation caches,
+toolchains; Windows; privilege escalation or the privileged helper. Nothing in
+these slices runs as root.
 
-Out of scope for this slice:
+`delete unavailable` is excluded because `simctl` resolves "unavailable" when it
+runs, so a device that became unavailable after the preview would be deleted
+without ever being previewed or approved. Unavailable devices are deleted by
+their previewed UDID instead.
 
-- `delete all`, `erase all`, `runtime delete all`, `--notUsedSinceDays`,
-  `--unusable` and `--outdated` bulk forms. Bulk intent must be expressed as an
-  explicit list of previewed identities.
-- Simulator app contents, individual app containers, device logs, Xcode
-  Archives, DerivedData (already a purge cache rule), DeviceSupport folders,
-  documentation caches and toolchains.
-- Package-manager cleanups (`brew cleanup`, `npm cache clean`, `pnpm store
-  prune`, `yarn cache clean`, `pip cache purge`). They need their own slice:
-  their caches already have recoverable file-level Trash rules, and each tool's
-  dry-run support and effect boundary differs.
-- Windows, sandboxed hosts, privilege escalation and the privileged helper.
-  Nothing in this slice runs as root.
+## Effect class and governance
 
-## Tool resolution and process boundary
+These operations are **permanent**: nothing moves to Trash and nothing can be
+restored by the app. They form a new, separately owned effect class,
+`permanent_tool_operation_v1`, distinct from `revalidated_trash_v1`:
 
-Process launch is new to the core and is confined to `sayaka-platform-macos`.
-`sayaka-engine` stays unsafe-free and receives only parsed, validated records.
+- it is never a Trash fallback, never a Trash-failure path, and never offered
+  inside Trash review;
+- hosts must present it in a separate, strong confirmation that lists every
+  target by name, runtime, size and what is lost, with nothing pre-selected
+  (approved by the maintainer for this product);
+- its argument table is fixed in this document, so it is not an "arbitrary
+  command" in the sense of `AGENTS.md`.
 
-- Launch **only** `/usr/bin/xcrun` with argument vectors built from the fixed
-  table above and previewed identities. No shell, no string interpolation into
-  a command line, no user-supplied arguments, no other executables.
-- Environment: start empty, then set `PATH=/usr/bin:/bin`, `HOME` (the account
-  home from the password database) and `LANG=C`. `DEVELOPER_DIR` is not
-  inherited; `xcrun` uses the system-selected developer directory, and the
-  preview records which one (`xcrun --find simctl` and `xcode-select -p`
-  results) as evidence. A different selection at execution time is a refusal.
-- stdin is `/dev/null`. stdout and stderr are captured with caps (8 MiB stdout,
-  64 KiB stderr); exceeding a cap fails the call. Timeouts: 30 s for list and
-  dry-run calls, 10 min per execution call; on timeout the child is terminated
-  and the outcome is **unknown**, never success.
-- If `simctl` is unavailable (Command Line Tools only, no Xcode selected, or
-  unlicensed Xcode), the capability is reported as unavailable with the reason;
-  nothing falls back to manual file deletion.
+Dependent document updates land **with the implementation**, not with this
+draft: `AGENTS.md` (Trash is no longer the only executable effect class; the
+permanent-deletion non-goal gains this explicit, separately confirmed
+exception), `docs/EXECUTION.md` and `docs/ARCHITECTURE.md` (effect classes),
+`ROADMAP.md`/`docs/IMPLEMENTATION.md` (T10 status) and `docs/COMPETITIVE.md`
+(ledger row). The maintainer must approve the `AGENTS.md` amendment explicitly;
+approving the confirmation UX alone is not that approval.
 
-## Preview
+Callers: the CLI, and a bindings host that is not sandboxed (the Developer ID
+application). A sandboxed host receives `capability_unavailable` with a reason.
 
-`simctl list devices -j` and `simctl runtime list -j` are parsed into versioned
-records. Unknown JSON shapes, missing required fields or non-UTF-8 output make
-the preview fail closed.
+## Supported environment
 
-Each device record retains: `udid`, `name`, runtime identifier, device type,
-`state`, `isAvailable`, `dataPath`, `dataPathSize`, and a last-used observation
-(modification time of `dataPath`, reported as an observation, not usage
-history). Each runtime record retains: `identifier`, `runtimeIdentifier`,
-`version`, `build`, `kind`, `path`, `sizeBytes`, `lastUsedAt`, `deletable`,
-`state`, and the devices that reference it.
+Measured: macOS 27.0 with Xcode 27.0 (`simctl` with the `runtime` verbs). The
+`runtime` verbs need Xcode 15 or later. Supported range for acceptance: macOS 26
+and later, Xcode 26 and later. Other versions return `unsupported_tool_version`
+until fixtures and native evidence for them exist; JSON fixtures for each
+supported Xcode major are a prerequisite for claiming that version.
 
-The preview reports, without effects:
+## Process boundary and threat model
 
-- candidates per operation, with sizes labelled **estimated** (CoreSimulator
-  sizes can include clone-shared blocks; freed space is not guaranteed);
-- for a runtime delete, the devices that would become unavailable and the
-  output of `runtime delete <identifier> --dry-run`;
-- refusals (below) and an `execution_eligible` flag per candidate;
-- the selected developer directory and tool path evidence;
-- the effect class `permanent_tool_operation_v1` and an exact approval token.
+Process launch is new to the core and stays in `sayaka-platform-macos`.
+`sayaka-engine` stays unsafe-free and only receives parsed, validated records.
 
-Nothing is pre-selected. Hosts must present these operations in their own
-confirmation, separate from Trash review, listing every device/runtime by name,
-runtime, size and what is lost ("installed apps and their data in these
-simulators"). This separate strong confirmation was approved by the maintainer.
+Trust model: consistent with `docs/ARCHITECTURE.md`, the user and their files
+are not adversaries. The selected Xcode bundle can be user-writable, so
+`simctl` runs with user-level trust; this slice does not claim protection from
+a user who modifies their own Xcode. It does require the tool to be the one
+previewed:
+
+- Launch only `/usr/bin/xcrun` (Apple-signed; verify its code signature
+  identifier and Apple anchor through the Security framework in the platform
+  crate) with argument vectors from the fixed tables below.
+- Environment allow-list: exactly `PATH=/usr/bin:/bin`, `HOME` (account home
+  from the password database), `LANG=C`, `TMPDIR` set to the user's private
+  temporary directory. Every other variable is absent, including
+  `DEVELOPER_DIR`, `SDKROOT`, `TOOLCHAINS`, `XCODE_*`, `SIMCTL_*`, `DYLD_*`.
+  `xcrun` then resolves the system-selected developer directory
+  (`xcode-select`'s link).
+- Tool evidence, captured with that same environment at preview and again
+  before every execution call: `xcrun --find simctl` result, its real path,
+  device/inode, size, modification time and `simctl` version. Any difference
+  refuses the call (this also catches a same-path Xcode update).
+- Spawn without a shell (`std::process::Command`, no `sh -c`), stdin
+  `/dev/null`, no inherited descriptors beyond stdout/stderr pipes, in its own
+  process group so the whole group can be terminated.
+- Output caps are enforced while reading: 8 MiB stdout, 64 KiB stderr. On cap
+  exceedance or timeout the process group is terminated. (Measured sizes on the
+  59-device host: `list devices -j` 33 KB, `runtime list -j` 6.5 KB.)
+- Timeouts: 30 s for list and dry-run calls, 10 min per execution call.
+- If the host process is interrupted or exits during an execution call, the
+  process group is terminated where possible; CoreSimulatorService may still
+  complete the operation, so the outcome is `unknown` until a later re-list
+  reconciles it. `unknown` is never retried without a fresh preview.
+- One devtools execution at a time per user, serialized with the existing
+  exclusive journal lock; a second request is refused as busy.
+
+Argument safety: `simctl` accepts names and aliases (`booted`, `all`) where a
+UDID is expected and documents no end-of-options marker, so validation is the
+only defence. Device targets are canonical UUIDs (`8-4-4-4-12` hex,
+upper-cased, never starting with `-`) taken from the retained preview; runtime
+targets are canonical image UUIDs. Anything else is rejected before launch.
+
+## Fixed argument tables
+
+Read-only (preview and revalidation): `simctl list devices -j`,
+`simctl list pairs -j`, `simctl runtime list -j`, `simctl runtime match list -j`.
+
+Slice 1a execution:
+
+| Operation | Vector | Batch |
+| --- | --- | --- |
+| Erase | `simctl erase <UDID> …` | up to 8 UDIDs per call |
+| Delete | `simctl delete <UDID> …` | up to 8 UDIDs per call |
+
+Slice 1b execution (blocked): `simctl runtime delete <image UUID>`, one per call,
+preceded by `simctl runtime delete <image UUID> --dry-run`. Whether to pass
+`--keep-asset` is open decision 5; without it the MobileAsset is deleted too,
+which frees the space and makes recovery a re-download.
+
+## Preview records
+
+JSON is parsed into versioned records. Unknown extra keys are tolerated; a
+missing required key, wrong type, non-UTF-8 output or unknown top-level shape
+fails the whole preview closed.
+
+Device (`list devices -j`, keyed by `runtimeIdentifier`): required `udid`,
+`name`, `state`, `isAvailable`, `dataPath`, `deviceTypeIdentifier`; optional
+`dataPathSize`, `logPathSize`, `lastUsedAt`, `availabilityError`. An absent size
+is reported as `size_unknown`, never zero; an absent `lastUsedAt` as
+`last_used_unknown`. `availabilityError` explains why a device is unavailable.
+
+Runtime image (`runtime list -j`, keyed by image UUID): required `identifier`,
+`runtimeIdentifier`, `version`, `build`, `kind`, `path`, `state`, `deletable`;
+optional `sizeBytes`, `lastUsedAt`, `mountPath`, `signatureState`.
+
+Joins: devices reference runtimes by `runtimeIdentifier`, and several images can
+share one `runtimeIdentifier` (different builds). A device is affected by an
+image delete only when no other usable image serves its `runtimeIdentifier`.
+Pairs (`list pairs -j`) link a watch device and a phone device.
+
+The preview reports, without effects, per operation kind: candidates with sizes
+labelled **estimated** (CoreSimulator sizes cover the data directory only and can
+include clone-shared blocks; freed space is not guaranteed), pair membership,
+affected devices for runtime deletes (1b), refusals with reason codes,
+`execution_eligible` per candidate, the tool evidence, a plan digest and the
+approval token. Nothing is pre-selected.
 
 ## Refusals
 
-A candidate, or the whole request where stated, is refused when:
+Whole request:
 
-- Xcode (`com.apple.dt.Xcode`) or Simulator (`com.apple.iphonesimulator`) is
-  running — whole request;
-- a targeted device is not `Shutdown`, or a runtime has any device that is not
-  `Shutdown` — that candidate;
-- a runtime is not `deletable`, is the runtime of the selected Xcode's default
-  SDK, or is in a transitional `state` — that candidate;
-- the developer directory or `simctl` path differs from the preview — whole
-  request;
-- the request contains duplicate, unknown or non-previewed identities, more than
-  32 devices, or more than 4 runtimes — whole request;
-- the preview is older than 120 seconds — whole request (re-preview).
+- `developer_activity`: any process in the process table whose executable or
+  bundle identifier is Xcode (`com.apple.dt.Xcode`), Simulator
+  (`com.apple.iphonesimulator`), `xcodebuild`, `xctest`, `simctl`, or
+  `xcrun` with a `simctl` child. Command-line test runs are detected through
+  `xcodebuild`/`xctest`, not only GUI apps. If the process table cannot be read,
+  the request fails closed.
+- `tool_changed`, `tool_unavailable`, `unsupported_tool_version`.
+- `busy` (another devtools execution), `expired` (preview older than 120 s on
+  the monotonic clock, matching picked-file sessions), `invalid_request`
+  (duplicate, unknown or non-previewed identities; more than 32 devices).
 
-## Execution and revalidation
+Per candidate:
 
-1. The host echoes the exact approval token with the selected identities. The
-   session accepts only identities from its own retained preview; it never
-   accepts imported JSON or identity claims.
-2. Write a durable journal intent (operation, identities, tool evidence, preview
-   summary) before the first launch. If the intent cannot be written, nothing
+- device `state` is not exactly `Shutdown` (`Booted`, `Booting`,
+  `Shutting Down`, `Creating`, `Unknown` and future states are all refused);
+- device is a member of a pair, unless every pair member is in the same request
+  and the confirmation lists the pair;
+- device name matches Xcode's parallel-testing clones (`Clone N of …`); clones
+  are transient and owned by test runs;
+- (1b) image not `deletable`; `kind` not in the allow-list (`Disk Image`,
+  `Patchable Cryptex Disk Image`); `state` not ready; the image's build equals
+  `chosenRuntimeBuild` or `defaultBuild` for any SDK in `runtime match list -j`
+  (fails closed if that output cannot be parsed); any affected device not
+  `Shutdown`.
+
+## Approval
+
+One operation kind per session (erase, delete, or 1b runtime delete); a request
+cannot mix kinds. Approval mirrors the purge binding: `preview_handle`,
+`plan_digest`, `1..32` unique item references from that preview, `approval == 1`,
+and an exact token whose phrase names the kind and count — `erase N simulators`,
+`delete N simulators`, `delete N runtimes` — where `N == item_count`. Tokens are
+bound to the sealed preview through the handle and digest, so another preview's
+token is not interchangeable. The CLI requires the same typed phrase. There is
+no approval boolean without the token, and no imported JSON approval.
+
+## Execution and outcomes
+
+1. Write a durable journal intent (kind, identities, tool evidence, plan
+   digest) under the exclusive journal lock. If it cannot be written, nothing
    runs.
-3. Revalidate immediately before each call by re-listing: same `udid` with the
-   same name, runtime, `dataPath` and `Shutdown` state; same runtime
-   `identifier`, `build`, `version` and `path`; Xcode and Simulator not running.
-   Any mismatch refuses that call; earlier completed calls are not undone.
-4. Run one argument vector at a time (devices may be batched up to 8 UDIDs per
-   call; runtimes one per call). Record exit status and capped stderr.
-5. Post-check by re-listing: a deleted identity that is gone is `succeeded`; an
-   erased device still present and `Shutdown` is `succeeded`; anything else, or
-   any timeout, is `unknown` and must not be blindly retried.
-6. Write the journal outcome. Results are per identity:
-   `succeeded`, `refused`, `failed`, `unknown`.
+2. Before each call (each batch of up to 8), re-run the refusal checks and the
+   read-only lists: same `udid`, `name`, `runtimeIdentifier`, `dataPath`,
+   state `Shutdown`, same pair membership, same tool evidence. A mismatch refuses
+   that batch; earlier completed batches are not undone. The window between this
+   check and the call is per batch and is part of the disclosed race.
+3. Run the vector; record exit status and capped stderr. A batch exit status does
+   not map to individual identities.
+4. Post-check by re-listing, per identity:
+   - delete: identity absent → `succeeded`; present → `failed` if the exit status
+     was non-zero, otherwise `unknown`;
+   - erase: exit status 0 **and** device present and `Shutdown` with a changed
+     data-directory observation (data size or modification time) → `succeeded`;
+     exit 0 without an observable change → `unknown`; non-zero exit →
+     `failed`;
+   - timeout, interruption or cap exceedance → `unknown`.
+5. Write the journal outcome. Outcomes: `succeeded`, `refused`, `failed`,
+   `unknown`. `unknown` is reconciled by a later re-list, never by retry.
 
-Residual risk, disclosed rather than hidden: between revalidation and the
-`simctl` call another process (Xcode, a test runner, CI) can boot a device or
-start using a runtime. `simctl` may then shut it down (runtime delete documents
-this) or fail. This race is accepted only with the separate confirmation above
-and is never described as race-free.
+Error codes surfaced to hosts: `capability_unavailable`, `tool_unavailable`,
+`unsupported_tool_version`, `tool_changed`, `developer_activity`, `busy`,
+`expired`, `invalid_request`, `parse_failed`, `output_cap_exceeded`, `timeout`,
+`journal_unavailable`. Journal records are schema-versioned; an unknown schema
+version is read-only evidence, never resumed.
 
-## Bindings and CLI
+Residual risk, disclosed: between revalidation and the call, another process
+(Xcode, a test run, CI) can boot a device or start using a runtime. `simctl`
+may then fail, or for runtime deletes shut the device down (documented by
+`simctl runtime delete` for disk images). This is never described as race-free.
 
-- Bindings: a companion `sayaka_devtools_*_v1` ABI following the existing
-  start / poll-result / execute / release session pattern, a capability call
-  that reports availability and the reason when unavailable, and JSON schemas
-  `sayaka.simulator_preview` and `sayaka.simulator_execution` (schema 1).
-- CLI: `sayaka devtools simulators` (preview) and an execution form that
-  requires the typed token, mirroring `purge` confirmation. `--json` emits the
-  schemas above.
+## Resource targets
+
+Measured before acceptance on a fixture host with at least 50 devices and 4
+runtimes, then fixed in the implementation record: preview latency (all four
+lists), peak resident memory of parsing, and execution latency per batch.
+Parsing caps: 8 MiB per list output, 512 devices, 64 runtime images.
 
 ## Tests and evidence
 
-- Unit (engine): JSON fixtures recorded from real `simctl` output for several
-  Xcode versions; schema drift, missing fields, booted devices, non-deletable
-  runtimes, identity changes between preview and execution, token mismatch,
-  limits and expiry.
-- Fault injection (platform): an injected tool runner for timeout, non-zero
-  exit, oversized output, malformed JSON and post-check mismatch.
-- Real platform (opt-in only, never on existing devices): create a throwaway
-  device with `simctl create`, then erase and delete it through the session.
-  Runtime deletion is verified only on an explicitly provided disposable
-  runtime; the default suite never deletes a runtime.
+- Unit (engine): recorded JSON fixtures per supported Xcode major (anonymised:
+  UDIDs and names replaced), covering optional-field absence, unknown extra keys,
+  shape drift, multi-image `runtimeIdentifier`, pairs, clones, all device
+  states, refusal codes, token/digest mismatch, limits and expiry.
+- Fault injection (platform, injected tool runner): timeout, non-zero exit,
+  oversized stdout/stderr, malformed JSON, tool evidence change between preview
+  and call, journal-write failure, interruption during a call, partial batch
+  where only some identities disappear, post-check list failure.
+- Real platform (opt-in only, never on existing devices): create throwaway
+  devices named `sayaka-test-<random>` with `simctl create`, erase and delete them
+  through the session, and delete any leftover `sayaka-test-*` devices in
+  teardown, including after failures. Journal state lives under an owned
+  temporary prefix that teardown removes. Runtime deletion (1b) is exercised only
+  against an explicitly provided disposable runtime; the default suite never
+  deletes a runtime.
 - No test may target devices or runtimes it did not create.
 
-## Open decisions for review
+## Mole capability impact
 
-1. Confirm `permanent_tool_operation_v1` as a new effect class, with its own
-   approval token format, for example `delete 3 simulators` / `delete 1 runtime`.
-2. Confirm that `erase` is offered (it keeps the device but loses its contents).
-3. Confirm the default-SDK runtime refusal, or allow it with an extra warning.
-4. Measure whether `simctl runtime delete` needs administrator rights, for both
-   runtime kinds (classic disk image and MobileAsset-managed cryptex image), on
-   supported macOS versions. Observed so far: `runtime delete <id> --dry-run`
-   succeeds unprivileged ("Would delete …"), which does not prove the real
-   deletion does. If either kind needs administrator rights, that kind moves to
-   the privileged-helper contract instead of this slice.
-5. Cryptex runtimes live in system-managed MobileAsset storage. Confirm that
-   deleting them through `simctl` is the supported path, and that the reported
-   `sizeBytes` is what the volume actually frees.
+Narrows the pinned Mole developer-cleanup gap recorded in
+`docs/COMPETITIVE.md` (the unsupported `xcrun simctl delete` operation) for
+simulator devices; runtime deletion stays a gap until 1b. It does not claim
+parity or a throughput result. Size/runtime budget: no new crate dependency.
+Process launch uses the standard library; verifying `/usr/bin/xcrun`'s code
+signature adds a link to the system Security framework (the platform crate
+currently links CoreFoundation, Foundation and IOKit), with no bundled code.
+
+## Open decisions
+
+1. Approve the new effect class `permanent_tool_operation_v1` and the
+   `AGENTS.md` amendment it requires (maintainer).
+2. Offer `erase` in 1a (keeps the device, loses its contents)?
+3. Runtime default rule: refuse images matching `chosenRuntimeBuild` **or**
+   `defaultBuild` for any SDK (as above), or only `chosenRuntimeBuild`?
+4. **(Blocks 1b)** Measure whether `simctl runtime delete` needs administrator
+   rights for each kind. Observed so far: `--dry-run` succeeds unprivileged
+   ("Would delete …"), which does not prove the real deletion does. If a kind
+   needs administrator rights, it moves to the privileged-helper contract.
+5. **(Blocks 1b)** For MobileAsset-managed cryptex images, confirm `simctl` is
+   the supported removal path, decide `--keep-asset`, and verify that the
+   reported `sizeBytes` matches the space actually freed.
