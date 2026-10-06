@@ -1896,6 +1896,10 @@ enum AttributePhase {
     /// apps; it is not cloud or resource-fork data (owner decision
     /// 2026-10-06, sayaka#93).
     BundleSource,
+    /// A root-owned App Store bundle for the Finder-delegated path: the
+    /// bundle rules plus the store's own `com.apple.appstore.*` metadata
+    /// (SayakaCleaner#323).
+    AdminBundleSource,
     PostEffectDestination,
 }
 
@@ -1933,9 +1937,13 @@ fn check_attribute_names(bytes: &[u8], phase: AttributePhase) -> io::Result<()> 
         // admission never accepts it. No value is read, inferred, or modified.
         let generated_destination_attribute = matches!(
             phase,
-            AttributePhase::PostEffectDestination | AttributePhase::BundleSource
+            AttributePhase::PostEffectDestination
+                | AttributePhase::BundleSource
+                | AttributePhase::AdminBundleSource
         ) && name == b"com.apple.macl";
-        if !(source_allowed || generated_destination_attribute) {
+        let store_metadata = matches!(phase, AttributePhase::AdminBundleSource)
+            && name.starts_with(b"com.apple.appstore.");
+        if !(source_allowed || generated_destination_attribute || store_metadata) {
             return Err(refused(
                 "unknown or cloud/resource-fork extended attributes",
             ));
@@ -2054,7 +2062,7 @@ pub(super) fn admin_bundle_stamp(path: &Path) -> io::Result<AdminBundleStamp> {
             "bundle does not resolve directly inside /Applications",
         ));
     }
-    inspect_attributes(&file, AttributePhase::BundleSource)?;
+    inspect_attributes(&file, AttributePhase::AdminBundleSource)?;
     let manifest = bundle_manifest_identity(path)?;
     if manifest.0 != stamp.device {
         return Err(refused("Contents/Info.plist is on another volume"));
@@ -2331,6 +2339,27 @@ mod admin_group_admission_tests {
         ] {
             assert!(!is_applications_root(Path::new(path)), "{path}");
         }
+    }
+
+    #[test]
+    fn admin_bundle_source_alone_accepts_app_store_metadata() {
+        let names =
+            b"com.apple.appstore.metadata\0com.apple.appstore.vendor_name\0com.apple.macl\0";
+        assert!(check_attribute_names(names, AttributePhase::AdminBundleSource).is_ok());
+        for phase in [
+            AttributePhase::Source,
+            AttributePhase::BundleSource,
+            AttributePhase::PostEffectDestination,
+        ] {
+            assert!(check_attribute_names(b"com.apple.appstore.metadata\0", phase).is_err());
+        }
+        assert!(
+            check_attribute_names(
+                b"com.apple.ResourceFork\0",
+                AttributePhase::AdminBundleSource
+            )
+            .is_err()
+        );
     }
 
     #[test]
