@@ -467,6 +467,20 @@ SAYAKA_API int32_t sayaka_uninstall_result_v1(uint64_t handle, uint8_t *buffer,
 SAYAKA_API int32_t sayaka_uninstall_execute_v1(
     uint64_t handle, const uint8_t *approval_token, size_t approval_token_length,
     SayakaPathV1 state_dir);
+/* Administrator path for an `admin_eligible` preview (a root-owned app
+ * directly in /Applications). begin re-observes the bundle and writes the
+ * durable journal intent; the caller then asks Finder to move exactly that
+ * bundle to the Trash (Finder shows the administrator prompt) and calls
+ * finish. delegate_status: 0 Finder reported success, 1 cancelled or
+ * authorization denied, 2 other error. It is advisory; the core decides by
+ * observing the original path and the user's Trash. The core never performs
+ * this move. A begin refusal returns SAYAKA_INVALID_CANDIDATE and leaves a
+ * terminal `refused` result. */
+SAYAKA_API int32_t sayaka_uninstall_admin_begin_v1(
+    uint64_t handle, const uint8_t *approval_token, size_t approval_token_length,
+    SayakaPathV1 state_dir);
+SAYAKA_API int32_t sayaka_uninstall_admin_finish_v1(uint64_t handle,
+                                                   int32_t delegate_status);
 SAYAKA_API int32_t sayaka_uninstall_release_v1(uint64_t handle);
 
 /* Explicit regular files only (1..32), under one authorized root. This is

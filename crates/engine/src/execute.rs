@@ -296,6 +296,7 @@ impl<P: Platform, C: Clock, I: IdSource> Session<P, C, I> {
                 scope: self.platform.journal_path(preview.scope()),
                 clean_policy,
                 tool_operation: None,
+                delegation: None,
                 created_unix_ms: now,
                 items,
             },

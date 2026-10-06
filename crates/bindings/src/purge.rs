@@ -1606,6 +1606,7 @@ mod tests {
                 scope: journal::NativePath::from_path(std::path::Path::new("/repo")),
                 clean_policy: None,
                 tool_operation: None,
+                delegation: None,
                 created_unix_ms: 1,
                 items: vec![journal::ItemRecord {
                     path: journal::NativePath::from_path(std::path::Path::new("/repo/target")),

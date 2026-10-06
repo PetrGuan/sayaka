@@ -987,3 +987,23 @@ keeps both original errors separately; selection reports retain the capture OS
 code/context and include the restoration failure in the message. The existing
 capture API preserves its prior combined-error behavior in this dual-failure
 case, and otherwise returns the original io::Error.
+
+## Administrator-approved app uninstall
+
+For a root-owned app directly in `/Applications` (such as an App Store app),
+the uninstall preview JSON adds `admin_required` and `admin_eligible` (schema
+version unchanged; additive). An `admin_eligible` preview has
+`execution_eligible: false` and no refusals. Finder performs the move after
+the system administrator prompt; the core admits, journals and verifies it
+([UNINSTALL_EXECUTION.md](UNINSTALL_EXECUTION.md)).
+
+| Function | Purpose |
+| --- | --- |
+| `sayaka_uninstall_admin_begin_v1(handle, token, token_length, state_dir)` | Same token as `sayaka_uninstall_execute_v1` (`uninstall <bundle name>`). Re-observes the bundle and writes the durable intent. `INVALID_CANDIDATE` with a terminal `refused` result if anything changed; `INVALID_CANDIDATE` without a result if the preview is not `admin_eligible`; `BUSY` if the journal is locked; `INVALID_HANDLE` if already begun |
+| `sayaka_uninstall_admin_finish_v1(handle, delegate_status)` | After the caller's Finder request: `0` Finder reported success, `1` cancelled or authorization denied, `2` other error. Advisory only; the core observes the original path and the user's Trash, journals the outcome and leaves the terminal result. May block for about 3 seconds while it re-observes, so call it off the main thread |
+
+The terminal result is `sayaka.app_uninstall_execution` with
+`"delegated_to": "finder"`, `state` `completed`, `cancelled`, `failed`,
+`unknown` or `refused`, the journal `report` and `recovery` text. Releasing a
+handle between begin and finish is safe; the intent stays `started` and reads
+back as `unknown`.

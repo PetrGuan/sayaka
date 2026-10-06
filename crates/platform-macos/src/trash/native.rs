@@ -1896,6 +1896,10 @@ enum AttributePhase {
     /// apps; it is not cloud or resource-fork data (owner decision
     /// 2026-10-06, sayaka#93).
     BundleSource,
+    /// A root-owned App Store bundle for the Finder-delegated path: the
+    /// bundle rules plus the store's own `com.apple.appstore.*` metadata
+    /// (SayakaCleaner#323).
+    AdminBundleSource,
     PostEffectDestination,
 }
 
@@ -1933,9 +1937,13 @@ fn check_attribute_names(bytes: &[u8], phase: AttributePhase) -> io::Result<()> 
         // admission never accepts it. No value is read, inferred, or modified.
         let generated_destination_attribute = matches!(
             phase,
-            AttributePhase::PostEffectDestination | AttributePhase::BundleSource
+            AttributePhase::PostEffectDestination
+                | AttributePhase::BundleSource
+                | AttributePhase::AdminBundleSource
         ) && name == b"com.apple.macl";
-        if !(source_allowed || generated_destination_attribute) {
+        let store_metadata = matches!(phase, AttributePhase::AdminBundleSource)
+            && name.starts_with(b"com.apple.appstore.");
+        if !(source_allowed || generated_destination_attribute || store_metadata) {
             return Err(refused(
                 "unknown or cloud/resource-fork extended attributes",
             ));
@@ -1985,6 +1993,148 @@ fn is_applications_root(path: &Path) -> bool {
                 && applications == b"applications"
         }
         _ => false,
+    }
+}
+
+/// Observed identity of a root-owned app bundle for an administrator-approved
+/// move that Finder performs (SayakaCleaner#323). Evidence, not authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct AdminBundleStamp {
+    pub device: u64,
+    pub inode: u64,
+    pub manifest: (u64, u64),
+    pub logical_bytes: u64,
+    pub modified: (i64, i64),
+}
+
+/// Target admission for the administrator path: a root-owned `.app`
+/// directory with no other-write, setuid, setgid or sticky bits (group write
+/// only for `admin`) and ordinary flags only, so restricted system copies
+/// such as Safari's stay refused.
+fn admissible_admin_bundle(stamp: &Stamp) -> io::Result<()> {
+    if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFDIR)
+        || stamp.mode & forbidden_bits(stamp, true) != 0
+        || stamp.uid != 0
+        || stamp.flags & !ORDINARY_FLAGS != 0
+        || stamp.inode == 0
+    {
+        return Err(refused(
+            "requires an ordinary root-owned unprotected bundle directory",
+        ));
+    }
+    Ok(())
+}
+
+/// Captures administrator-path evidence for `path`, which must be a bundle
+/// directly inside `/Applications`. Read-only; links are not followed.
+pub(super) fn admin_bundle_stamp(path: &Path) -> io::Result<AdminBundleStamp> {
+    ordinary_authority()?;
+    valid_path(path)?;
+    let parent = path
+        .parent()
+        .filter(|parent| is_applications_root(parent))
+        .ok_or_else(|| {
+            refused("administrator removal is limited to apps directly in /Applications")
+        })?;
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_none_or(|name| !name.ends_with(".app"))
+    {
+        return Err(refused("bundle directory name must end in .app"));
+    }
+    for ancestor in parent.ancestors() {
+        let stamp = Stamp::read(&fs::symlink_metadata(ancestor)?);
+        admissible_shaped_ancestor(&stamp, u32::MAX, TargetShape::Bundle)?;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(path)?;
+    let stamp = Stamp::read(&file.metadata()?);
+    admissible_admin_bundle(&stamp)?;
+    if stamp.device != fs::symlink_metadata(parent)?.dev() {
+        return Err(refused("bundle is not on the /Applications volume"));
+    }
+    let physical = physical_path(&file)?;
+    if !physical.parent().is_some_and(is_applications_root) {
+        return Err(refused(
+            "bundle does not resolve directly inside /Applications",
+        ));
+    }
+    inspect_attributes(&file, AttributePhase::AdminBundleSource)?;
+    let manifest = bundle_manifest_identity(path)?;
+    if manifest.0 != stamp.device {
+        return Err(refused("Contents/Info.plist is on another volume"));
+    }
+    Ok(AdminBundleStamp {
+        device: stamp.device,
+        inode: stamp.inode,
+        manifest,
+        logical_bytes: stamp.size,
+        modified: stamp.modified,
+    })
+}
+
+/// Whether `path` still names the captured bundle (same directory and
+/// Info.plist identity). Absent or replaced paths return false.
+pub(super) fn admin_bundle_present(path: &Path, captured: &AdminBundleStamp) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.dev() == captured.device
+            && metadata.ino() == captured.inode
+            && bundle_manifest_identity(path).ok() == Some(captured.manifest)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Most entries examined in the user's Trash when locating a moved bundle.
+const MAX_TRASH_ENTRIES: usize = 10_000;
+
+/// Finds the captured bundle at the top level of the current user's
+/// `~/.Trash` by directory and Info.plist identity. Read-only; no links are
+/// followed, and the scan is bounded.
+pub(super) fn find_admin_bundle_in_trash(
+    captured: &AdminBundleStamp,
+) -> io::Result<Option<PathBuf>> {
+    let uid = ordinary_authority()?;
+    let trash = user_home(uid)?.join(".Trash");
+    let metadata = fs::symlink_metadata(&trash)?;
+    if !metadata.is_dir() || metadata.uid() != uid {
+        return Err(refused(
+            "the user Trash is not an ordinary user-owned folder",
+        ));
+    }
+    for entry in fs::read_dir(&trash)?.take(MAX_TRASH_ENTRIES) {
+        // An unrelated entry that vanished or can't be read is skipped; only
+        // the identity match below can report the bundle as found.
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.is_dir()
+            && metadata.dev() == captured.device
+            && metadata.ino() == captured.inode
+            && bundle_manifest_identity(&path)? == captured.manifest
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// The account home directory from the user database, not `$HOME`.
+fn user_home(uid: u32) -> io::Result<PathBuf> {
+    // SAFETY: getpwuid returns null or a pointer to static storage; the
+    // directory bytes are copied before any other passwd call.
+    unsafe {
+        let entry = libc::getpwuid(uid);
+        if entry.is_null() || (*entry).pw_dir.is_null() {
+            return Err(refused("the user home directory is unknown"));
+        }
+        let bytes = std::ffi::CStr::from_ptr((*entry).pw_dir).to_bytes();
+        Ok(PathBuf::from(OsStr::from_bytes(bytes)))
     }
 }
 
@@ -2161,6 +2311,23 @@ mod admin_group_admission_tests {
     }
 
     #[test]
+    fn admin_bundle_requires_root_owned_ordinary_directory() {
+        assert!(admissible_admin_bundle(&directory(0o755, 0, 0)).is_ok());
+        assert!(admissible_admin_bundle(&directory(0o775, 0, ADMIN_GID)).is_ok());
+        // User-owned bundles use the ordinary path, not the administrator one.
+        assert!(admissible_admin_bundle(&directory(0o755, 501, 20)).is_err());
+        for mode in [0o757, 0o775, 0o4755, 0o1755] {
+            assert!(
+                admissible_admin_bundle(&directory(mode, 0, 0)).is_err(),
+                "{mode:o}"
+            );
+        }
+        let mut restricted = directory(0o755, 0, 0);
+        restricted.flags = SF_RESTRICTED;
+        assert!(admissible_admin_bundle(&restricted).is_err());
+    }
+
+    #[test]
     fn applications_root_is_exact() {
         assert!(is_applications_root(Path::new("/Applications")));
         assert!(is_applications_root(Path::new(
@@ -2177,6 +2344,27 @@ mod admin_group_admission_tests {
         ] {
             assert!(!is_applications_root(Path::new(path)), "{path}");
         }
+    }
+
+    #[test]
+    fn admin_bundle_source_alone_accepts_app_store_metadata() {
+        let names =
+            b"com.apple.appstore.metadata\0com.apple.appstore.vendor_name\0com.apple.macl\0";
+        assert!(check_attribute_names(names, AttributePhase::AdminBundleSource).is_ok());
+        for phase in [
+            AttributePhase::Source,
+            AttributePhase::BundleSource,
+            AttributePhase::PostEffectDestination,
+        ] {
+            assert!(check_attribute_names(b"com.apple.appstore.metadata\0", phase).is_err());
+        }
+        assert!(
+            check_attribute_names(
+                b"com.apple.ResourceFork\0",
+                AttributePhase::AdminBundleSource
+            )
+            .is_err()
+        );
     }
 
     #[test]

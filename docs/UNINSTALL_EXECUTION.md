@@ -123,6 +123,56 @@ minimum deltas:
 - Operation history is never deleted by uninstall, including the record of
   the uninstall itself.
 
+## Administrator-approved Finder delegation (SayakaCleaner#323)
+
+Owner decision 2026-10-06: users may remove apps they do not own, such as
+App Store apps (`root:wheel 0755` in `/Applications`), after the system
+administrator prompt, as Finder allows. The ordinary user cannot move such a
+bundle, and `NSWorkspace` recycling refuses without prompting (observed:
+`afpAccessDenied`). Finder's delete shows the administrator prompt, so the app
+asks Finder to perform the move. The core never performs it.
+
+- **Admission** (`AdminBundleEvidence::capture`): a preview with no refusals
+  (including not running) whose ordinary Trash plan could not be prepared, for
+  a `.app` directly inside `/Applications` that is a root-owned directory with
+  no other-write, setuid, setgid or sticky bits (group write only for
+  `admin`), ordinary flags only (restricted system copies such as Safari's
+  stay refused), allowed attributes (as for bundle sources, plus the App Store's own `com.apple.appstore.*` metadata on this path only), the same device
+  as `/Applications`, a physical path directly inside `/Applications` and a
+  regular `Contents/Info.plist`. Links are not followed. The preview reports
+  `admin_eligible: true` instead of a `trash_plan_unavailable` refusal, and
+  `admin_required` when the bundle is root-owned.
+- **Begin** (`sayaka_uninstall_admin_begin_v1`): the same typed token as the
+  ordinary path. The bundle is re-observed (directory and Info.plist identity,
+  admission and a fresh refusal/running preview) and a durable intent is
+  written under contract `system_delegated_trash_v1` (schema 7) with the
+  performer `finder_after_administrator_approval`, a plan digest and the
+  Info.plist identity. The item is written as `started`, so an interruption
+  reads back as `unknown` and is never retried. If re-observation or the
+  journal fails, nothing is handed to Finder.
+- **Finish** (`sayaka_uninstall_admin_finish_v1`): Finder's reported status is
+  advisory. The core observes the original path and the top level of the
+  user's `~/.Trash` (bounded, links not followed): original gone and the same
+  directory and Info.plist identity found in the Trash is `succeeded` with that
+  destination. Original still present is `failed` (`cancelled_by_user` or
+  `delegate_error`), except when Finder reported success: the core re-observes
+  for up to about 3 seconds and then records `unknown`
+  (`not_moved_despite_reported_success`) rather than claim nothing moved.
+  Anything else is `unknown`. The outcome is journaled.
+- Only `~/.Trash` is searched. If the home folder is on a different volume
+  from `/Applications`, Finder uses that volume's `.Trashes`, and the result
+  is `unknown`, never a false `succeeded`. Unrelated Trash entries that vanish
+  or can't be read during the scan are skipped.
+- The journal's exclusive lock is held from begin until finish or release,
+  including while the administrator prompt is open, so other journal users
+  see `BUSY` meanwhile. This keeps a `started` item from being read as
+  interrupted mid-flight.
+- **Residual races, disclosed:** another process can change the bundle between
+  begin and Finder's move, and Finder resolves the path itself. Verification
+  afterwards detects a moved replacement as `unknown` rather than success.
+  Finder may rename the item on a Trash name conflict; identity, not name,
+  locates it. Nothing is permanently deleted, and recovery is Finder Put Back.
+
 ## Recovery
 
 - Recovery is **Finder 'Put Back'** (or dragging the bundle out of Trash)

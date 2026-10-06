@@ -37,6 +37,7 @@ fn history_fixture(fixture: &Fixture) -> PathBuf {
             scope: NativePath::from_path(std::path::Path::new("/fixture")),
             clean_policy: None,
             tool_operation: None,
+            delegation: None,
             created_unix_ms: created,
             items: vec![ItemRecord {
                 path: NativePath::from_path(&std::path::Path::new("/fixture").join(id)),
@@ -2627,6 +2628,7 @@ fn receipt_preserves_unverified_recovery_hints_without_retrying() {
         scope: NativePath::from_path(&fixture.root),
         clean_policy: None,
         tool_operation: None,
+        delegation: None,
         created_unix_ms: 1,
         items: vec![ItemRecord {
             path: NativePath::from_path(&file),

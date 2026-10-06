@@ -397,6 +397,83 @@ impl BundleTrashCandidate {
     }
 }
 
+/// Read-only evidence for a root-owned `.app` directly inside `/Applications`
+/// that Finder moves to the Trash after administrator approval
+/// (SayakaCleaner#323). The core never performs that move; it only admits,
+/// re-observes and verifies it. See docs/UNINSTALL_EXECUTION.md.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AdminBundleEvidence {
+    pub device: u64,
+    pub inode: u64,
+    pub manifest_device: u64,
+    pub manifest_inode: u64,
+    pub logical_bytes: u64,
+    pub modified: (i64, i64),
+}
+
+impl AdminBundleEvidence {
+    /// Admits a root-owned, unrestricted bundle directly in `/Applications`.
+    pub fn capture(path: &Path) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            native::admin_bundle_stamp(path).map(Self::from_native)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = path;
+            Err(unsupported())
+        }
+    }
+
+    /// Whether `path` still names this bundle (directory and Info.plist).
+    pub fn is_present_at(&self, path: &Path) -> io::Result<bool> {
+        #[cfg(target_os = "macos")]
+        {
+            native::admin_bundle_present(path, &self.to_native())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = path;
+            Err(unsupported())
+        }
+    }
+
+    /// Locates this bundle at the top level of the user's Trash.
+    pub fn find_in_user_trash(&self) -> io::Result<Option<PathBuf>> {
+        #[cfg(target_os = "macos")]
+        {
+            native::find_admin_bundle_in_trash(&self.to_native())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(unsupported())
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn from_native(stamp: native::AdminBundleStamp) -> Self {
+        Self {
+            device: stamp.device,
+            inode: stamp.inode,
+            manifest_device: stamp.manifest.0,
+            manifest_inode: stamp.manifest.1,
+            logical_bytes: stamp.logical_bytes,
+            modified: stamp.modified,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn to_native(self) -> native::AdminBundleStamp {
+        native::AdminBundleStamp {
+            device: self.device,
+            inode: self.inode,
+            manifest: (self.manifest_device, self.manifest_inode),
+            logical_bytes: self.logical_bytes,
+            modified: self.modified,
+        }
+    }
+}
+
 /// Sealed Trash candidate for one marker-bound project artifact directory
 /// (T8 purge). The artifact moves as one container; its marker files are
 /// captured as revalidation evidence and are never targets. Admission,
