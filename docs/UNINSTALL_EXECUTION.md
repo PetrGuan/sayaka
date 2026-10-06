@@ -77,6 +77,10 @@ minimum deltas:
 - **Bundle attributes**: an `.app` target may also carry `com.apple.macl`, the
   app-management label macOS adds to most installed apps (same decision). Its
   value is never read. File, purge and cache sources still refuse it.
+- **`/Applications` root**: `/Applications` is a protected root, but a bundle
+  directly inside it (bundle target parent and scope exactly `/Applications`)
+  is admitted (same decision). Nested folders such as `/Applications/Utilities`
+  and every other protected root stay refused.
 - **Refusal surface**: when the bundle passes preview but its native Trash plan
   cannot be prepared, the binding reports a `trash_plan_unavailable` refusal
   with the native message. It never returns a silently ineligible preview.

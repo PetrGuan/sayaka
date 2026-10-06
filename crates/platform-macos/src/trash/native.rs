@@ -1231,6 +1231,9 @@ impl Candidate {
             };
             let protected = if self.shape == TargetShape::CacheDirectory {
                 cache_directory_protected(checked)
+            } else if self.shape == TargetShape::Bundle && is_applications_root(checked) {
+                // A bundle directly inside /Applications (sayaka#93).
+                false
             } else {
                 standard_protected(checked)
             };
@@ -1957,6 +1960,33 @@ fn fold(value: &OsStr) -> Vec<u8> {
     }
 }
 
+/// Exactly `/Applications` (or its Data-volume path). Bundle uninstall may
+/// target an app directly inside it; nested folders such as
+/// `/Applications/Utilities` and everything else under it stay protected
+/// (owner decision 2026-10-06, sayaka#93).
+fn is_applications_root(path: &Path) -> bool {
+    let mut components = path.components();
+    if components.next() != Some(Component::RootDir) {
+        return false;
+    }
+    let parts: Option<Vec<_>> = components
+        .map(|part| match part {
+            Component::Normal(value) => Some(fold(value)),
+            _ => None,
+        })
+        .collect();
+    match parts.as_deref() {
+        Some([only]) => only == b"applications",
+        Some([system, volumes, data, applications]) => {
+            system == b"system"
+                && volumes == b"volumes"
+                && data == b"data"
+                && applications == b"applications"
+        }
+        _ => false,
+    }
+}
+
 fn standard_protected(path: &Path) -> bool {
     protected_path(path, false)
 }
@@ -2126,6 +2156,23 @@ mod admin_group_admission_tests {
                 admissible_shaped_ancestor(&directory(mode, uid, gid), 501, TargetShape::Bundle)
                     .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn applications_root_is_exact() {
+        assert!(is_applications_root(Path::new("/Applications")));
+        assert!(is_applications_root(Path::new(
+            "/System/Volumes/Data/Applications"
+        )));
+        for path in [
+            "/Applications/Utilities",
+            "/Users/me/Applications",
+            "Applications",
+            "/",
+            "/Applications/../Library",
+        ] {
+            assert!(!is_applications_root(Path::new(path)), "{path}");
         }
     }
 
