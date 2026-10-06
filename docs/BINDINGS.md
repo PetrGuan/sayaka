@@ -836,6 +836,57 @@ refuses the selected batch, the same bounded `purge_execution` envelope has
 `status: "refused"`, `effects_performed: false`, `error.reason`, `issues`,
 `refusals`, and one skipped item per selected preview id with no destination.
 
+## Permanent simulator erase/delete
+
+macOS only, effect class `permanent_tool_operation_v1`
+([SIMULATOR_CLEANUP.md](SIMULATOR_CLEANUP.md), slice 1a). Apple's `simctl`
+erases or deletes shut-down simulator devices named by UDID. Nothing moves to
+Trash and nothing can be restored. Hosts must show a separate, strong
+confirmation listing every target by name, runtime, size and what is lost,
+with nothing pre-selected, and must not offer it inside a Trash flow. A
+sandboxed host (`APP_SANDBOX_CONTAINER_ID` present) receives
+`capability_unavailable`.
+
+| Function | Purpose |
+| --- | --- |
+| `sayaka_simulators_capability_v1(buffer, capacity, required)` | Effect-free capability JSON (`available`, `reason`, limits) |
+| `sayaka_simulators_preview_start_v1(request, out_handle)` | Start an asynchronous preview of one operation kind |
+| `sayaka_simulators_result_v1(handle, buffer, capacity, required)` | Copy preview or terminal JSON; `NOT_READY` while active |
+| `sayaka_simulators_execute_v1(handle, request)` | Start the single execution of an approved subset |
+| `sayaka_simulators_cancel_v1(handle)` | Monotonic cancellation |
+| `sayaka_simulators_release_v1(handle)` | Cancel and join owned work; `BUSY` until joined |
+
+`SayakaSimulatorPreviewRequestV1` carries ABI version 1, exact `struct_size`,
+`operation` (`1` erase, `2` delete) and a zero `reserved`. Preview JSON
+(`kind: "sayaka.simulator_preview"`) has `state: "ready"` or `"refused"` with
+`error.code` from the contract (`capability_unavailable`, `tool_unavailable`,
+`unsupported_tool_version`, `tool_changed`, `developer_activity`,
+`parse_failed`, `output_cap_exceeded`, `timeout`). A ready preview lists every
+device as an item with string `id`, UDID, name, runtime, state, availability,
+estimated `data_bytes` (`size_unknown` when absent), last use, pair partner
+(`paired_with_id`), `refusals`, per-item `execution_eligible` and `loses`, plus
+`plan_digest`, `expires_unix_ms` (120 s), tool fingerprint and versions, and any
+running `developer_activity` (execution is refused while it is non-empty).
+
+`SayakaSimulatorExecuteRequestV1` carries the 64-hex `plan_digest`, `1..32`
+unique preview item ids (a pair needs both members), `approval == 1`, the exact
+token `erase N simulators` or `delete N simulators` with `N == item_count`, and
+an optional state directory (`has_state_dir`), which must not lie inside any
+previewed device (compared by real path; otherwise `INVALID_ARGUMENT`). Any
+digest, token, id or pairing mismatch, expiry, cancellation or a second
+execution returns `INVALID_CANDIDATE` without effects; hosts cannot tell
+expiry from a mismatch, so on `INVALID_CANDIDATE` they preview again. Execution
+JSON (`kind: "sayaka.simulator_execution"`) is `refused` (no effects; for
+example `busy`, `developer_activity`, `journal_unavailable`) or
+`finished`/`unknown` with the schema-6 journal record. A refused execution
+ends the handle: release it and preview again. Per item, `Succeeded` is
+confirmed by a re-list, `Skipped` carries the refusal or stop reason, `Failed`
+means `simctl` reported failure and no change to the device was observed, and
+`Unknown` (timeout, interruption, post-check failure, a delete still listed
+after success, a failing erase with changed data, or an erase without an
+observable change) is reconciled by a fresh preview, never retried. Cancellation skips batches not yet started; it
+never interrupts a running `simctl` call (up to 10 minutes).
+
 ## AI Footprint projection
 
 `sayaka_scan_ai_footprint_v1` accepts a completed scan handle with exactly one

@@ -67,6 +67,7 @@ mod tests {
                 "rules",
                 "installer",
                 "completions",
+                "devtools",
                 "diagnose",
                 "launchers",
                 "install",

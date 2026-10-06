@@ -365,6 +365,13 @@ commands), excludes Xcode Archives and other user products, and is intentionally
 preview-only until a non-project cache execution contract exists. This is not
 Mole parity or a cleanup-throughput result.
 
+Simulator devices: `sayaka devtools simulators` and the
+`sayaka_simulators_*_v1` bindings erase or delete explicitly selected,
+shut-down simulator devices by UDID through `simctl`
+([SIMULATOR_CLEANUP.md](SIMULATOR_CLEANUP.md), slice 1a). This narrows the
+`xcrun simctl delete` gap above for devices only; runtime deletion stays a gap
+until slice 1b, and no parity or throughput result is claimed.
+
 Potentially irreversible maintenance, directory actions, and privileged
 operations require new action-specific design gates after M3. They are not
 authorized by the initial ordinary-file trash contract. "Optimize" must name the

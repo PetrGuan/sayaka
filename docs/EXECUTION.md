@@ -9,6 +9,12 @@ shared executor. Controlled local native evidence includes
 that does not certify every frontend/environment or provide a general restore
 command. Windows effects and directory execution remain unavailable.
 
+Trash is not the only effect class. Permanent simulator erase/delete through
+Apple's `simctl` is the separately owned `permanent_tool_operation_v1` class in
+[SIMULATOR_CLEANUP.md](SIMULATOR_CLEANUP.md): its own session, approval phrase,
+journal schema and confirmation. Nothing in this document's Trash executor can
+reach it, and it is never a fallback for a failed Trash operation.
+
 ## Approved guarantee and its limit
 
 `revalidated_trash_v1` binds approval to the complete engine-owned preview:
@@ -237,6 +243,13 @@ Clean executions use `schema_version:3` with the same plan/rules tuple and must
 include a clean policy context record (policy file state witness, selected root
 identity, and effective exclusions). Missing or malformed clean policy context
 is rejected.
+Permanent simulator operations use `schema_version:6`, `plan_schema_version:6`,
+`engine_version:2`, `rules_version:1` and contract `permanent_tool_operation_v1`.
+They must carry a `tool_operation` intent (operation kind, `simctl` tool
+evidence, plan digest and one UDID/name/runtime/pair entry per item, aligned
+with `items`); items never have a Trash destination or Trash recovery evidence,
+and `succeeded` means `simctl` removed or erased the device as confirmed by a
+re-list. Trash records must not carry `tool_operation`.
 Before publishing an update,
 a separate `.pending` conservative receipt is written, full-synced, directory-
 synced and full-synced again. It retains earlier completed outcomes while treating

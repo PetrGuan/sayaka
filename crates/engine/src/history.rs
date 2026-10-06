@@ -147,6 +147,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            tool_operation: None,
             created_unix_ms: created,
             items: vec![ItemRecord {
                 path: NativePath::unix_fixture("/fixture/file"),
@@ -179,6 +180,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            tool_operation: None,
             created_unix_ms: created,
             items: vec![ItemRecord {
                 path: NativePath::unix_fixture("/fixture/pkg/__pycache__/module.cpython-39.pyc"),
@@ -466,6 +468,7 @@ mod tests {
             operation_id: "c-3".into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
+            tool_operation: None,
             clean_policy: Some(CleanPolicyContextRecord {
                 schema_version: 1,
                 kind: "sayaka_clean_policy_context".into(),

@@ -497,6 +497,59 @@ SAYAKA_API int32_t sayaka_picked_cancel_v1(uint64_t handle);
 /* Cancels and joins owned work. BUSY: retain handle/scopes and retry later. */
 SAYAKA_API int32_t sayaka_picked_release_v1(uint64_t handle);
 
+/* PERMANENT simulator erase/delete via Apple's simctl (effect class
+ * permanent_tool_operation_v1, docs/SIMULATOR_CLEANUP.md). Nothing moves to
+ * Trash and nothing can be restored. Hosts must show a separate, strong
+ * confirmation listing every target by name, runtime, size and what is lost,
+ * with nothing pre-selected. A sandboxed host gets capability_unavailable. */
+#define SAYAKA_SIMULATOR_ERASE 1u
+#define SAYAKA_SIMULATOR_DELETE 2u
+#define SAYAKA_MAX_SIMULATOR_SELECTIONS_V1 32u
+
+typedef struct SayakaSimulatorPreviewRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t operation; /* SAYAKA_SIMULATOR_ERASE or SAYAKA_SIMULATOR_DELETE. */
+    uint32_t reserved;  /* Must be zero. */
+} SayakaSimulatorPreviewRequestV1;
+
+typedef struct SayakaSimulatorExecuteRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    const uint8_t *plan_digest; /* 64 ASCII hex bytes from preview JSON, no NUL. */
+    size_t plan_digest_length;
+    const uint64_t *item_ids; /* 1..32 unique preview item ids; a pair needs both. */
+    size_t item_count;
+    uint32_t approval; /* Must be 1. */
+    uint32_t reserved; /* Must be zero. */
+    const uint8_t *approval_token; /* Exact "erase N simulators" or
+                                      "delete N simulators", N == item_count. */
+    size_t approval_token_length;
+    uint32_t has_state_dir; /* 0 = default journal dir, 1 = state_dir present. */
+    uint32_t reserved2;     /* Must be zero. */
+    SayakaPathV1 state_dir;
+} SayakaSimulatorExecuteRequestV1;
+
+/* Effect-free JSON: whether this host may use simulator cleanup and why not. */
+SAYAKA_API int32_t sayaka_simulators_capability_v1(uint8_t *buffer,
+                                                   size_t capacity, size_t *required);
+/* Asynchronous preview of one operation kind; result returns NOT_READY while
+ * active. Preview JSON state is "ready" or "refused" with an error code. */
+SAYAKA_API int32_t sayaka_simulators_preview_start_v1(
+    const SayakaSimulatorPreviewRequestV1 *request, uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_simulators_result_v1(uint64_t handle, uint8_t *buffer,
+                                             size_t capacity, size_t *required);
+/* Once per handle, within 120 s of the preview. INVALID_CANDIDATE: digest,
+ * token, ids, pairing or expiry did not match; make a fresh preview. OK means
+ * execution started, not success: read every journal item in the result.
+ * INVALID_ARGUMENT also covers a state_dir inside any previewed device. */
+SAYAKA_API int32_t sayaka_simulators_execute_v1(
+    uint64_t handle, const SayakaSimulatorExecuteRequestV1 *request);
+/* Skips batches not yet started; never interrupts a running simctl call. */
+SAYAKA_API int32_t sayaka_simulators_cancel_v1(uint64_t handle);
+/* Cancels and joins owned work. BUSY: retain the handle and retry later. */
+SAYAKA_API int32_t sayaka_simulators_release_v1(uint64_t handle);
+
 #ifdef __cplusplus
 }
 #endif

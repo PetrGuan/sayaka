@@ -31,6 +31,14 @@ pub const PURGE_SCHEMA_VERSION: u32 = 5;
 const PURGE_PLAN_SCHEMA_VERSION: u32 = 5;
 const PURGE_ENGINE_VERSION: u32 = 2;
 const PURGE_RULES_VERSION: u32 = 1;
+/// Permanent simulator tool operations under contract
+/// `permanent_tool_operation_v1`; items never have a Trash destination.
+/// See docs/SIMULATOR_CLEANUP.md.
+pub const TOOL_SCHEMA_VERSION: u32 = 6;
+pub const TOOL_PLAN_SCHEMA_VERSION: u32 = 6;
+pub const TOOL_ENGINE_VERSION: u32 = 2;
+pub const TOOL_RULES_VERSION: u32 = 1;
+pub const TOOL_CONTRACT: &str = "permanent_tool_operation_v1";
 const SF_DATALESS: u32 = 0x40000000;
 const SF_RESTRICTED: u32 = 0x00080000;
 const SF_NOUNLINK: u32 = 0x00100000;
@@ -272,6 +280,27 @@ pub struct ItemRecord {
     pub updated_unix_ms: u64,
 }
 
+/// Durable intent of one permanent simulator operation: kind, tool evidence,
+/// plan digest and the device identities, aligned with `Record::items`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolOperationRecord {
+    pub schema_version: u32,
+    pub operation: String,
+    pub tool_evidence: String,
+    pub plan_digest: String,
+    pub devices: Vec<ToolDeviceRecord>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolDeviceRecord {
+    pub udid: String,
+    pub name: String,
+    pub runtime_identifier: String,
+    pub paired_with: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
@@ -284,6 +313,8 @@ pub struct Record {
     pub scope: NativePath,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clean_policy: Option<CleanPolicyContextRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_operation: Option<ToolOperationRecord>,
     pub created_unix_ms: u64,
     pub items: Vec<ItemRecord>,
 }
@@ -315,7 +346,12 @@ impl Record {
             && self.engine_version == PURGE_ENGINE_VERSION
             && self.rules_version == PURGE_RULES_VERSION
             && self.contract == "revalidated_purge_trash_v1";
-        if !(legacy || rule_bound || clean || bundle || purge)
+        let tool = self.schema_version == TOOL_SCHEMA_VERSION
+            && self.plan_schema_version == TOOL_PLAN_SCHEMA_VERSION
+            && self.engine_version == TOOL_ENGINE_VERSION
+            && self.rules_version == TOOL_RULES_VERSION
+            && self.contract == TOOL_CONTRACT;
+        if !(legacy || rule_bound || clean || bundle || purge || tool)
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
             || self.items.len() > MAX_ITEMS
@@ -369,6 +405,41 @@ impl Record {
             Ok(())
         }
 
+        fn validate_tool_operation(
+            operation: &ToolOperationRecord,
+            items: usize,
+        ) -> io::Result<()> {
+            let mut udids = std::collections::HashSet::new();
+            if operation.schema_version != 1
+                || !matches!(operation.operation.as_str(), "erase" | "delete")
+                || operation.tool_evidence.is_empty()
+                || operation.tool_evidence.len() > 8192
+                || operation.plan_digest.len() != 64
+                || !operation.plan_digest.bytes().all(|b| b.is_ascii_hexdigit())
+                || operation.devices.len() != items
+                || operation.devices.iter().any(|device| {
+                    crate::devtools::canonical_udid(&device.udid).as_deref()
+                        != Some(device.udid.as_str())
+                        || !udids.insert(device.udid.as_str())
+                        || device.name.len() > 1024
+                        || device.runtime_identifier.len() > 1024
+                })
+                // A paired device is only ever handled together with its partner.
+                || operation.devices.iter().any(|device| {
+                    device.paired_with.as_ref().is_some_and(|partner| {
+                        partner == &device.udid
+                            || !operation.devices.iter().any(|other| {
+                                &other.udid == partner
+                                    && other.paired_with.as_ref() == Some(&device.udid)
+                            })
+                    })
+                })
+            {
+                return Err(invalid("invalid tool operation intent"));
+            }
+            Ok(())
+        }
+
         fn decode_hex_bytes(text: &str) -> Option<Vec<u8>> {
             if !text.len().is_multiple_of(2) {
                 return None;
@@ -391,6 +462,14 @@ impl Record {
             return Err(invalid(
                 "legacy/rule-bound record must not contain clean policy context",
             ));
+        }
+        match (&self.tool_operation, tool) {
+            (Some(operation), true) => validate_tool_operation(operation, self.items.len())?,
+            (None, true) => return Err(invalid("missing tool operation intent")),
+            (Some(_), false) => {
+                return Err(invalid("trash record must not contain a tool operation"));
+            }
+            (None, false) => {}
         }
         let mut identities = std::collections::HashSet::new();
         let mut paths = std::collections::HashSet::new();
@@ -428,13 +507,15 @@ impl Record {
                     path.validate()?;
                 }
             }
-            if !identities.insert((item.device, item.inode))
+            // Tool items are identified by UDID; a missing data directory has no inode.
+            if (!tool && !identities.insert((item.device, item.inode)))
                 || !paths.insert(&item.path.bytes)
                 || item.path.bytes.len() > 4096
                 || item.path.encoding != "unix_bytes"
                 || item.path.bytes.first() != Some(&b'/')
                 || item.path.bytes.contains(&0)
-                || (item.state == ItemState::Succeeded && item.destination.is_none())
+                || (tool && (item.destination.is_some() || item.recovery_evidence.is_some()))
+                || (!tool && item.state == ItemState::Succeeded && item.destination.is_none())
                 || (!matches!(item.state, ItemState::Succeeded | ItemState::Unknown)
                     && item.destination.is_some())
             {
@@ -778,6 +859,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            tool_operation: None,
             created_unix_ms: 1,
             items: vec![ItemRecord {
                 path: NativePath::unix_fixture("/fixture/file"),

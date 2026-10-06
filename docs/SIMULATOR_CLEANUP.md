@@ -1,15 +1,13 @@
-# Simulator and runtime cleanup contract (draft for review)
+# Simulator and runtime cleanup contract
 
-Status: **contract approved for slice 1a — partially implemented, not exposed.**
-The policy (`sayaka-engine::devtools`: parsing, candidates, refusals, request
-validation, plan digest, revalidation, outcome classification) and the launch
-boundary (`sayaka-platform-macos::devtools`: signed `xcrun`, environment
-allow-list, process group, caps, timeouts, tool evidence, developer-activity
-probe) exist. No session, journal record, binding or CLI command calls them
-yet, so nothing can delete or erase a simulator. This is the implementation contract
-required before write code for the first developer-tool slice. Nothing described
-here is exported, callable or shipped until an implementation lands with its own
-review and evidence.
+Status: **slice 1a implemented; native acceptance on throwaway devices pending.**
+The policy (`sayaka-engine::devtools`), the launch boundary
+(`sayaka-platform-macos::devtools`), the session (`sayaka-engine::devtools::session`),
+journal schema 6, the `sayaka_simulators_*_v1` bindings
+([BINDINGS.md](BINDINGS.md)) and `sayaka devtools simulators` implement device
+erase and delete. Their unit tests are written against an injected host and
+journal; the opt-in real-platform cases below have not been run, so no native
+outcome is claimed yet. Slice 1b (runtimes) is not implemented.
 
 Xcode simulators and simulator runtimes are often the largest part of the
 macOS Storage "Developer" and "System Data" categories. One measured developer
@@ -58,13 +56,13 @@ restored by the app. They form a new, separately owned effect class,
 - its argument table is fixed in this document, so it is not an "arbitrary
   command" in the sense of `AGENTS.md`.
 
-Dependent document updates land **with the implementation**, not with this
-draft: `AGENTS.md` (Trash is no longer the only executable effect class; the
+Dependent document updates landed with the slice 1a implementation:
+`AGENTS.md` (Trash is no longer the only executable effect class; the
 permanent-deletion non-goal gains this explicit, separately confirmed
 exception), `docs/EXECUTION.md` and `docs/ARCHITECTURE.md` (effect classes),
 `ROADMAP.md`/`docs/IMPLEMENTATION.md` (T10 status) and `docs/COMPETITIVE.md`
-(ledger row). The maintainer must approve the `AGENTS.md` amendment explicitly;
-approving the confirmation UX alone is not that approval.
+(ledger row). The maintainer approved the `AGENTS.md` amendment explicitly
+(decision 1 below).
 
 Callers: the CLI, and a bindings host that is not sandboxed (the Developer ID
 application). A sandboxed host receives `capability_unavailable` with a reason.
@@ -184,11 +182,14 @@ Whole request:
   without reading each bundle. Processes whose path cannot be read (other
   users' or protected processes) are skipped; they cannot be this user's
   Xcode or simulators. Command-line test runs are detected through
-  `xcodebuild`/`xctest`, not only GUI apps. Sayaka's own `xcrun`/`simctl`
-  children (identified by their process group) are excluded. If the process
-  table cannot be read, the request fails closed.
+  `xcodebuild`/`xctest`, not only GUI apps. Sayaka never sees its own
+  `xcrun`/`simctl` children: all of a process's tool calls and activity scans
+  are serialized, so no child of this process is alive during a scan. If the
+  process table cannot be read, the request fails closed. This refusal does
+  not spend the engine session: after the tools quit, the same unexpired
+  preview can execute (the C bindings still end the handle; see BINDINGS.md).
 - `tool_changed`, `tool_unavailable`, `unsupported_tool_version`.
-- `busy` (another devtools execution), `expired` (preview older than 120 s on
+- `busy` (another devtools execution), `expired` (preview 120 s or older on
   the monotonic clock, matching picked-file sessions), `invalid_request`
   (duplicate, unknown or non-previewed identities; more than 32 devices).
 
@@ -199,7 +200,8 @@ Per candidate:
 - device is a member of a pair, unless the request is a **delete** containing
   every member of that pair; the confirmation then lists the pair as one entry
   with both devices and their (possibly different) runtimes. Paired devices are
-  never offered for erase;
+  never offered for erase. A device that belongs to more than one pair is never
+  offered (`multiple_pairs`);
 - device is unavailable (`isAvailable` false) and the operation is erase:
   unavailable devices are offered for delete only;
 - device name matches Xcode's parallel-testing clones (`Clone N of …`); clones
@@ -240,16 +242,43 @@ no approval boolean without the token, and no imported JSON approval.
      data-directory observation (data size or modification time) → `succeeded`;
      exit 0 without an observable change → `unknown` (expected for a device that
      was already empty; hosts explain this rather than reporting a failure);
-     non-zero exit → `failed`;
+     non-zero exit → `failed` without an observable change, otherwise
+     `unknown` (a failing batch may have wiped some devices before one failed),
+     so `failed` never reports a changed device as untouched;
    - timeout, interruption, cap exceedance, or any other tool or I/O error
      during the call → `unknown`.
 5. Write the journal outcome. Outcomes: `succeeded`, `refused`, `failed`,
    `unknown`. `unknown` is reconciled by a later re-list, never by retry.
 
+Pair members are always placed in the same batch. Host cancellation skips
+batches that have not started; it never interrupts a running call. After an
+indeterminate call, a failed post-check, or any ambiguous `unknown` (a delete
+still listed after exit 0, an erased device that is gone or not `Shutdown`, a
+failing erase with changed data), later batches are skipped
+(`stopped_after_ambiguous_outcome`). Only the expected erase case — exit 0, the
+device present and `Shutdown`, no observable change — continues. Each `unknown`
+carries a specific reason (`exited_without_observable_change`,
+`still_listed_after_success_exit`, `erase_post_check_mismatch`,
+`failed_after_data_changed`, `timeout`, `post_check_failed`). If the CLI or host
+process is interrupted mid-call, the journal keeps `started`, which reads back
+as `unknown`. If publishing `started` fails, no call is made and the report
+marks the batch `skipped`; a partially durable `started` still reads back as
+`unknown`, which is the conservative interpretation.
+
+The journal directory must not lie inside any previewed device's directory or
+its `~/Library/Logs/CoreSimulator/<UDID>` log directory, compared by path, by
+real path after resolving links, and by file identity of every existing
+ancestor (so firmlink aliases match); the session refuses such a request before
+the journal opens. A failing erase without a prior data observation is
+`unknown` (`failed_without_pre_observation`), not `failed`. Journal items record the device's data
+directory as the path (identity is the UDID in `tool_operation`); a refused
+batch is recorded as `skipped` with its reason.
+
 Error codes surfaced to hosts: `capability_unavailable`, `tool_unavailable`,
 `unsupported_tool_version`, `tool_changed`, `developer_activity`, `busy`,
 `expired`, `invalid_request`, `parse_failed`, `output_cap_exceeded`, `timeout`,
-`journal_unavailable`. Journal records are schema-versioned; an unknown schema
+`journal_unavailable`, `cancelled` (cancelled before any call) and `consumed`
+(the session already executed). Journal records are schema-versioned; an unknown schema
 version is read-only evidence, never resumed.
 
 Residual risk, disclosed: between revalidation and the call, another process

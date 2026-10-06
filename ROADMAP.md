@@ -47,7 +47,7 @@ but the named milestone's wider outcome is incomplete.
 | M7 / T7 | Partial | macOS terminal browser/menu, filters/navigation, file selection and shared approval entries | Full task-family/UX acceptance and broader platform support |
 | M8 / T8 | Partial | Two-rule `clean`, persisted clean exclusions, installer-file selection/approval, project-artifact purge execution and developer-cache location preview | Broad clean/purge catalog; non-project cache execution and broader directory effects need separate contracts |
 | M9 / T9 | Partial, read-only | macOS `apps` inventory and `apps-related` association preview | Running/shared/multi-copy ownership, supported uninstall flows and native effects |
-| M10 / T10 | Not implemented | No system-maintenance action or privilege helper | Specific operations, authorization/recovery contracts and native evidence |
+| M10 / T10 | Partially implemented | Simulator device erase/delete (`permanent_tool_operation_v1`, [SIMULATOR_CLEANUP.md](docs/SIMULATOR_CLEANUP.md) slice 1a), pending native acceptance; no other maintenance action or privilege helper | Specific operations, authorization/recovery contracts and native evidence |
 | M11 / T11 | Partial | macOS native status, JSON/watch panel, freshness/alerts and opt-in process top | Numeric temperature/GPU, Windows sampler and broader metric/host coverage |
 | M12 / T12 | Partial, local lifecycle | History, completions, dedicated-prefix install/update/recover/remove | Public binary distribution, publisher authentication, online channels and Windows installation |
 | C1 | Not met | Goals and evidence rules defined | All major capabilities plus usability/speed/full-size evidence; current slices are not superiority proof |
