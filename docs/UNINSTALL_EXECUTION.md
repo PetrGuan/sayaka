@@ -74,6 +74,9 @@ minimum deltas:
   stay refused, and file, purge and cache candidates keep the strict rule.
   Members of `admin` can already administer the Mac, so that bit gives no one
   new access.
+- **Bundle attributes**: an `.app` target may also carry `com.apple.macl`, the
+  app-management label macOS adds to most installed apps (same decision). Its
+  value is never read. File, purge and cache sources still refuse it.
 - **Refusal surface**: when the bundle passes preview but its native Trash plan
   cannot be prepared, the binding reports a `trash_plan_unavailable` refusal
   with the native message. It never returns a silently ineligible preview.

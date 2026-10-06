@@ -894,7 +894,7 @@ impl Candidate {
             None
         };
         stage.operation = "cloud_attributes";
-        reject_cloud_attributes(target.required_file()?)?;
+        reject_target_attributes(target.required_file()?, shape)?;
         stage.phase = "purge_marker";
         let purge_marker_evidence = Self::capture_purge_markers(
             scope,
@@ -1144,7 +1144,7 @@ impl Candidate {
                 admissible_file(&self.target.stamp, self.uid)?;
             }
         }
-        reject_cloud_attributes(self.target.required_file()?)?;
+        reject_target_attributes(self.target.required_file()?, self.shape)?;
         if let Some(source) = &self.source {
             source.revalidate()?;
             admissible_file(&source.stamp, self.uid)?;
@@ -1871,6 +1871,15 @@ fn reject_cloud_attributes(file: &File) -> io::Result<()> {
     inspect_attributes(file, AttributePhase::Source)
 }
 
+/// Target admission by shape: an app bundle may also carry the system
+/// `com.apple.macl` label (see `AttributePhase::BundleSource`).
+fn reject_target_attributes(file: &File, shape: TargetShape) -> io::Result<()> {
+    match shape {
+        TargetShape::Bundle => inspect_attributes(file, AttributePhase::BundleSource),
+        _ => reject_cloud_attributes(file),
+    }
+}
+
 fn reject_destination_attributes(file: &File) -> io::Result<()> {
     inspect_attributes(file, AttributePhase::PostEffectDestination)
 }
@@ -1878,6 +1887,11 @@ fn reject_destination_attributes(file: &File) -> io::Result<()> {
 #[derive(Clone, Copy)]
 enum AttributePhase {
     Source,
+    /// An `.app` bundle directory before the move. macOS adds
+    /// `com.apple.macl` (an app-management access label) to most installed
+    /// apps; it is not cloud or resource-fork data (owner decision
+    /// 2026-10-06, sayaka#93).
+    BundleSource,
     PostEffectDestination,
 }
 
@@ -1909,11 +1923,14 @@ fn check_attribute_names(bytes: &[u8], phase: AttributePhase) -> io::Result<()> 
             name,
             b"com.apple.quarantine" | b"com.apple.FinderInfo" | b"com.apple.provenance"
         ) || name.starts_with(b"com.apple.metadata:");
-        // MACL was observed as system-added after a verified-source move.
-        // This exception is exact and post-effect only; source admission
-        // never accepts it. No value is read, inferred, or modified.
-        let generated_destination_attribute =
-            matches!(phase, AttributePhase::PostEffectDestination) && name == b"com.apple.macl";
+        // MACL was observed as system-added after a verified-source move, and
+        // is present on most installed apps. This exception is exact: it holds
+        // post-effect and for bundle sources only; file, purge and cache source
+        // admission never accepts it. No value is read, inferred, or modified.
+        let generated_destination_attribute = matches!(
+            phase,
+            AttributePhase::PostEffectDestination | AttributePhase::BundleSource
+        ) && name == b"com.apple.macl";
         if !(source_allowed || generated_destination_attribute) {
             return Err(refused(
                 "unknown or cloud/resource-fork extended attributes",
@@ -2109,6 +2126,18 @@ mod admin_group_admission_tests {
                 admissible_shaped_ancestor(&directory(mode, uid, gid), 501, TargetShape::Bundle)
                     .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn bundle_source_alone_accepts_macl() {
+        assert!(check_attribute_names(b"com.apple.macl\0", AttributePhase::BundleSource).is_ok());
+        assert!(check_attribute_names(b"com.apple.macl\0", AttributePhase::Source).is_err());
+        for name in [
+            &b"com.apple.ResourceFork\0"[..],
+            b"com.apple.fileprovider.fpfs#P\0",
+        ] {
+            assert!(check_attribute_names(name, AttributePhase::BundleSource).is_err());
         }
     }
 
