@@ -15,6 +15,7 @@ pub mod app_orphans;
 pub mod app_related;
 pub mod app_uninstall;
 pub mod clean_policy;
+pub mod devtools;
 pub mod execute;
 pub mod history;
 pub mod installation;

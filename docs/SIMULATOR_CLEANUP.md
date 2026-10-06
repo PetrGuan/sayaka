@@ -1,6 +1,12 @@
 # Simulator and runtime cleanup contract (draft for review)
 
-Status: **contract approved for slice 1a — not implemented.** This is the implementation contract
+Status: **contract approved for slice 1a — partially implemented, not exposed.**
+The policy (`sayaka-engine::devtools`: parsing, candidates, refusals, request
+validation, plan digest, revalidation, outcome classification) and the launch
+boundary (`sayaka-platform-macos::devtools`: signed `xcrun`, environment
+allow-list, process group, caps, timeouts, tool evidence, developer-activity
+probe) exist. No session, journal record, binding or CLI command calls them
+yet, so nothing can delete or erase a simulator. This is the implementation contract
 required before write code for the first developer-tool slice. Nothing described
 here is exported, callable or shipped until an implementation lands with its own
 review and evidence.
@@ -93,11 +99,16 @@ previewed:
   (`xcode-select`'s link).
 - Tool evidence, captured with that same environment at preview and again
   before every execution call: `xcrun --find simctl` result, its real path,
-  device/inode, size, modification time and `simctl` version. Any difference
-  refuses the call (this also catches a same-path Xcode update).
+  device/inode, size and modification time. Any difference refuses the call;
+  these identify the binary, so a same-path Xcode update is also caught and no
+  separate version string is needed.
 - Spawn without a shell (`std::process::Command`, no `sh -c`), stdin
-  `/dev/null`, no inherited descriptors beyond stdout/stderr pipes, in its own
-  process group so the whole group can be terminated.
+  `/dev/null`, stdout/stderr pipes, in its own process group so the whole group
+  can be terminated. Other host descriptors must be close-on-exec (true for all
+  descriptors opened through Rust's standard library, including the journal
+  lock); hosts must not pass inheritable descriptors. The `xcrun` signature is
+  re-checked before every launch. Leader exit is detected without reaping, so
+  the group id cannot be reused before the remaining group is terminated.
 - Output caps are enforced while reading: 8 MiB stdout, 64 KiB stderr. On cap
   exceedance or timeout the process group is terminated. (Measured sizes on the
   59-device host: `list devices -j` 33 KB, `runtime list -j` 6.5 KB.)
@@ -164,10 +175,15 @@ approval token. Nothing is pre-selected.
 
 Whole request:
 
-- `developer_activity`: any process in the process table whose executable or
-  bundle identifier is Xcode (`com.apple.dt.Xcode`), Simulator
-  (`com.apple.iphonesimulator`), `xcodebuild`, `xctest`, `simctl`, or
-  `xcrun` with a `simctl` child. Command-line test runs are detected through
+- `developer_activity`: any of this user's processes whose executable is the
+  Xcode or Simulator bundle executable (`…/Contents/MacOS/Xcode`,
+  `…/Contents/MacOS/Simulator`, wherever the app bundle lives or however it is
+  named), or is named `xcodebuild`, `xctest` or `simctl` (an `xcrun` call
+  always runs `simctl` as its child). Executable paths are used rather than
+  bundle identifiers because they are available from the process table
+  without reading each bundle. Processes whose path cannot be read (other
+  users' or protected processes) are skipped; they cannot be this user's
+  Xcode or simulators. Command-line test runs are detected through
   `xcodebuild`/`xctest`, not only GUI apps. Sayaka's own `xcrun`/`simctl`
   children (identified by their process group) are excluded. If the process
   table cannot be read, the request fails closed.
@@ -212,7 +228,7 @@ no approval boolean without the token, and no imported JSON approval.
    runs.
 2. Before each call (each batch of up to 8), re-run the refusal checks and the
    read-only lists: same `udid`, `name`, `runtimeIdentifier`, `dataPath`,
-   state `Shutdown`, same pair membership, same tool evidence. A mismatch refuses
+   `isAvailable`, state `Shutdown`, same pair membership, same tool evidence. A mismatch refuses
    that batch; earlier completed batches are not undone. The window between this
    check and the call is per batch and is part of the disclosed race.
 3. Run the vector; record exit status and capped stderr. A batch exit status does
@@ -225,7 +241,8 @@ no approval boolean without the token, and no imported JSON approval.
      exit 0 without an observable change → `unknown` (expected for a device that
      was already empty; hosts explain this rather than reporting a failure);
      non-zero exit → `failed`;
-   - timeout, interruption or cap exceedance → `unknown`.
+   - timeout, interruption, cap exceedance, or any other tool or I/O error
+     during the call → `unknown`.
 5. Write the journal outcome. Outcomes: `succeeded`, `refused`, `failed`,
    `unknown`. `unknown` is reconciled by a later re-list, never by retry.
 
