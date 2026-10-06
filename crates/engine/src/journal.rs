@@ -39,6 +39,16 @@ pub const TOOL_PLAN_SCHEMA_VERSION: u32 = 6;
 pub const TOOL_ENGINE_VERSION: u32 = 2;
 pub const TOOL_RULES_VERSION: u32 = 1;
 pub const TOOL_CONTRACT: &str = "permanent_tool_operation_v1";
+/// One root-owned app bundle that Finder moves to the Trash after
+/// administrator approval, under contract `system_delegated_trash_v1`.
+/// The core records intent and verifies the outcome; it never performs the
+/// move. See docs/UNINSTALL_EXECUTION.md.
+pub const DELEGATED_SCHEMA_VERSION: u32 = 7;
+pub const DELEGATED_PLAN_SCHEMA_VERSION: u32 = 7;
+pub const DELEGATED_ENGINE_VERSION: u32 = 2;
+pub const DELEGATED_RULES_VERSION: u32 = 1;
+pub const DELEGATED_CONTRACT: &str = "system_delegated_trash_v1";
+pub const DELEGATED_PERFORMER: &str = "finder_after_administrator_approval";
 const SF_DATALESS: u32 = 0x40000000;
 const SF_RESTRICTED: u32 = 0x00080000;
 const SF_NOUNLINK: u32 = 0x00100000;
@@ -301,6 +311,18 @@ pub struct ToolDeviceRecord {
     pub paired_with: Option<String>,
 }
 
+/// Durable intent of one delegated bundle move: who performs it, the plan
+/// digest and the captured Info.plist identity used to verify the result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationRecord {
+    pub schema_version: u32,
+    pub performer: String,
+    pub plan_digest: String,
+    pub manifest_device: u64,
+    pub manifest_inode: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
@@ -315,6 +337,8 @@ pub struct Record {
     pub clean_policy: Option<CleanPolicyContextRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_operation: Option<ToolOperationRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<DelegationRecord>,
     pub created_unix_ms: u64,
     pub items: Vec<ItemRecord>,
 }
@@ -351,7 +375,12 @@ impl Record {
             && self.engine_version == TOOL_ENGINE_VERSION
             && self.rules_version == TOOL_RULES_VERSION
             && self.contract == TOOL_CONTRACT;
-        if !(legacy || rule_bound || clean || bundle || purge || tool)
+        let delegated = self.schema_version == DELEGATED_SCHEMA_VERSION
+            && self.plan_schema_version == DELEGATED_PLAN_SCHEMA_VERSION
+            && self.engine_version == DELEGATED_ENGINE_VERSION
+            && self.rules_version == DELEGATED_RULES_VERSION
+            && self.contract == DELEGATED_CONTRACT;
+        if !(legacy || rule_bound || clean || bundle || purge || tool || delegated)
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
             || self.items.len() > MAX_ITEMS
@@ -468,6 +497,26 @@ impl Record {
             (None, true) => return Err(invalid("missing tool operation intent")),
             (Some(_), false) => {
                 return Err(invalid("trash record must not contain a tool operation"));
+            }
+            (None, false) => {}
+        }
+        match (&self.delegation, delegated) {
+            (Some(delegation), true) => {
+                if delegation.schema_version != 1
+                    || delegation.performer != DELEGATED_PERFORMER
+                    || delegation.plan_digest.len() != 64
+                    || !delegation
+                        .plan_digest
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit())
+                    || self.items.len() != 1
+                {
+                    return Err(invalid("invalid delegated move intent"));
+                }
+            }
+            (None, true) => return Err(invalid("missing delegated move intent")),
+            (Some(_), false) => {
+                return Err(invalid("record must not contain a delegated move intent"));
             }
             (None, false) => {}
         }
@@ -860,6 +909,7 @@ mod tests {
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
             tool_operation: None,
+            delegation: None,
             created_unix_ms: 1,
             items: vec![ItemRecord {
                 path: NativePath::unix_fixture("/fixture/file"),

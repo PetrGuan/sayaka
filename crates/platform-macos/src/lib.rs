@@ -17,10 +17,10 @@ pub use volume::{VolumeDiagnostics, is_package, volume_info, volume_info_with_di
 
 mod trash;
 pub use trash::{
-    BundleTrashCandidate, CacheTrashCandidate, NativeAdmissionWitness, NativeCaptureFailure,
-    NativeFileInfo, NativeLastGuard, NativeRecoveryEvidence, NativeRuleBindingWitness,
-    NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo, PurgeTrashCandidate, TrashCandidate,
-    full_sync,
+    AdminBundleEvidence, BundleTrashCandidate, CacheTrashCandidate, NativeAdmissionWitness,
+    NativeCaptureFailure, NativeFileInfo, NativeLastGuard, NativeRecoveryEvidence,
+    NativeRuleBindingWitness, NativeTargetMarker, NativeTrashOutcome, NativeWitnessInfo,
+    PurgeTrashCandidate, TrashCandidate, full_sync,
 };
 
 mod acl;

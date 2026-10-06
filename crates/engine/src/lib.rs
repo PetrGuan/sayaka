@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod admin_uninstall;
 pub mod ai_footprint;
 pub mod app_inventory;
 pub mod app_orphans;

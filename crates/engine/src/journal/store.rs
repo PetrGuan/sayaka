@@ -374,6 +374,7 @@ mod tests {
             scope: NativePath::from_path(Path::new("/fixture")),
             clean_policy: None,
             tool_operation: None,
+            delegation: None,
             created_unix_ms: 1,
             items: vec![ItemRecord {
                 path: NativePath::from_path(Path::new("/fixture/file")),

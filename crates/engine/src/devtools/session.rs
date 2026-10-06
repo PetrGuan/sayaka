@@ -483,6 +483,7 @@ impl<H: Host> SimulatorSession<H> {
                         })
                         .collect(),
                 }),
+                delegation: None,
                 created_unix_ms: now,
                 items,
             },

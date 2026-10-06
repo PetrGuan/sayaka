@@ -48,6 +48,18 @@ pub(super) struct UninstallJob {
     preview_bytes: Vec<u8>,
     result_bytes: Option<Vec<u8>>,
     closed: bool,
+    #[cfg(target_os = "macos")]
+    admin: AdminState,
+}
+
+/// Administrator path (SayakaCleaner#323): Finder performs the move after the
+/// system administrator prompt; the core admits, journals and verifies.
+#[cfg(target_os = "macos")]
+enum AdminState {
+    Unavailable,
+    Eligible(sayaka_engine::admin_uninstall::AdminBundleEvidence),
+    AwaitingDelegate(Box<sayaka_engine::admin_uninstall::DelegatedMove>),
+    Consumed,
 }
 
 fn display(path: &std::path::Path) -> String {
@@ -60,7 +72,12 @@ fn normal_absolute(path: &std::path::Path) -> bool {
         && parts.all(|part| matches!(part, std::path::Component::Normal(_)))
 }
 
-fn preview_bytes(preview: &UninstallPreview, eligible: bool) -> Result<Vec<u8>, i32> {
+fn preview_bytes(
+    preview: &UninstallPreview,
+    eligible: bool,
+    admin_required: bool,
+    admin_eligible: bool,
+) -> Result<Vec<u8>, i32> {
     let value = json!({
         "schema_version": 1,
         "kind": "sayaka.app_uninstall_preview",
@@ -68,6 +85,8 @@ fn preview_bytes(preview: &UninstallPreview, eligible: bool) -> Result<Vec<u8>, 
         "display_name": preview.display_name,
         "effects_performed": false,
         "execution_eligible": eligible,
+        "admin_required": admin_required,
+        "admin_eligible": admin_eligible,
         "identity": preview.identity.as_ref().map(|id| json!({"device": id.device, "inode": id.inode})),
         "running": preview.running.as_str(),
         "copies": {
@@ -301,46 +320,67 @@ pub unsafe extern "C" fn sayaka_uninstall_preview_start_v1(
             &Cancellation::default(),
             Duration::from_secs(60),
         );
+        let mut unavailable = None;
         let session = if preview.refusals.is_empty() {
             let parent = bundle.parent().ok_or(INVALID_ARGUMENT)?;
             let scope = Scope::new(parent.to_path_buf(), vec![]).map_err(|_| INVALID_ARGUMENT)?;
             match BundleUninstallSession::prepare(scope, &bundle, &Cancellation::default()) {
                 Ok(session) if !session.preview().items().is_empty() => Some(session),
-                // Report why instead of a silently ineligible preview.
                 Ok(session) => {
-                    let (message, os_code) = session
-                        .issues()
-                        .first()
-                        .map(|issue| (issue.message.clone(), issue.os_code))
-                        .or_else(|| {
-                            session
-                                .refusals()
-                                .first()
-                                .map(|item| (item.reason.clone(), None))
-                        })
-                        .unwrap_or_else(|| ("the Trash plan has no item".to_owned(), None));
-                    preview
-                        .refusals
-                        .push(app_uninstall::UninstallRefusal::trash_plan_unavailable(
-                            format!("a safe Trash move could not be prepared: {message}"),
-                            os_code,
-                        ));
+                    unavailable = Some(
+                        session
+                            .issues()
+                            .first()
+                            .map(|issue| (issue.message.clone(), issue.os_code))
+                            .or_else(|| {
+                                session
+                                    .refusals()
+                                    .first()
+                                    .map(|item| (item.reason.clone(), None))
+                            })
+                            .unwrap_or_else(|| ("the Trash plan has no item".to_owned(), None)),
+                    );
                     None
                 }
                 Err(error) => {
-                    preview
-                        .refusals
-                        .push(app_uninstall::UninstallRefusal::trash_plan_unavailable(
-                            format!("a safe Trash move could not be prepared: {error}"),
-                            error.raw_os_error(),
-                        ));
+                    unavailable = Some((error.to_string(), error.raw_os_error()));
                     None
                 }
             }
         } else {
             None
         };
-        let bytes = preview_bytes(&preview, session.is_some())?;
+        // A root-owned bundle the ordinary path cannot move may still be
+        // eligible for the administrator path instead of a refusal.
+        #[cfg(target_os = "macos")]
+        let admin = match unavailable {
+            Some(_) => sayaka_engine::admin_uninstall::admin_evidence(&preview)
+                .map_or(AdminState::Unavailable, AdminState::Eligible),
+            None => AdminState::Unavailable,
+        };
+        #[cfg(target_os = "macos")]
+        let admin_eligible = matches!(admin, AdminState::Eligible(_));
+        #[cfg(not(target_os = "macos"))]
+        let admin_eligible = false;
+        if let Some((message, os_code)) = unavailable.filter(|_| !admin_eligible) {
+            // Report why instead of a silently ineligible preview.
+            preview
+                .refusals
+                .push(app_uninstall::UninstallRefusal::trash_plan_unavailable(
+                    format!("a safe Trash move could not be prepared: {message}"),
+                    os_code,
+                ));
+        }
+        #[cfg(unix)]
+        let root_owned = std::fs::symlink_metadata(&bundle).is_ok_and(|meta| meta.uid() == 0);
+        #[cfg(not(unix))]
+        let root_owned = false;
+        let bytes = preview_bytes(
+            &preview,
+            session.is_some(),
+            admin_eligible || (session.is_none() && root_owned),
+            admin_eligible,
+        )?;
         let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
         let handle = registry.allocate_handle()?;
         registry.uninstalls.insert(
@@ -351,6 +391,8 @@ pub unsafe extern "C" fn sayaka_uninstall_preview_start_v1(
                 preview_bytes: bytes,
                 result_bytes: None,
                 closed: false,
+                #[cfg(target_os = "macos")]
+                admin,
             })),
         );
         unsafe { out_handle.write(handle) };
@@ -474,6 +516,161 @@ pub unsafe extern "C" fn sayaka_uninstall_execute_v1(
             br#"{"schema_version":1,"kind":"sayaka.app_uninstall_execution","state":"unknown","error":"native execution result exceeded the output budget; inspect the operation journal and Trash"}"#.to_vec()
         }));
         Ok(())
+    })
+}
+
+/// Starts the administrator path for an `admin_eligible` preview: re-observes
+/// the bundle and writes the durable journal intent. On success the caller
+/// asks Finder to move exactly this bundle to the Trash (Finder shows the
+/// administrator prompt), then calls `sayaka_uninstall_admin_finish_v1`. The
+/// core never performs this move. A refusal leaves a terminal `refused`
+/// result and returns INVALID_CANDIDATE; nothing was handed to Finder.
+///
+/// # Safety
+/// Token/state_dir refer to valid readable storage for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_uninstall_admin_begin_v1(
+    handle: u64,
+    approval_token: *const u8,
+    approval_token_length: usize,
+    state_dir: SayakaPathV1,
+) -> i32 {
+    boundary(|| {
+        if approval_token_length == 0 || approval_token_length > 256 {
+            return Err(INVALID_ARGUMENT);
+        }
+        pointer(approval_token)?;
+        let token = unsafe { std::slice::from_raw_parts(approval_token, approval_token_length) };
+        let token = std::str::from_utf8(token).map_err(|_| INVALID_ARGUMENT)?;
+        let state_dir = unsafe { decode_path(state_dir)? };
+        if !state_dir.is_absolute() {
+            return Err(INVALID_ARGUMENT);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (handle, token);
+            Err(UNSUPPORTED_PLATFORM)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let slot = get_job(handle)?;
+            let mut job = lock_job(&slot)?;
+            if job.closed || job.result_bytes.is_some() {
+                return Err(INVALID_HANDLE);
+            }
+            let name = job
+                .preview
+                .bundle_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or(INVALID_ARGUMENT)?;
+            if token != format!("uninstall {name}") {
+                return Err(INVALID_ARGUMENT);
+            }
+            let captured = match &job.admin {
+                AdminState::Eligible(evidence) => *evidence,
+                AdminState::Unavailable => return Err(INVALID_CANDIDATE),
+                AdminState::AwaitingDelegate(_) | AdminState::Consumed => {
+                    return Err(INVALID_HANDLE);
+                }
+            };
+            let store = Store::open(&state_dir, true).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    BUSY
+                } else {
+                    INTERNAL_ERROR
+                }
+            })?;
+            let bundle = job.preview.bundle_path.clone();
+            match sayaka_engine::admin_uninstall::begin(&bundle, &captured, store) {
+                Ok(delegated) => {
+                    job.admin = AdminState::AwaitingDelegate(Box::new(delegated));
+                    Ok(())
+                }
+                Err(message) => {
+                    job.admin = AdminState::Consumed;
+                    job.result_bytes = Some(bounded_json(
+                        &json!({
+                            "schema_version": 1, "kind": "sayaka.app_uninstall_execution",
+                            "state": "refused", "effects_performed": false,
+                            "delegated_to": "finder",
+                            "error": message,
+                            "recovery": "Nothing was handed to Finder. Preview the app again before retrying.",
+                        }),
+                        MAX_RESULT_BYTES,
+                    )?);
+                    Err(INVALID_CANDIDATE)
+                }
+            }
+        }
+    })
+}
+
+/// Records the outcome of the Finder move started by
+/// `sayaka_uninstall_admin_begin_v1`. `delegate_status` is what Finder
+/// reported (0 success, 1 cancelled or authorization denied, 2 other error)
+/// and is advisory only: the core decides by observing the original path and
+/// the user's Trash, journals the outcome and leaves a terminal result.
+#[unsafe(no_mangle)]
+pub extern "C" fn sayaka_uninstall_admin_finish_v1(handle: u64, delegate_status: i32) -> i32 {
+    boundary(|| {
+        let status = sayaka_engine::admin_uninstall::DelegateStatus::from_code(delegate_status)
+            .ok_or(INVALID_ARGUMENT)?;
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (handle, status);
+            Err(UNSUPPORTED_PLATFORM)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let slot = get_job(handle)?;
+            let mut job = lock_job(&slot)?;
+            if job.closed || job.result_bytes.is_some() {
+                return Err(INVALID_HANDLE);
+            }
+            let AdminState::AwaitingDelegate(delegated) =
+                std::mem::replace(&mut job.admin, AdminState::Consumed)
+            else {
+                return Err(INVALID_HANDLE);
+            };
+            let report = delegated.finish(status);
+            let state = if report.journal_error.is_some() {
+                "unknown"
+            } else {
+                match report.record.items.as_slice() {
+                    [item] => match (&item.state, item.reason.as_deref()) {
+                        (ItemState::Succeeded, _) => "completed",
+                        (ItemState::Failed, Some("cancelled_by_user")) => "cancelled",
+                        (ItemState::Failed, _) => "failed",
+                        _ => "unknown",
+                    },
+                    _ => "unknown",
+                }
+            };
+            let recovery = match state {
+                "completed" => {
+                    "Finder moved the app to your Trash; use Finder Put Back to restore it. Related data and other copies were untouched."
+                }
+                "cancelled" | "failed" => "The app is still in place; nothing was moved.",
+                _ => "Inspect /Applications, the Trash and the operation journal before retrying.",
+            };
+            job.result_bytes = Some(
+                bounded_json(
+                    &json!({
+                        "schema_version": 1, "kind": "sayaka.app_uninstall_execution",
+                        "state": state,
+                        "delegated_to": "finder",
+                        "report": report,
+                        "recovery": recovery,
+                    }),
+                    MAX_RESULT_BYTES,
+                )
+                .unwrap_or_else(|_| {
+                    br#"{"schema_version":1,"kind":"sayaka.app_uninstall_execution","state":"unknown","delegated_to":"finder","error":"native execution result exceeded the output budget; inspect the operation journal and Trash"}"#.to_vec()
+                }),
+            );
+            Ok(())
+        }
     })
 }
 
