@@ -474,8 +474,10 @@ pub fn classify(
                 || data_before.modified_unix_ns.is_some())
                 && data_before != data_after;
             if !success {
-                // A failing batch may have wiped some devices before one failed.
-                return if observable_change {
+                // A failing batch may have wiped some devices before one failed;
+                // without a prior observation a wipe cannot be ruled out.
+                let observed = data_before.size.is_some() || data_before.modified_unix_ns.is_some();
+                return if observable_change || !observed {
                     Outcome::Unknown
                 } else {
                     Outcome::Failed
@@ -773,6 +775,17 @@ mod tests {
         assert_eq!(
             classify(Operation::Erase, failed, Some(phone), before, before),
             Outcome::Failed
+        );
+        let unobserved = DataObservation::default();
+        assert_eq!(
+            classify(
+                Operation::Erase,
+                failed,
+                Some(phone),
+                unobserved,
+                unobserved
+            ),
+            Outcome::Unknown
         );
         assert_eq!(
             classify(Operation::Erase, ok, None, before, after),

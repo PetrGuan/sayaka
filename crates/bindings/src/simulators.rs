@@ -4,9 +4,7 @@
 //! retains the sealed preview until a single execution or release.
 use super::*;
 #[cfg(target_os = "macos")]
-use sayaka_engine::devtools::session::{
-    ExecuteRequest, MacHost, SessionError, SimulatorSession, open_journal,
-};
+use sayaka_engine::devtools::session::{ExecuteRequest, MacHost, SessionError, SimulatorSession};
 use sayaka_engine::devtools::{EFFECT_CLASS, MAX_REQUEST_DEVICES, Operation, PREVIEW_TTL};
 use sayaka_engine::journal::{self, ItemState, NativePath};
 use sayaka_engine::model::Cancellation;
@@ -225,11 +223,7 @@ fn execute(
     cancel: Cancellation,
 ) -> Result<Outcome, i32> {
     const KIND: &str = "sayaka.simulator_execution";
-    let store = match open_journal(&state_dir) {
-        Ok(store) => store,
-        Err(error) => return session_refused(KIND, handle, error),
-    };
-    match preview.session.execute(&request, &cancel, &store) {
+    match preview.session.execute(&request, &cancel, &state_dir) {
         Ok(report) => {
             let unknown = report.journal_error.is_some()
                 || report

@@ -373,13 +373,18 @@ impl<H: Host> SimulatorSession<H> {
     /// Executes the approved selection exactly once. Whole-request refusals
     /// return an error before any journal write or tool call; afterwards
     /// every outcome is in the returned record.
+    /// Refuses a journal directory inside any previewed device, then opens
+    /// the journal under its exclusive lock (`busy` when held) and executes.
     pub fn execute(
         &mut self,
         request: &ExecuteRequest,
         cancellation: &Cancellation,
-        journal: &Store,
+        state_dir: &Path,
     ) -> Result<ExecutionReport, SessionError> {
-        self.execute_with(request, cancellation, journal)
+        self.check_approval(request)?;
+        self.check_state_dir(state_dir)?;
+        let journal = open_journal(state_dir)?;
+        self.execute_with(request, cancellation, &journal)
     }
 
     pub(crate) fn execute_with(
@@ -597,7 +602,17 @@ impl<H: Host> SimulatorSession<H> {
                             }
                             (Outcome::Unknown, _, CallEnd::Exited { success: false }) => {
                                 ambiguous = true;
-                                Some(format!("failed_after_data_changed: {}", failure()))
+                                let observed =
+                                    before[index - range.start] != DataObservation::default();
+                                Some(format!(
+                                    "{}: {}",
+                                    if observed {
+                                        "failed_after_data_changed"
+                                    } else {
+                                        "failed_without_pre_observation"
+                                    },
+                                    failure()
+                                ))
                             }
                             _ => Some(failure()),
                         };
@@ -686,7 +701,7 @@ fn set_range(record: &mut Record, range: std::ops::Range<usize>, state: ItemStat
     let now = journal::now_ms().ok();
     for row in &mut record.items[range] {
         row.state = state.clone();
-        row.reason = (!reason.is_empty()).then(|| reason.to_owned());
+        row.reason = (!reason.is_empty()).then(|| bounded_reason(reason));
         if let Some(now) = now {
             row.updated_unix_ms = now;
         }
@@ -726,7 +741,7 @@ impl ToolJournal for Store {
 
 /// Opens the journal under its exclusive lock; a held lock means another
 /// execution is running and is reported as `busy`.
-pub fn open_journal(state_dir: &Path) -> Result<Store, SessionError> {
+fn open_journal(state_dir: &Path) -> Result<Store, SessionError> {
     journal::validate_state_directory_path(state_dir).map_err(|error| {
         SessionError::JournalUnavailable {
             message: error.to_string(),
@@ -738,6 +753,12 @@ pub fn open_journal(state_dir: &Path) -> Result<Store, SessionError> {
             message: error.to_string(),
         },
     })
+}
+
+fn identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.dev(), metadata.ino()))
 }
 
 /// Resolves links where the path (or its parent) exists, so a state
@@ -759,15 +780,33 @@ impl<H: Host> SimulatorSession<H> {
     /// delete would otherwise remove the journal after its intent.
     pub fn check_state_dir(&self, state_dir: &Path) -> Result<(), SessionError> {
         let real = resolved(state_dir);
+        // Identities of every existing ancestor, so aliases such as APFS
+        // firmlinks (`/System/Volumes/Data/Users/…`) are matched too.
+        let ancestors: BTreeSet<(u64, u64)> = state_dir.ancestors().filter_map(identity).collect();
+        let home = std::env::home_dir();
         for candidate in &self.preview.candidates {
-            let Some(device_dir) = Path::new(&candidate.device.data_path).parent() else {
-                continue;
-            };
-            if state_dir.starts_with(device_dir) || real.starts_with(resolved(device_dir)) {
-                return Err(SessionError::InvalidRequest {
-                    message: "the journal directory lies inside a simulator device".into(),
-                    refusal: None,
-                });
+            let mut owned: Vec<PathBuf> = Path::new(&candidate.device.data_path)
+                .parent()
+                .map(Path::to_path_buf)
+                .into_iter()
+                .collect();
+            // `simctl delete` also removes the device's log directory.
+            if let Some(home) = &home {
+                owned.push(
+                    home.join("Library/Logs/CoreSimulator")
+                        .join(&candidate.device.udid),
+                );
+            }
+            for directory in owned {
+                if state_dir.starts_with(&directory)
+                    || real.starts_with(resolved(&directory))
+                    || identity(&directory).is_some_and(|id| ancestors.contains(&id))
+                {
+                    return Err(SessionError::InvalidRequest {
+                        message: "the journal directory lies inside a simulator device".into(),
+                        refusal: None,
+                    });
+                }
             }
         }
         Ok(())

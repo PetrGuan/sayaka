@@ -92,7 +92,7 @@ mod imp {
 mod imp {
     use super::*;
     use sayaka_engine::devtools::session::{
-        ExecuteRequest, MacHost, SessionError, SimulatorSession, open_journal,
+        ExecuteRequest, MacHost, SessionError, SimulatorSession,
     };
     use sayaka_engine::devtools::{Candidate, Operation};
     use sayaka_engine::model::Cancellation;
@@ -271,10 +271,8 @@ mod imp {
             return Ok(130);
         }
         let state_dir = crate::trash::state_directory(args)?;
-        session.check_state_dir(&state_dir).map_err(session_error)?;
-        let store = open_journal(&state_dir).map_err(session_error)?;
         let report = session
-            .execute(&request, &cancellation, &store)
+            .execute(&request, &cancellation, &state_dir)
             .map_err(session_error)?;
         let mut out = io::stdout().lock();
         writeln!(out, "\nOperation {}", report.record.operation_id)?;

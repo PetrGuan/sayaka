@@ -189,7 +189,7 @@ Whole request:
   not spend the engine session: after the tools quit, the same unexpired
   preview can execute (the C bindings still end the handle; see BINDINGS.md).
 - `tool_changed`, `tool_unavailable`, `unsupported_tool_version`.
-- `busy` (another devtools execution), `expired` (preview older than 120 s on
+- `busy` (another devtools execution), `expired` (preview 120 s or older on
   the monotonic clock, matching picked-file sessions), `invalid_request`
   (duplicate, unknown or non-previewed identities; more than 32 devices).
 
@@ -265,9 +265,12 @@ as `unknown`. If publishing `started` fails, no call is made and the report
 marks the batch `skipped`; a partially durable `started` still reads back as
 `unknown`, which is the conservative interpretation.
 
-The journal directory must not lie inside any previewed device, compared by
-real path after resolving links; such a request is refused before the journal
-opens. Journal items record the device's data
+The journal directory must not lie inside any previewed device's directory or
+its `~/Library/Logs/CoreSimulator/<UDID>` log directory, compared by path, by
+real path after resolving links, and by file identity of every existing
+ancestor (so firmlink aliases match); the session refuses such a request before
+the journal opens. A failing erase without a prior data observation is
+`unknown` (`failed_without_pre_observation`), not `failed`. Journal items record the device's data
 directory as the path (identity is the UDID in `tool_operation`); a refused
 batch is recorded as `skipped` with its reason.
 
