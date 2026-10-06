@@ -137,7 +137,7 @@ asks Finder to perform the move. The core never performs it.
   a `.app` directly inside `/Applications` that is a root-owned directory with
   no other-write, setuid, setgid or sticky bits (group write only for
   `admin`), ordinary flags only (restricted system copies such as Safari's
-  stay refused), allowed attributes (as for bundle sources), the same device
+  stay refused), allowed attributes (as for bundle sources, plus the App Store's own `com.apple.appstore.*` metadata on this path only), the same device
   as `/Applications`, a physical path directly inside `/Applications` and a
   regular `Contents/Info.plist`. Links are not followed. The preview reports
   `admin_eligible: true` instead of a `trash_plan_unavailable` refusal, and
@@ -154,9 +154,19 @@ asks Finder to perform the move. The core never performs it.
   advisory. The core observes the original path and the top level of the
   user's `~/.Trash` (bounded, links not followed): original gone and the same
   directory and Info.plist identity found in the Trash is `succeeded` with that
-  destination; original still present is `failed` (`cancelled_by_user`,
-  `delegate_error` or `not_moved_despite_reported_success`); anything else is
-  `unknown`. The outcome is journaled.
+  destination. Original still present is `failed` (`cancelled_by_user` or
+  `delegate_error`), except when Finder reported success: the core re-observes
+  for up to about 3 seconds and then records `unknown`
+  (`not_moved_despite_reported_success`) rather than claim nothing moved.
+  Anything else is `unknown`. The outcome is journaled.
+- Only `~/.Trash` is searched. If the home folder is on a different volume
+  from `/Applications`, Finder uses that volume's `.Trashes`, and the result
+  is `unknown`, never a false `succeeded`. Unrelated Trash entries that vanish
+  or can't be read during the scan are skipped.
+- The journal's exclusive lock is held from begin until finish or release,
+  including while the administrator prompt is open, so other journal users
+  see `BUSY` meanwhile. This keeps a `started` item from being read as
+  interrupted mid-flight.
 - **Residual races, disclosed:** another process can change the bundle between
   begin and Finder's move, and Finder resolves the path itself. Verification
   afterwards detects a moved replacement as `unknown` rather than success.

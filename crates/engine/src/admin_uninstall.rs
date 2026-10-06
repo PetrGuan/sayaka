@@ -46,6 +46,11 @@ pub fn classify(
     status: DelegateStatus,
 ) -> (ItemState, &'static str) {
     match (original_present, in_trash) {
+        // Finder said it moved the app, yet it is still there after the
+        // settle time: don't claim "nothing moved" against Finder's report.
+        (Some(true), false) if status == DelegateStatus::Reported => {
+            (ItemState::Unknown, "not_moved_despite_reported_success")
+        }
         (Some(true), false) => (
             ItemState::Failed,
             match status {
@@ -196,10 +201,22 @@ mod native {
         })
     }
 
+    const SETTLE_ATTEMPTS: u32 = 10;
+    const SETTLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(300);
+
     impl DelegatedMove {
         /// Verifies the outcome by observation and records it.
         pub fn finish(mut self, status: DelegateStatus) -> ExecutionReport {
-            let present = self.evidence.is_present_at(&self.bundle).ok();
+            let mut present = self.evidence.is_present_at(&self.bundle).ok();
+            // Finder reported success but the app is still there: allow a
+            // short, bounded settle time before concluding nothing moved.
+            for _ in 0..SETTLE_ATTEMPTS {
+                if !(present == Some(true) && status == DelegateStatus::Reported) {
+                    break;
+                }
+                std::thread::sleep(SETTLE_INTERVAL);
+                present = self.evidence.is_present_at(&self.bundle).ok();
+            }
             let destination = if present == Some(false) {
                 self.evidence.find_in_user_trash().ok().flatten()
             } else {
@@ -237,7 +254,12 @@ mod tests {
             DelegateStatus::Error,
         ] {
             assert_eq!(classify(Some(false), true, status).0, ItemState::Succeeded);
-            assert_eq!(classify(Some(true), false, status).0, ItemState::Failed);
+            let still_there = if status == DelegateStatus::Reported {
+                ItemState::Unknown
+            } else {
+                ItemState::Failed
+            };
+            assert_eq!(classify(Some(true), false, status).0, still_there);
             assert_eq!(classify(Some(false), false, status).0, ItemState::Unknown);
             assert_eq!(classify(None, false, status).0, ItemState::Unknown);
             assert_eq!(classify(Some(true), true, status).0, ItemState::Unknown);

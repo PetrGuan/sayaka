@@ -2106,8 +2106,13 @@ pub(super) fn find_admin_bundle_in_trash(
         ));
     }
     for entry in fs::read_dir(&trash)?.take(MAX_TRASH_ENTRIES) {
-        let path = entry?.path();
-        let metadata = fs::symlink_metadata(&path)?;
+        // An unrelated entry that vanished or can't be read is skipped; only
+        // the identity match below can report the bundle as found.
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
         if metadata.is_dir()
             && metadata.dev() == captured.device
             && metadata.ino() == captured.inode
