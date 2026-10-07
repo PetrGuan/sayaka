@@ -11,9 +11,7 @@ use crate::model::*;
 use crate::{Clock, IdSource, Planner, SequentialIds, SystemClock};
 use serde::Serialize;
 use std::io;
-#[cfg(any(target_os = "macos", test))]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SelectionIssue {

@@ -26,6 +26,9 @@ pub use trash::{
 mod acl;
 pub use acl::has_extended_acl;
 
+mod running;
+pub use running::{running_pids_with_bundle_identifier, saved_state_location};
+
 pub mod status;
 
 #[cfg(target_os = "macos")]

@@ -156,3 +156,25 @@ timings. Sayaka's per-item selection and Trash-not-delete are deliberate
 extra work over Mole's find-and-remove; that cost is reported, not skipped.
 The slice is not full Class B coverage: the remaining Class B operations
 each need their own contract.
+
+## Implemented slices
+
+**Read-only preview (this slice).** `sayaka saved-states [--older-than-days
+DAYS] [--json]` enumerates the fixed location with the per-item states
+above, the published effective cutoff (days and computed moment), known /
+unknown / partial sizes, the honest `unnecessary` state when the
+location is absent, holds no candidates, or nothing is currently eligible
+(the counts show which), and `unsupported_platform` off macOS. Running ownership uses the
+official `NSRunningApplication` bundle-identifier query; the location is
+resolved from the native account record, never `$HOME` text. It performs
+no effects and offers no selection.
+
+Real-host staging on the owner's macOS 27.0 arm64 machine (the location
+did not exist there, which also recorded the honest `unnecessary` path):
+fixture bundles classified correctly (`eligible` at 52 days, `too_recent`,
+`not_attributable` for a malformed name, non-`.savedState` ignored), and a
+fixture app launched via LaunchServices flipped its saved-state entry to
+`running` with the exact PID. All fixtures were removed afterwards and the
+location was left as found (absent).
+
+Selection and execution remain pending under this contract.

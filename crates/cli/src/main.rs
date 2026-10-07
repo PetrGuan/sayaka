@@ -16,6 +16,7 @@ mod menu;
 mod output;
 mod purge;
 mod rules;
+mod saved_state;
 mod status;
 mod terminal;
 mod trash;
@@ -127,6 +128,7 @@ fn command() -> Command {
         .subcommand(installer::command())
         .subcommand(menu::command())
         .subcommand(rules::command())
+        .subcommand(saved_state::command())
         .subcommand(clean::command())
         .subcommand(completions::command())
         .subcommand(devtools::command())
@@ -429,6 +431,7 @@ fn run() -> io::Result<u8> {
         Some(("installer", args)) => installer::run(args),
         Some(("menu", args)) => menu::run(args),
         Some(("rules", args)) => rules::run(args),
+        Some(("saved-states", args)) => saved_state::run(args),
         Some(("clean", args)) => clean::run(args),
         Some(("completions", args)) => completions::run(args),
         Some(("devtools", args)) => devtools::run(args),

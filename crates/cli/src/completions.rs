@@ -69,6 +69,7 @@ mod tests {
                 "completions",
                 "devtools",
                 "diagnose",
+                "saved-states",
                 "launchers",
                 "install",
                 "update",
