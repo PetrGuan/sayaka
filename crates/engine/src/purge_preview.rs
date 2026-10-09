@@ -1254,6 +1254,56 @@ pub fn profile_unsupported_operations(profile: PurgeProfile) -> &'static [Unsupp
     }
 }
 
+/// Relative, rule-owned preview roots. Hosts may scan these independently so
+/// a large/partial cache does not consume another cache's preview budget.
+/// No existence, permission or execution eligibility is inferred here.
+pub fn developer_cache_scan_roots() -> Vec<(&'static str, &'static [&'static str])> {
+    let mut seen = HashSet::new();
+    DEVELOPER_CACHE_RULES
+        .iter()
+        .filter_map(|rule| {
+            let components = if rule.lock_siblings.is_empty() {
+                rule.suffix
+            } else {
+                &rule.suffix[..rule.suffix.len() - 1]
+            };
+            seen.insert(components).then_some((rule.tool, components))
+        })
+        .collect()
+}
+
+/// Scan only rule-declared cache trees and their ancestor/lock evidence.
+/// Missing rule locations are not prefiltered: inaccessible ancestors remain
+/// real scan failures. Original requested roots remain the authority boundary.
+pub fn scan_developer_caches(
+    roots: &[PathBuf],
+    limits: &crate::scan::ScanLimits,
+    cancellation: &crate::model::Cancellation,
+    progress: impl FnMut(&crate::scan::ScanProgress),
+) -> Result<crate::scan::ScanReport, crate::scan::ScanError> {
+    let home = effective_account_home().map_err(|message| {
+        crate::scan::ScanError::new(crate::scan::ScanCode::InvalidRoot, message)
+    })?;
+    let mut scopes = Vec::new();
+    for rule in DEVELOPER_CACHE_RULES {
+        let location = rule
+            .suffix
+            .iter()
+            .fold(home.clone(), |path, component| path.join(component));
+        if let Some(parent) = location.parent() {
+            scopes.extend(rule.lock_siblings.iter().map(|name| parent.join(name)));
+        }
+        scopes.push(location);
+    }
+    crate::scan::scan_with_policy(
+        roots,
+        limits,
+        cancellation,
+        crate::scan::TraversalPolicy::RestrictedTo(scopes.into()),
+        progress,
+    )
+}
+
 fn developer_cache_preview(
     index: &ScanTree,
     options: &PurgeOptions,

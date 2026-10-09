@@ -24,8 +24,11 @@ fn app_candidate_directory(path: &Path) -> bool {
         .is_some_and(|name| name.ends_with(".app"))
 }
 
-fn should_descend_directory(policy: TraversalPolicy, path: &Path) -> bool {
+fn should_descend_directory(policy: &TraversalPolicy, path: &Path) -> bool {
     match policy {
+        TraversalPolicy::RestrictedTo(paths) => paths
+            .iter()
+            .any(|scope| path.starts_with(scope) || scope.starts_with(path)),
         TraversalPolicy::Default => true,
         TraversalPolicy::PruneAppBundles => !app_candidate_directory(path),
         TraversalPolicy::PruneNativePackages => {
@@ -413,6 +416,14 @@ fn worker<B: Backend>(
                 );
                 continue;
             }
+            // Omit unrelated entries before propagating their metadata errors,
+            // consuming entry budgets or following any directory. Ancestors and
+            // exact lock-evidence paths stay in scope.
+            if matches!(&traversal_policy, TraversalPolicy::RestrictedTo(_))
+                && !should_descend_directory(&traversal_policy, &path)
+            {
+                continue;
+            }
             let metadata = match &item.metadata {
                 Ok(metadata) => metadata,
                 Err(error) => {
@@ -478,7 +489,7 @@ fn worker<B: Backend>(
             if metadata.kind != ResourceKind::Directory {
                 continue;
             }
-            if !should_descend_directory(traversal_policy, &path) {
+            if !should_descend_directory(&traversal_policy, &path) {
                 continue;
             }
             if metadata.dataless {
@@ -917,7 +928,7 @@ pub(super) fn run_with_policy<B: Backend>(
             break;
         }
         report.metrics.accepted_roots += 1;
-        if should_descend_directory(traversal_policy, &path) {
+        if should_descend_directory(&traversal_policy, &path) {
             shared
                 .queue
                 .lock()
@@ -953,6 +964,7 @@ pub(super) fn run_with_policy<B: Backend>(
         for index in 0..if should_spawn { limits.workers } else { 0 } {
             let sender = sender.clone();
             let shared = &shared;
+            let traversal_policy = traversal_policy.clone();
             match backend.spawn_worker(threads, index, move || {
                 worker(
                     backend,

@@ -634,6 +634,7 @@ residual pathname/ancestor replacement race described in
 | `sayaka_purge_execute_start_v1(request, out_handle)` | Start revalidated Trash execution for an approved subset |
 | `sayaka_purge_result_v1(handle, buffer, capacity, required)` | Copy terminal preview/execution JSON |
 | `sayaka_purge_unsupported_operations_v1(buffer, capacity, required)` | Copy static unsupported-operation JSON for the developer-cache UI |
+| `sayaka_purge_cache_scan_roots_v1(buffer, capacity, required)` | Copy static relative cache preview roots for independent scans |
 | `sayaka_purge_release_v1(handle)` | Cancel active work, return BUSY until stopped, then invalidate |
 
 `SayakaPurgePreviewRequestV1` contains ABI version 1, exact `struct_size`, one
@@ -752,6 +753,24 @@ specific cache directory. Xcode Archives, CoreSimulator Devices, Homebrew
 Cellar, package-manager configuration and logs, and simulator/app user data are
 non-targets. `sayaka_purge_unsupported_operations_v1` returns the same static
 `unsupported_operations` array without starting a scan.
+
+`sayaka_purge_cache_scan_roots_v1` uses the same output-buffer contract: probe
+with a NULL buffer and zero capacity to obtain `required` and
+`SAYAKA_BUFFER_TOO_SMALL`, then copy into a sufficiently sized buffer for
+`SAYAKA_OK`. JSON is `{ "schema_version": 1, "kind": "cache_scan_roots",
+"roots": [{ "tool": "pip", "components": ["Library", "Caches", "pip"] }] }`.
+The example shows one entry; the function returns all distinct rule-owned roots.
+Components are relative to the effective account's home (passwd home on macOS),
+not the working directory or an arbitrary environment override. Gradle's root
+includes its parent so the lock sibling remains observable. This static metadata
+does not check existence, authorize access or grant cleanup eligibility.
+
+Hosts can preview each location separately to isolate entry/time budgets and
+incomplete observations. Developer-cache previews traverse only documented cache
+trees plus ancestor and lock evidence inside the requested root; unrelated home
+content is excluded. Broad-root previews still share one bounded scan budget.
+Incomplete in-scope scans and no-follow refusals remain incomplete; no execution
+checks are bypassed. Generic disk scans retain their existing traversal behavior.
 
 `SayakaPurgeExecuteRequestV1` requires:
 

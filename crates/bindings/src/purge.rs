@@ -1068,6 +1068,8 @@ fn start_preview(
     let handle = registry.allocate_handle()?;
     let task = if options.profile == PurgeProfile::FinderMetadata {
         ScanTask::start_prune_native_packages(vec![root], ScanLimits::default())
+    } else if options.profile == PurgeProfile::DeveloperCaches {
+        ScanTask::start_developer_caches(vec![root], ScanLimits::default())
     } else {
         ScanTask::start(vec![root], ScanLimits::default())
     }
@@ -1382,6 +1384,32 @@ pub unsafe extern "C" fn sayaka_purge_execute_start_v1(
         // SAFETY: Output remains valid through this call.
         unsafe { out_handle.write(handle) };
         Ok(())
+    })
+}
+
+/// Copies static account-home-relative cache scan roots. This is discovery
+/// metadata only; it grants no access or execution authority.
+///
+/// # Safety
+/// Outputs follow sayaka_scan_result_v1's caller-owned buffer contract and cap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_cache_scan_roots_v1(
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        // SAFETY: Caller supplies valid non-overlapping output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_RESULT_BYTES)? };
+        let value = json!({
+            "schema_version": 1, "kind": "cache_scan_roots",
+            "roots": purge_preview::developer_cache_scan_roots().iter().map(|(tool, components)| {
+                json!({"tool": tool, "components": components})
+            }).collect::<Vec<_>>()
+        });
+        let bytes = bounded_json(&value, MAX_RESULT_BYTES)?;
+        // SAFETY: Output storage was validated above.
+        unsafe { copy_output(&bytes, buffer, capacity, required) }
     })
 }
 

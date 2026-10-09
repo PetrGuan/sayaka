@@ -44,6 +44,16 @@ impl ScanTask {
         })
     }
 
+    pub fn start_developer_caches(
+        roots: Vec<PathBuf>,
+        limits: ScanLimits,
+    ) -> Result<Self, ScanError> {
+        validate_roots(&roots, &limits)?;
+        Self::spawn(move |cancel, progress| {
+            crate::purge_preview::scan_developer_caches(&roots, &limits, cancel, progress)
+        })
+    }
+
     fn spawn(
         operation: impl FnOnce(
             &Cancellation,
