@@ -197,7 +197,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
             .validate()
             .map_err(|error| ScanError::new(error.code, error.message))?;
         let cancellation = scan_cancellation;
-        let report = scan::scan(&roots, &limits, &cancellation, |event| {
+        let progress_callback = |event: &scan::ScanProgress| {
             if show_progress && progress_error.is_none() {
                 let written = if json {
                     output::progress(&mut io::stderr().lock(), event)
@@ -209,7 +209,12 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
                     progress_error = Some(error);
                 }
             }
-        })?;
+        };
+        let report = if profile == PurgeProfile::DeveloperCaches {
+            purge_preview::scan_developer_caches(&roots, &limits, &cancellation, progress_callback)
+        } else {
+            scan::scan(&roots, &limits, &cancellation, progress_callback)
+        }?;
         let index = ScanTree::build(report, &cancellation)?;
         purge_preview::purge_preview(&index, &options, SystemTime::now())
             .map_err(|message| ScanError::new(ScanCode::InvalidLimits, message))

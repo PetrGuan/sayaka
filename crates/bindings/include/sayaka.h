@@ -422,6 +422,8 @@ SAYAKA_API int32_t sayaka_purge_execute_start_v1(const SayakaPurgeExecuteRequest
                                                uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_purge_result_v1(uint64_t handle, uint8_t *buffer,
                                         size_t capacity, size_t *required);
+/* Static relative cache roots, not access or cleanup authority. Same output buffer contract. */
+SAYAKA_API int32_t sayaka_purge_cache_scan_roots_v1(uint8_t *buffer, size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_purge_unsupported_operations_v1(uint8_t *buffer,
                                                         size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_purge_release_v1(uint64_t handle);

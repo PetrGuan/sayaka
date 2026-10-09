@@ -32,11 +32,13 @@ pub(crate) fn validate_local_internal_volume_fd(fd: &OwnedFd) -> Result<(), Scan
 
 static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TraversalPolicy {
     Default,
     PruneAppBundles,
     PruneNativePackages,
+    /// Internal profile scope; never used for general disk-size scans.
+    RestrictedTo(std::sync::Arc<[PathBuf]>),
 }
 
 #[cfg(all(test, windows))]
