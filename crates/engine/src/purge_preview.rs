@@ -20,13 +20,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "macos")]
 mod adobe;
+#[cfg(target_os = "macos")]
+pub mod bundle_owned;
 pub mod task;
 
 pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 5;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -40,6 +42,9 @@ pub fn resolve_cache_selections_by_ids(
     preview: &PurgePreview,
     item_ids: &[PurgeItemId],
 ) -> Result<Vec<CacheSelection>, String> {
+    if !preview.complete {
+        return Err("cache preview is incomplete".into());
+    }
     if preview.profile != PurgeProfile::DeveloperCaches {
         return Err("cache execution is unsupported for this purge profile".into());
     }
@@ -75,6 +80,8 @@ pub fn resolve_cache_selections_by_ids(
             path: cache.path.clone(),
             expected_identity: cache.identity,
             rule_id: cache.rule_id,
+            #[cfg(target_os = "macos")]
+            owner_proof: cache.owner_proof.clone(),
         });
     }
     Ok(selections)
@@ -190,8 +197,30 @@ impl ProjectMarker {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
+pub struct CachePolicy {
+    pub config: crate::clean_policy::ConfigPath,
+    pub snapshot: crate::clean_policy::GlobalPolicySnapshot,
+}
+impl CachePolicy {
+    pub fn capture(config: crate::clean_policy::ConfigPath) -> Result<Self, String> {
+        let snapshot = crate::clean_policy::snapshot_all(&config).map_err(|e| e.to_string())?;
+        Ok(Self { config, snapshot })
+    }
+    pub fn excludes(&self, path: &Path) -> bool {
+        paths_are_related(path, &self.config.directory)
+            || self
+                .snapshot
+                .effective_exclusions
+                .iter()
+                .any(|p| paths_are_related(path, p))
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct PurgeOptions {
+    pub cache_discovery_deadline: Option<std::time::Instant>,
+    pub cache_policy: Option<std::sync::Arc<CachePolicy>>,
     pub stale_days: u32,
     pub profile: PurgeProfile,
 }
@@ -201,12 +230,14 @@ impl Default for PurgeOptions {
         Self {
             stale_days: DEFAULT_STALE_DAYS,
             profile: PurgeProfile::Projects,
+            cache_policy: None,
+            cache_discovery_deadline: None,
         }
     }
 }
 
 impl PurgeOptions {
-    pub fn validate(self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         if (1..=MAX_STALE_DAYS).contains(&self.stale_days) {
             Ok(())
         } else {
@@ -271,7 +302,17 @@ impl DeveloperCacheActivity {
 }
 
 #[derive(Clone, Debug)]
+pub struct CacheOwner {
+    pub display_name: String,
+    pub bundle_path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
 pub struct DeveloperCacheCandidate {
+    pub rule_kind: &'static str,
+    pub owner_app: Vec<CacheOwner>,
+    #[cfg(target_os = "macos")]
+    pub(crate) owner_proof: Option<std::sync::Arc<bundle_owned::Proof>>,
     pub tool: &'static str,
     pub rule_id: &'static str,
     pub rule_version: u32,
@@ -860,6 +901,13 @@ impl PurgePreview {
             hash_path(&mut hasher, root);
         }
         for cache in &self.developer_caches {
+            hasher.update(cache.rule_kind.as_bytes());
+            hasher.update(cache.ruleset_revision.to_le_bytes());
+            hasher.update([u8::from(cache.cleanup_supported)]);
+            #[cfg(target_os = "macos")]
+            if let Some(proof) = &cache.owner_proof {
+                hasher.update(proof.digest());
+            }
             hasher.update(cache.rule_id.as_bytes());
             hasher.update(cache.rule_version.to_le_bytes());
             hash_path(&mut hasher, &cache.path);
@@ -1357,6 +1405,10 @@ pub fn developer_cache_scan_roots() -> Vec<(&'static str, &'static [&'static str
             };
             seen.insert(components).then_some((rule.tool, components))
         })
+        .chain(std::iter::once((
+            "bundle-owned",
+            &["Library", "Caches"][..],
+        )))
         .collect()
 }
 
@@ -1468,6 +1520,10 @@ fn developer_cache_preview_with_home(
             .and_then(|duration| i64::try_from(duration.as_millis()).ok());
         let active = activity != DeveloperCacheActivity::NotDetected;
         candidates.push(DeveloperCacheCandidate {
+            rule_kind: "exact",
+            owner_app: Vec::new(),
+            #[cfg(target_os = "macos")]
+            owner_proof: None,
             tool: rule.tool,
             rule_id: rule.rule_id,
             rule_version: rule.rule_version,
@@ -1499,9 +1555,28 @@ fn developer_cache_preview_with_home(
             evidence: rule.evidence,
         });
     }
+    #[cfg(target_os = "macos")]
+    let owner_issues = bundle_owned::append(
+        index,
+        account_home,
+        options.cache_policy.as_deref(),
+        options.cache_discovery_deadline,
+        &mut candidates,
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    let owner_issues: Vec<crate::scan::ScanIssue> = Vec::new();
+    if report.status != ScanStatus::Complete || !owner_issues.is_empty() {
+        for c in &mut candidates {
+            c.complete = false;
+        }
+    }
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
     counts.developer_caches = candidates.len();
-    let status = preview_status(report);
+    let status = if !owner_issues.is_empty() && report.status == ScanStatus::Complete {
+        PurgeStatus::Partial
+    } else {
+        preview_status(report)
+    };
     Ok(PurgePreview {
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,
@@ -1511,7 +1586,7 @@ fn developer_cache_preview_with_home(
             "unsupported"
         },
         status,
-        complete: report.status == ScanStatus::Complete,
+        complete: report.status == ScanStatus::Complete && owner_issues.is_empty(),
         effects_performed: false,
         profile: options.profile,
         roots: report.roots.clone(),
@@ -1521,7 +1596,7 @@ fn developer_cache_preview_with_home(
         finder_metadata: Vec::new(),
         unsupported_operations,
         counts,
-        scan_issues: report.issues.clone(),
+        scan_issues: report.issues.iter().cloned().chain(owner_issues).collect(),
         scan_issues_omitted: report.issues_omitted,
     })
 }
@@ -1645,6 +1720,14 @@ fn revalidate_developer_cache_selection_with_home(
     selection: &CacheSelection,
     account_home: &Path,
 ) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if selection.rule_id == bundle_owned::RULE_ID {
+        return selection
+            .owner_proof
+            .as_ref()
+            .ok_or("missing retained owner capability")?
+            .revalidate(&selection.path, account_home);
+    }
     let locations = developer_cache_rule_locations(account_home)?;
     let location = locations
         .iter()
@@ -1869,6 +1952,8 @@ mod tests {
         developer_cache_preview_with_home(
             &index,
             &PurgeOptions {
+                cache_policy: None,
+                cache_discovery_deadline: None,
                 stale_days: DEFAULT_STALE_DAYS,
                 profile: PurgeProfile::DeveloperCaches,
             },
@@ -1942,6 +2027,8 @@ mod tests {
         assert_eq!(aged.counts.stale_artifacts, aged.counts.artifacts);
         assert!(
             PurgeOptions {
+                cache_policy: None,
+                cache_discovery_deadline: None,
                 stale_days: 0,
                 profile: PurgeProfile::Projects,
             }
@@ -1950,6 +2037,8 @@ mod tests {
         );
         assert!(
             PurgeOptions {
+                cache_policy: None,
+                cache_discovery_deadline: None,
                 stale_days: MAX_STALE_DAYS + 1,
                 profile: PurgeProfile::Projects,
             }
@@ -2311,6 +2400,8 @@ mod tests {
                     path: modules.clone(),
                     expected_identity: identity,
                     rule_id: "org.gradle.modules_cache",
+                    #[cfg(target_os = "macos")]
+                    owner_proof: None,
                 },
                 &home
             )
@@ -2327,6 +2418,8 @@ mod tests {
                         .join("files-2.1"),
                     expected_identity: identity,
                     rule_id: "org.gradle.modules_cache",
+                    #[cfg(target_os = "macos")]
+                    owner_proof: None,
                 },
                 &home
             )

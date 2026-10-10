@@ -1098,3 +1098,15 @@ callback, join owned work, then release; retry BUSY releases before relinquishin
 security scopes or unloading the library. Releasing a pending delegated operation
 leaves its durable started record for reconciliation, never implies success, and
 never resumes related moves automatically.
+
+#### Bundle-owned cache candidate metadata (ruleset 6)
+
+Developer cache items add `rule_kind` (`exact` or `bundle_owned`) and `owner_app`
+(all verified owners, 1..8 `{display_name, bundle_path}` for generic candidates,
+empty for exact rules). Generic rule ID is `org.sayaka.bundle_owned_cache.v1`.
+`bundle_path` uses the existing native path representation. Existing additive-key
+readers continue decoding; updated hosts must show inferred ownership as Review,
+never preselect it, and explicitly reject selections above 32. Scan roots include
+`Library/Caches` for direct-child discovery; hosts should avoid duplicate rows
+when exact scan roots overlap. Candidate state stays in the retained capability,
+not in execute inputs or schema 5 journal item keys. See APP_CACHE_RULES.md.

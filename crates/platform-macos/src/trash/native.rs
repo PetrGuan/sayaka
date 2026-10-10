@@ -647,6 +647,7 @@ enum TargetShape {
     PurgeArtifact,
     /// Sealed documented developer-cache directory.
     CacheDirectory,
+    BundleOwnedCacheDirectory,
     RelatedDirectory,
     RelatedFile,
 }
@@ -657,7 +658,7 @@ impl TargetShape {
     }
 
     fn allows_scope_target(self) -> bool {
-        matches!(self, Self::CacheDirectory)
+        matches!(self, Self::CacheDirectory | Self::BundleOwnedCacheDirectory)
     }
 }
 
@@ -758,6 +759,20 @@ impl Candidate {
             purge_markers,
             protected,
             TargetShape::PurgeArtifact,
+        )
+    }
+
+    pub(super) fn capture_bundle_owned_cache(
+        scope: &Path,
+        path: &Path,
+        protected: &[PathBuf],
+    ) -> Result<Self, NativeCaptureFailure> {
+        Self::capture_diagnostic_mode(
+            scope,
+            path,
+            &[],
+            protected,
+            TargetShape::BundleOwnedCacheDirectory,
         )
     }
 
@@ -907,6 +922,7 @@ impl Candidate {
             }
             TargetShape::PurgeArtifact
             | TargetShape::CacheDirectory
+            | TargetShape::BundleOwnedCacheDirectory
             | TargetShape::RelatedDirectory => {
                 stage.operation = "purge_admission";
                 admissible_purge_target(&target.stamp, uid)?;
@@ -1165,7 +1181,9 @@ impl Candidate {
                     admissible_purge_marker(&marker.stamp, self.uid)?;
                 }
             }
-            TargetShape::CacheDirectory | TargetShape::RelatedDirectory => {
+            TargetShape::CacheDirectory
+            | TargetShape::BundleOwnedCacheDirectory
+            | TargetShape::RelatedDirectory => {
                 admissible_purge_target(&self.target.stamp, self.uid)?;
             }
             TargetShape::File | TargetShape::RelatedFile => {
@@ -1286,6 +1304,30 @@ impl Candidate {
                 }
             }
         }
+        if self.shape == TargetShape::BundleOwnedCacheDirectory {
+            let home = crate::effective_account_home()?;
+            if !crate::cache_locations::bundle_owned_cache_location(&self.path, &home) {
+                return Err(refused("not a native-home bundle-owned cache shape"));
+            }
+            let library = home.join("Library");
+            let root = self
+                .ancestors
+                .iter()
+                .find(|e| e.path == library)
+                .ok_or_else(|| refused("missing Library witness"))?;
+            let relative = self
+                .path
+                .strip_prefix(&library)
+                .map_err(|_| refused("cache outside Library"))?;
+            if self.target.physical != root.physical.join(relative) {
+                return Err(refused("cache physical identity differs"));
+            }
+            for ancestor in self.ancestors.iter().filter(|e| e.path.starts_with(&home)) {
+                if ancestor.stamp.device != self.target.stamp.device {
+                    return Err(refused("cache mount crossing"));
+                }
+            }
+        }
         if self.shape == TargetShape::CacheDirectory
             && !crate::cache_locations::permitted_cache_location(&self.path)
         {
@@ -1308,7 +1350,10 @@ impl Candidate {
             let protected = if related {
                 // Exact native-home rule was checked above; keep all other protected components.
                 protected_path(checked, true)
-            } else if self.shape == TargetShape::CacheDirectory {
+            } else if matches!(
+                self.shape,
+                TargetShape::CacheDirectory | TargetShape::BundleOwnedCacheDirectory
+            ) {
                 cache_directory_protected(checked)
             } else if self.shape == TargetShape::Bundle && is_applications_root(checked) {
                 // A bundle directly inside /Applications (sayaka#93).
@@ -1495,6 +1540,7 @@ impl Candidate {
             }
             TargetShape::PurgeArtifact
             | TargetShape::CacheDirectory
+            | TargetShape::BundleOwnedCacheDirectory
             | TargetShape::RelatedDirectory => {
                 admissible_moved_bundle(&stamp, self.uid, self.shape)?;
             }

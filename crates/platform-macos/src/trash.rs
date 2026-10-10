@@ -513,6 +513,25 @@ impl CacheTrashCandidate {
         }
     }
 
+    /// Separately typed declaration; native code independently checks home/depth/ID.
+    pub fn capture_bundle_owned(
+        scope: &Path,
+        path: &Path,
+        protected: &[PathBuf],
+    ) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        {
+            native::Candidate::capture_bundle_owned_cache(scope, path, protected)
+                .map(|native| Self { native })
+                .map_err(NativeCaptureFailure::into_legacy_error)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (scope, path, protected);
+            Err(unsupported())
+        }
+    }
+
     pub fn info(&self) -> &NativeFileInfo {
         #[cfg(target_os = "macos")]
         {

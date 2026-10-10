@@ -42,6 +42,8 @@ pub struct PurgeSelection {
 
 #[derive(Clone, Debug)]
 pub struct CacheSelection {
+    #[cfg(target_os = "macos")]
+    pub(crate) owner_proof: Option<std::sync::Arc<crate::purge_preview::bundle_owned::Proof>>,
     pub scope_root: PathBuf,
     pub path: PathBuf,
     pub expected_identity: FileIdentity,

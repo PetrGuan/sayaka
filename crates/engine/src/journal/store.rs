@@ -25,6 +25,9 @@ pub struct Store {
 }
 
 impl Store {
+    pub(crate) fn directory_path(&self) -> &Path {
+        &self.path
+    }
     /// Create only the final private directory; its parent must already exist.
     /// Readers take the same lock, so Started cannot be called interrupted while
     /// another Sayaka process still owns the execution session.

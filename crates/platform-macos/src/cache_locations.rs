@@ -177,9 +177,52 @@ pub fn cache_location(rule_id: &str) -> Option<&'static CacheLocation> {
 pub fn permitted_cache_location(path: &Path) -> bool {
     CACHE_LOCATIONS.iter().any(|entry| entry.accepts(path))
 }
+/// Independently checked generic shape; caller rule IDs never authorize it.
+pub fn bundle_owned_cache_location(path: &Path, home: &Path) -> bool {
+    let root = home.join("Library/Caches");
+    if path.parent() != Some(root.as_path()) {
+        return false;
+    }
+    let Some(id) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let lower = id.to_ascii_lowercase();
+    id.len() <= 255
+        && id.split('.').count() >= 3
+        && id
+            .split('.')
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        && !lower.starts_with("com.apple.")
+        && !lower.starts_with("group.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn generic_shape_is_independent_exact_home_and_denies_reserved_namespaces() {
+        let home = Path::new("/Users/fixture");
+        assert!(bundle_owned_cache_location(
+            Path::new("/Users/fixture/Library/Caches/com.example.App"),
+            home
+        ));
+        for path in [
+            "/Users/other/Library/Caches/com.example.App",
+            "/Users/fixture/Library/Caches/COM.APPLE.foo",
+            "/Users/fixture/Library/Caches/GROUP.example.foo",
+            "/Users/fixture/Library/Caches/com.example.App/child",
+            "/Users/fixture/Library/Caches/com.example_bad.App",
+            "/Users/fixture/Library/Caches/com.two",
+        ] {
+            assert!(
+                !bundle_owned_cache_location(Path::new(path), home),
+                "{path}"
+            );
+        }
+        assert!(!permitted_cache_location(Path::new(
+            "/Users/fixture/Library/Caches/com.example.App"
+        )));
+    }
     #[test]
     fn every_reviewed_shape_accepts_only_the_whole_leaf() {
         for rule in CACHE_LOCATIONS {

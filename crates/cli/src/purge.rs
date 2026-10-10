@@ -171,6 +171,8 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
             ));
         }
         let options = PurgeOptions {
+            cache_policy: None,
+            cache_discovery_deadline: None,
             stale_days,
             profile,
         };
