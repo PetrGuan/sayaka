@@ -70,6 +70,25 @@ identities in each table, 128 open directory cursors/depth levels, and 32 MiB of
 retained stack paths. Discovery still has the generic 100,000-entry/32 MiB index
 limits. Generic disk and project scans keep their existing limits.
 
+On macOS, cache measurement fetches native entry metadata in bounded
+`getattrlistbulk` batches (at most 64 KiB per open cursor). This avoids a separate
+stat call for every ordinary entry. Only returned, validated attributes are used;
+missing file attributes can fall back to descriptor-relative no-follow stat.
+Directories with missing boundary attributes remain incomplete rather than
+falling back to a pathname lookup that could hide a firmlink.
+An unsupported first bulk call can rewind and use the original directory cursor;
+errors after iteration starts remain errors. Mount points/firmlinks are rejected
+before descent. Directory opens, identity checks, modification stamps and the
+thread's no-materialization policy are retained. No previously measured size or
+eligibility is reused. Up to four workers measure independent root children,
+with a bounded directory-only queue and shared identity, open-cursor and
+retained-path budgets. Each worker applies the no-materialization thread policy
+and walks its subtree without retaining file records. Hard links are deduplicated
+across workers. The root remains open and is checked for changes after workers
+finish; descendants are checked after their own subtree finishes. Cancellation,
+the deadline and errors stop or mark the same measurement incomplete. The
+generic scan cursor is unchanged.
+
 Symbolic links *inside* a recognized cache are counted in `links_not_followed`;
 their targets are neither opened nor included in the byte totals. They do not
 make the cache incomplete. Root/ancestor symlinks, unreadable entries, dataless

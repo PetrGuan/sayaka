@@ -13,6 +13,8 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::sync::Mutex;
 use std::time::Instant;
 
+mod cache;
+
 fn as_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
 }
@@ -453,7 +455,7 @@ mod tests {
     }
 }
 
-/// Cache-only streaming accounting; reuses the same native no-follow cursor.
+/// Cache-only bulk accounting; generic scans retain their original cursor.
 pub(super) fn summarize_cache(
     path: &Path,
     expected: FileIdentity,
@@ -461,5 +463,12 @@ pub(super) fn summarize_cache(
     cancellation: &Cancellation,
     progress: impl FnMut(usize, u64, u64),
 ) -> Result<super::cache::Summary, ScanError> {
-    super::cache::summarize(&MacBackend, path, expected, limits, cancellation, progress)
+    super::cache::summarize(
+        &cache::CacheBackend,
+        path,
+        expected,
+        limits,
+        cancellation,
+        progress,
+    )
 }
