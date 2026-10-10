@@ -111,7 +111,7 @@ struct Registry {
     jobs: HashMap<u64, Arc<Mutex<Job>>>,
     installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
     purges: HashMap<u64, Arc<Mutex<purge::PurgeJob>>>,
-    uninstalls: HashMap<u64, Arc<Mutex<uninstall::UninstallJob>>>,
+    uninstalls: HashMap<u64, Arc<uninstall::UninstallSlot>>,
     simulators: HashMap<u64, Arc<simulators::SimulatorJob>>,
 }
 

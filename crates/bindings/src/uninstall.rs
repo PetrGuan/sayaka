@@ -4,6 +4,9 @@
 //! Other copies are read-only evidence, never execution selections.
 
 use super::*;
+
+mod related;
+pub use related::*;
 use sayaka_engine::app_inventory::{
     AppInventoryLimits, AppInventoryMetadataReadMode, AppInventoryOptions, inventory_apps,
 };
@@ -42,6 +45,18 @@ pub struct SayakaUninstallRequestV1 {
     pub copies_root: SayakaPathV1,
 }
 
+pub(super) struct UninstallSlot {
+    job: Mutex<UninstallJob>,
+    cancellation: Cancellation,
+}
+
+impl std::ops::Deref for UninstallSlot {
+    type Target = Mutex<UninstallJob>;
+    fn deref(&self) -> &Self::Target {
+        &self.job
+    }
+}
+
 pub(super) struct UninstallJob {
     preview: UninstallPreview,
     session: Option<BundleUninstallSession>,
@@ -50,6 +65,10 @@ pub(super) struct UninstallJob {
     closed: bool,
     #[cfg(target_os = "macos")]
     admin: AdminState,
+    #[cfg(target_os = "macos")]
+    related: Option<sayaka_engine::related_uninstall::RelatedUninstallSession>,
+    #[cfg(target_os = "macos")]
+    related_admin: Option<sayaka_engine::related_uninstall::RelatedOperation>,
 }
 
 /// Administrator path (SayakaCleaner#323): Finder performs the move after the
@@ -114,7 +133,7 @@ fn preview_bytes(
     bounded_json(&value, MAX_QUERY_BYTES)
 }
 
-fn get_job(handle: u64) -> Result<Arc<Mutex<UninstallJob>>, i32> {
+fn get_job(handle: u64) -> Result<Arc<UninstallSlot>, i32> {
     registry()
         .lock()
         .map_err(|_| INTERNAL_ERROR)?
@@ -172,6 +191,7 @@ pub unsafe extern "C" fn sayaka_uninstall_related_preview_v1(
         if job.closed || job.result_bytes.is_some() {
             return Err(INVALID_HANDLE);
         }
+        related::ensure_idle(&job)?;
         let bundle = job.preview.bundle_path.clone();
         let app_root = bundle.parent().ok_or(INVALID_ARGUMENT)?.to_path_buf();
         let retained_identity = job.preview.identity.as_ref().ok_or(INVALID_CANDIDATE)?;
@@ -385,15 +405,22 @@ pub unsafe extern "C" fn sayaka_uninstall_preview_start_v1(
         let handle = registry.allocate_handle()?;
         registry.uninstalls.insert(
             handle,
-            Arc::new(Mutex::new(UninstallJob {
-                preview,
-                session,
-                preview_bytes: bytes,
-                result_bytes: None,
-                closed: false,
-                #[cfg(target_os = "macos")]
-                admin,
-            })),
+            Arc::new(UninstallSlot {
+                cancellation: Cancellation::default(),
+                job: Mutex::new(UninstallJob {
+                    preview,
+                    session,
+                    preview_bytes: bytes,
+                    result_bytes: None,
+                    closed: false,
+                    #[cfg(target_os = "macos")]
+                    admin,
+                    #[cfg(target_os = "macos")]
+                    related: None,
+                    #[cfg(target_os = "macos")]
+                    related_admin: None,
+                }),
+            }),
         );
         unsafe { out_handle.write(handle) };
         Ok(())
@@ -454,6 +481,7 @@ pub unsafe extern "C" fn sayaka_uninstall_execute_v1(
         if job.result_bytes.is_some() {
             return Err(INVALID_HANDLE);
         }
+        related::ensure_idle(&job)?;
         let name = job
             .preview
             .bundle_path
@@ -467,6 +495,10 @@ pub unsafe extern "C" fn sayaka_uninstall_execute_v1(
         let Some(mut session) = job.session.take() else {
             return Err(INVALID_CANDIDATE);
         };
+        #[cfg(target_os = "macos")]
+        {
+            job.related = None;
+        }
         let plan = session.preview().clone();
         let approval = match session.approve(&plan) {
             Ok(approval) => approval,
@@ -558,6 +590,7 @@ pub unsafe extern "C" fn sayaka_uninstall_admin_begin_v1(
             if job.closed || job.result_bytes.is_some() {
                 return Err(INVALID_HANDLE);
             }
+            related::ensure_idle(&job)?;
             let name = job
                 .preview
                 .bundle_path
@@ -584,6 +617,7 @@ pub unsafe extern "C" fn sayaka_uninstall_admin_begin_v1(
             let bundle = job.preview.bundle_path.clone();
             match sayaka_engine::admin_uninstall::begin(&bundle, &captured, store) {
                 Ok(delegated) => {
+                    job.related = None;
                     job.admin = AdminState::AwaitingDelegate(Box::new(delegated));
                     Ok(())
                 }
@@ -627,6 +661,10 @@ pub extern "C" fn sayaka_uninstall_admin_finish_v1(handle: u64, delegate_status:
             let mut job = lock_job(&slot)?;
             if job.closed || job.result_bytes.is_some() {
                 return Err(INVALID_HANDLE);
+            }
+            if let Some(operation) = job.related_admin.take() {
+                job.result_bytes = Some(related::execution_bytes(operation.admin_finish(status)));
+                return Ok(());
             }
             let AdminState::AwaitingDelegate(delegated) =
                 std::mem::replace(&mut job.admin, AdminState::Consumed)

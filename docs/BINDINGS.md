@@ -1035,3 +1035,57 @@ The terminal result is `sayaka.app_uninstall_execution` with
 `unknown` or `refused`, the journal `report` and `recovery` text. Releasing a
 handle between begin and finish is safe; the intent stays `started` and reads
 back as `unknown`.
+
+## Retained related uninstall v2
+
+The additive `sayaka_uninstall_related_preview_v2`, `sayaka_uninstall_execute_v2`,
+`sayaka_uninstall_admin_begin_v2`, and
+`sayaka_uninstall_cancel_v2` symbols retain ABI version 1. Their request layouts
+are new; never pass a v1 struct to a v2 function. The authoritative ownership and
+execution contract is [UNINSTALL_RELATED_EXECUTION.md](UNINSTALL_RELATED_EXECUTION.md).
+The native acceptance gate remains false: all candidates are non-executable and
+nonempty execution refuses before journal publication or Trash effects.
+
+Start with `sayaka_uninstall_preview_start_v1`. A v2 related preview accepts up
+to eight additional app inventory roots and the shared protected-path policy
+directory. The core derives home and Library from the effective account, not
+from a caller-supplied Library path. Hold all needed security scopes for the
+handle lifetime. Supply exactly 4 MiB of output storage; there is no preview size
+probe. Successful observation returns schema 2 `sayaka.app_uninstall_related_preview`,
+including native paths, plan digest, expiry, candidate opaque IDs, consequences,
+size completeness, eligibility, default selection and refusals. Preparation failure
+returns schema 2 `sayaka.app_uninstall_related_refusal`, `complete: false`,
+`effects_performed: false`, and an error. Inspect kind/schema before decoding.
+A refresh invalidates the preceding related capability even when preparation fails.
+Malformed calls rejected before observation do not refresh the capability.
+
+Nonempty execution accepts 1..32 distinct, bounded UTF-8 item IDs and the exact
+64-byte plan digest returned by the retained preview. The typed token is exactly
+`uninstall <bundle filename> and trash <N> related items`. There is no approval
+Boolean, arbitrary target path, or detached related cleanup API. With no selected
+related rows, call the existing bundle-only v1 execution/admin API and its token.
+An ordinary call is synchronous; an administrator call returns OK only after
+intent is durable. Only then may the host dispatch Finder for the retained bundle,
+and it must finish using `sayaka_uninstall_admin_finish_v1`. That existing finish
+symbol recognizes the retained v2 operation and returns the core-verified bundle
+and related results. Finder status is advisory, never authorization or proof.
+
+Once an execution attempt consumes the related capability, all execution paths
+on that handle are one-shot. Native refusal returns INVALID_CANDIDATE and retains
+a terminal schema 2 result. Syntax errors, missing previews and wrong admin/ordinary
+entry points fail before consumption. During delegated work, neither version can
+start/refresh/execute another operation on the handle. v1 bundle-only calls never
+implicitly opt in to related execution. The existing result accessor supports
+size probes and returns schema 1 for v1 operations, schema 2 for v2 operations.
+Schema 2 has `report` for the bundle and `related_report` for the child operation;
+`partial` means at least one item succeeded but not all. Unknown journal/outcome
+evidence dominates the aggregate state. Inspect individual item state, reason,
+destination and journal errors; do not turn skipped or unknown sizes into success.
+
+Cancellation is sticky and does not take the worker mutex, so another thread can
+cancel while observation/execution owns that mutex. It affects v2 work only, does
+not dismiss Finder, and does not release the handle. Finish any outstanding Finder
+callback, join owned work, then release; retry BUSY releases before relinquishing
+security scopes or unloading the library. Releasing a pending delegated operation
+leaves its durable started record for reconciliation, never implies success, and
+never resumes related moves automatically.
