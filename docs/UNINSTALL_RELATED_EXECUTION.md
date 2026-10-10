@@ -2,19 +2,20 @@
 
 # Uninstall related data: proposed execution contract
 
-Status: **proposal awaiting owner approval; not implemented**. This is the
-first, documentation-only slice of related-data removal for the Developer ID
-macOS application. No execution code, ABI, eligibility or existing rule changes
-are authorized until the owner approves this contract for merge. Approval of
-the document permits subsequent implementation PRs, not a claim of native
-acceptance or permission to exercise effects on real applications.
+Status: **owner approved 2026-10-11; core implementation is acceptance-gated**.
+The engine/platform coordinator and CLI preview/selection are implemented.
+`NATIVE_ACCEPTANCE_RECORDED` remains false: every related row reports
+`native_acceptance_pending`, and approval refuses before creating journals or
+moving a bundle. Only a reviewed change attaching the owner-native evidence may
+open this gate. Existing bundle-only execution is unchanged. Bindings and App
+integration are subsequent slices; no native acceptance is claimed.
 
 Read with [UNINSTALL_EXECUTION.md](UNINSTALL_EXECUTION.md),
 [PURGE_EXECUTION.md](PURGE_EXECUTION.md), [EXECUTION.md](EXECUTION.md) and
 [SAVED_STATE_CLEANUP.md](SAVED_STATE_CLEANUP.md). Existing bundle-only uninstall,
 read-only related preview v1 and other Trash contracts retain their semantics.
 
-## Decisions proposed for owner approval
+## Owner-approved decisions
 
 | Decision | Proposed resolution |
 | --- | --- |
@@ -354,8 +355,11 @@ coerced into success. Retain Store size/publication/reconciliation limits.
 
 Both records live in the uninstall journal directory. New readers accept
 schema 8 only with its matching plan/engine/rule/contract tuple and required
-context; other schemas must reject related-only keys. Older readers may report
-unsupported schema 8 but must still read the unchanged parent record. A missing
+context; other schemas must reject related-only keys. Older App readers report unsupported schema 8 per record and still read the
+unchanged parent. Older core/CLI Store readers reject an entire directory with
+an unknown schema: downgrade after schema 8 has been written is unsupported.
+Keep the writer gate closed through reader rollout; do not claim old CLI
+forward-schema compatibility. A missing
 or malformed parent is shown as incomplete/unlinked history, never authorization
 or proof the bundle was removed. Group linked records without double-counting
 outcomes, preserve both even when one failed, and never delete operation history
@@ -449,3 +453,39 @@ No native acceptance or performance result is claimed by this document.
 [copies]: https://developer.apple.com/documentation/appkit/nsworkspace/urlsforapplications(withbundleidentifier:)
 [running]: https://developer.apple.com/documentation/appkit/nsrunningapplication/runningapplications(withbundleidentifier:)
 [mole]: https://github.com/tw93/Mole/blob/383a037ff5d6b77f0ebc2a8aec100a46b6d3417c/lib/core/app_protection_data.sh
+
+## Implemented core slice and exact schema 8 fields
+
+The first enabled-path evidence set is limited to the Apple-documented caches,
+Application Support and Preferences filenames. Other proposed rules remain
+`rule_evidence_unavailable` even after the global native acceptance gate opens.
+The read-only v1 rule output is unchanged. Protected targets and state/policy
+paths are compared through held physical paths to prevent case-alias overlap.
+A shared guard refusal latches for all remaining items, including the final
+native guard; there is no observation/retry loop waiting for authority to return.
+
+Schema 8 retains the existing top-level fields `schema_version`,
+`plan_schema_version`, `engine_version`, `rules_version`, `operation_id`,
+`contract`, `scope`, `created_unix_ms`, `items`, and adds required
+`related_context`. The optional `clean_policy`, `tool_operation`, `delegation`
+contexts must be absent. Legacy records omit `related_context` entirely.
+
+`related_context` has exactly: `schema_version` (1), `parent_operation_id`,
+`bundle_path` (NativePath), `bundle_id`, `bundle_device`, `bundle_inode`,
+`manifest_device`, `manifest_inode`, `manifest_digest`, `plan_digest`,
+`policy_digest`, `home` (NativePath), `library_device`, `library_inode`,
+`copy_roots` (1..11 NativePaths), `coverage`, `approved_unix_ms`,
+`deadline_unix_ms`, and `selected` (1..32 bindings, in item order).
+Each selected binding has exactly `item_id`, `rule_id`, `rule_version` (1),
+`path` (NativePath), `kind` (`file`/`directory`), and `consequence`.
+The existing item record contains the matched device/inode, approved logical
+bytes, lifecycle, reason, destination and ambiguous recovery evidence.
+NativePath retains `encoding`, native `bytes`, and verified quoted `display`.
+Digests are 64 hexadecimal characters. Deadline is exactly approval + 120000
+milliseconds for audit; the retained monotonic deadline enforces execution.
+Validation requires exact rule-derived paths and types, matching selected/item
+paths, unique IDs and identities, and a distinct valid parent operation ID.
+No context or history record can instantiate an executable session.
+
+Validation of this slice: workspace build and compilation of test targets,
+without executing tests. Owner-native observations and acceptance remain pending.

@@ -647,11 +647,13 @@ enum TargetShape {
     PurgeArtifact,
     /// Sealed documented developer-cache directory.
     CacheDirectory,
+    RelatedDirectory,
+    RelatedFile,
 }
 
 impl TargetShape {
     fn is_directory(self) -> bool {
-        !matches!(self, Self::File)
+        !matches!(self, Self::File | Self::RelatedFile)
     }
 
     fn allows_scope_target(self) -> bool {
@@ -767,6 +769,30 @@ impl Candidate {
         Self::capture_diagnostic_mode(scope, path, &[], protected, TargetShape::CacheDirectory)
     }
 
+    pub(super) fn capture_related(
+        path: &Path,
+        file: bool,
+        protected: &[PathBuf],
+    ) -> Result<Self, NativeCaptureFailure> {
+        let home = crate::effective_account_home().map_err(|error| NativeCaptureFailure {
+            phase: "home",
+            operation: "native_home",
+            error,
+            restoration_error: None,
+        })?;
+        Self::capture_diagnostic_mode(
+            &home.join("Library"),
+            path,
+            &[],
+            protected,
+            if file {
+                TargetShape::RelatedFile
+            } else {
+                TargetShape::RelatedDirectory
+            },
+        )
+    }
+
     fn capture_diagnostic_mode(
         scope: &Path,
         path: &Path,
@@ -879,11 +905,13 @@ impl Candidate {
                 admissible_bundle_target(&target.stamp, uid, path)?;
                 stage.operation = "bundle_manifest";
             }
-            TargetShape::PurgeArtifact | TargetShape::CacheDirectory => {
+            TargetShape::PurgeArtifact
+            | TargetShape::CacheDirectory
+            | TargetShape::RelatedDirectory => {
                 stage.operation = "purge_admission";
                 admissible_purge_target(&target.stamp, uid)?;
             }
-            TargetShape::File => {
+            TargetShape::File | TargetShape::RelatedFile => {
                 stage.operation = "file_admission";
                 admissible_file(&target.stamp, uid)?;
             }
@@ -1137,10 +1165,10 @@ impl Candidate {
                     admissible_purge_marker(&marker.stamp, self.uid)?;
                 }
             }
-            TargetShape::CacheDirectory => {
+            TargetShape::CacheDirectory | TargetShape::RelatedDirectory => {
                 admissible_purge_target(&self.target.stamp, self.uid)?;
             }
-            TargetShape::File => {
+            TargetShape::File | TargetShape::RelatedFile => {
                 admissible_file(&self.target.stamp, self.uid)?;
             }
         }
@@ -1212,6 +1240,52 @@ impl Candidate {
     }
 
     fn check_protection(&self) -> io::Result<()> {
+        let related = matches!(
+            self.shape,
+            TargetShape::RelatedDirectory | TargetShape::RelatedFile
+        );
+        if related {
+            let home = crate::effective_account_home()?;
+            let library = home.join("Library");
+            let relative = self
+                .path
+                .strip_prefix(&library)
+                .map_err(|_| refused("related path outside native Library"))?;
+            let parts: Vec<_> = relative.components().collect();
+            if parts.len() != 2 {
+                return Err(refused("related path shape"));
+            }
+            let leaf = self
+                .path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| refused("related leaf encoding"))?;
+            let admitted = crate::related::Rule::ALL.iter().any(|rule| {
+                let (_, suffix) = rule.location();
+                leaf.strip_suffix(suffix).is_some_and(|id| {
+                    rule.path(&home, id).ok().as_ref() == Some(&self.path)
+                        && rule.is_file() == (self.shape == TargetShape::RelatedFile)
+                })
+            });
+            if !admitted || self.scope != library {
+                return Err(refused("not an exact related rule"));
+            }
+            let root = self
+                .ancestors
+                .iter()
+                .find(|e| e.path == library)
+                .ok_or_else(|| refused("missing Library witness"))?;
+            if self.target.physical != root.physical.join(relative) {
+                return Err(refused(
+                    "related path spelling or physical identity differs",
+                ));
+            }
+            for ancestor in self.ancestors.iter().filter(|e| e.path.starts_with(&home)) {
+                if ancestor.stamp.device != self.target.stamp.device {
+                    return Err(refused("related mount crossing"));
+                }
+            }
+        }
         if self.shape == TargetShape::CacheDirectory && !developer_cache_rule_suffix(&self.path) {
             return Err(refused(
                 "developer cache path is not a documented rule location",
@@ -1229,7 +1303,10 @@ impl Candidate {
             } else {
                 path
             };
-            let protected = if self.shape == TargetShape::CacheDirectory {
+            let protected = if related {
+                // Exact native-home rule was checked above; keep all other protected components.
+                protected_path(checked, true)
+            } else if self.shape == TargetShape::CacheDirectory {
                 cache_directory_protected(checked)
             } else if self.shape == TargetShape::Bundle && is_applications_root(checked) {
                 // A bundle directly inside /Applications (sayaka#93).
@@ -1414,10 +1491,12 @@ impl Candidate {
                     ));
                 }
             }
-            TargetShape::PurgeArtifact | TargetShape::CacheDirectory => {
+            TargetShape::PurgeArtifact
+            | TargetShape::CacheDirectory
+            | TargetShape::RelatedDirectory => {
                 admissible_moved_bundle(&stamp, self.uid, self.shape)?;
             }
-            TargetShape::File => {
+            TargetShape::File | TargetShape::RelatedFile => {
                 admissible_file(&stamp, self.uid)?;
             }
         }

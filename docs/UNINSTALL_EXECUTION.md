@@ -31,9 +31,10 @@ ownership, shared-copy, live-process, identity and approval checks before any
 related location can become actionable.
 
 The separate [related-data execution proposal](UNINSTALL_RELATED_EXECUTION.md)
-defines the owner-approval gate, exact-rule evidence, bundle-first ordering and
-new journal contract for a future Developer ID slice. It is not implemented and
-does not change this bundle-only contract or related preview v1.
+defines exact-rule evidence, bundle-first ordering and a separate journal
+contract for the Developer ID slice. Its core coordinator is implemented but
+related effects remain closed pending owner-native acceptance. It does not
+change this bundle-only contract or related preview v1.
 
 ## Why the plan contract must change
 

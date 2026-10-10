@@ -25,6 +25,8 @@ pub fn command() -> Command {
                 .value_parser(value_parser!(PathBuf))
                 .help("Explicit .app bundle directory; links are never followed"),
         )
+        .arg(Arg::new("related").long("related").action(ArgAction::SetTrue).help("Preview related data; with --execute select same-session item IDs interactively"))
+        .arg(Arg::new("policy-dir").long("policy-dir").value_name("DIR").value_parser(value_parser!(PathBuf)).help("Exclusions policy directory for related data"))
         .arg(
             Arg::new("json")
                 .long("json")
@@ -53,7 +55,7 @@ pub fn command() -> Command {
                 .help("Repeatable root searched for coexisting copies of the same bundle ID (read-only evidence; copies are never targets)"),
         )
         .after_help(
-            "Default is a read-only preview. --execute requires an interactive terminal and moves\nexactly the named bundle to the user Trash (recovery: Finder 'Put Back'; no programmatic\nrestore). Related data, preferences, caches and other copies are never touched. A running\nbundle is refused at preview, approval and immediately before the native call.\n--copies-root only observes coexisting copies; it never selects them for any effect.",
+            "Default is a read-only preview. --execute requires an interactive terminal and moves\nexactly the named bundle to the user Trash (recovery: Finder 'Put Back'; no programmatic\nrestore). Related data stays unless --related is explicitly selected and its acceptance gate is open. Other copies stay. A running\nbundle is refused at preview, approval and immediately before the native call.\n--copies-root only observes coexisting copies; it never selects them for any effect.",
         )
 }
 
@@ -77,6 +79,10 @@ pub fn run(args: &ArgMatches) -> io::Result<u8> {
 }
 
 fn run_inner(args: &ArgMatches) -> io::Result<u8> {
+    run_inner_mode(args, true)
+}
+
+fn run_inner_mode(args: &ArgMatches, allow_related: bool) -> io::Result<u8> {
     let execute = args.get_flag("execute");
     if execute
         && !(io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal())
@@ -97,6 +103,15 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         .flatten()
         .cloned()
         .collect();
+    if allow_related && args.get_flag("related") {
+        #[cfg(target_os = "macos")]
+        return run_related(args, &preview, &copies_roots);
+        #[cfg(not(target_os = "macos"))]
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "related uninstall requires macOS",
+        ));
+    }
     if !copies_roots.is_empty() {
         // Read-only evidence; the preview phase installs no signal handler,
         // so Ctrl-C keeps its default behavior, same as the base preview.
@@ -373,4 +388,105 @@ mod tests {
         assert!(value["refusals"].as_array().expect("refusals").is_empty());
         assert!(value["identity"]["inode"].is_u64());
     }
+}
+
+#[cfg(target_os = "macos")]
+fn run_related(args: &ArgMatches, preview: &UninstallPreview, roots: &[PathBuf]) -> io::Result<u8> {
+    use sayaka_engine::related_uninstall::RelatedUninstallSession;
+    let cancellation = Cancellation::default();
+    let config = sayaka_engine::clean_policy::resolve_config_path(
+        args.get_one::<PathBuf>("policy-dir").map(PathBuf::as_path),
+    )?;
+    let session =
+        RelatedUninstallSession::prepare(preview, roots, &config.directory, cancellation.clone())?;
+    let related = session.preview().clone();
+    if args.get_flag("json") {
+        serde_json::to_writer(io::stdout().lock(), &related)?;
+        writeln!(io::stdout().lock())?;
+    } else {
+        writeln!(
+            io::stdout().lock(),
+            "Related data: {}\n{}",
+            related.coverage,
+            related.warning
+        )?;
+        for row in &related.candidates {
+            writeln!(
+                io::stdout().lock(),
+                "{} {} [{}]\n  {}\n  {:?}",
+                row.item_id,
+                row.path.display,
+                if row.execution_supported {
+                    "selectable"
+                } else {
+                    "protected"
+                },
+                row.consequence,
+                row.refusals
+            )?;
+        }
+        for issue in &related.issues {
+            writeln!(io::stdout().lock(), "Incomplete: {issue}")?;
+        }
+    }
+    if !args.get_flag("execute") {
+        return Ok(if related.complete { 0 } else { 3 });
+    }
+    if session.admin_required() {
+        return Err(io::Error::other(
+            "This bundle requires Finder administrator approval; use the application.",
+        ));
+    }
+    write!(
+        io::stderr().lock(),
+        "Select item IDs from this preview (space separated), or Enter for bundle-only confirmation: "
+    )?;
+    io::stderr().flush()?;
+    let mut selection = String::new();
+    io::stdin().lock().take(4096).read_line(&mut selection)?;
+    let ids: Vec<String> = selection.split_whitespace().map(str::to_owned).collect();
+    if ids.is_empty() {
+        return run_inner_mode(args, false);
+    }
+    let token = session.expected_token(ids.len())?;
+    writeln!(
+        io::stderr().lock(),
+        "App: {}",
+        preview.bundle_path.display()
+    )?;
+    for id in &ids {
+        let row = related
+            .candidates
+            .iter()
+            .find(|row| &row.item_id == id && row.execution_supported)
+            .ok_or_else(|| io::Error::other("Invalid or protected selection"))?;
+        writeln!(
+            io::stderr().lock(),
+            "{}: {}",
+            row.path.display,
+            row.consequence
+        )?;
+    }
+    write!(
+        io::stderr().lock(),
+        "Type {token:?} to confirm the app and these related items: "
+    )?;
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().lock().take(4096).read_line(&mut answer)?;
+    if !crate::trash::confirmed(&answer, &token) {
+        return Ok(130);
+    }
+    let signal = cancellation.clone();
+    ctrlc::set_handler(move || signal.cancel()).map_err(io::Error::other)?;
+    let operation = session.begin(
+        &ids,
+        &related.plan_digest,
+        &token,
+        &crate::trash::state_directory(args)?,
+    )?;
+    let result = operation.execute();
+    crate::trash::print_execution_report(&result.bundle)?;
+    crate::trash::print_execution_report(&result.related)?;
+    Ok(result.exit_code())
 }

@@ -33,3 +33,6 @@ pub mod scan;
 pub mod status;
 
 pub use plan::{Clock, IdSource, Planner, SequentialIds, SystemClock};
+
+#[cfg(target_os = "macos")]
+pub mod related_uninstall;

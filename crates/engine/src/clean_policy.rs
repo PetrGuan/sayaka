@@ -7,8 +7,8 @@ use std::path::PathBuf;
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{
-    add_entries, guard_snapshot, list_root_entries, remove_entries, remove_root,
-    resolve_config_path, snapshot_for_root,
+    add_entries, guard_all, guard_snapshot, list_root_entries, remove_entries, remove_root,
+    resolve_config_path, snapshot_all, snapshot_for_root,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -178,6 +178,13 @@ mod unavailable {
 
 #[cfg(not(target_os = "macos"))]
 pub use unavailable::{
-    add_entries, guard_snapshot, list_root_entries, remove_entries, remove_root,
-    resolve_config_path, snapshot_for_root,
+    add_entries, guard_all, guard_snapshot, list_root_entries, remove_entries, remove_root,
+    resolve_config_path, snapshot_all, snapshot_for_root,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlobalPolicySnapshot {
+    pub file_state: PolicyFileState,
+    pub effective_exclusions: Vec<PathBuf>,
+    pub roots: Vec<RootRecord>,
+}

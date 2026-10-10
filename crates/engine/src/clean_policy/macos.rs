@@ -1519,3 +1519,35 @@ mod tests {
         );
     }
 }
+
+/// All roots participate in related-data protection, not only a UI-selected root.
+pub fn snapshot_all(config: &ConfigPath) -> io::Result<super::GlobalPolicySnapshot> {
+    let (file_state, roots) = match load_policy_readonly(config)? {
+        LoadedPolicy::Absent(state) => (state, Vec::new()),
+        LoadedPolicy::Present { file_state, policy } => {
+            validate_policy(&policy)?;
+            (file_state, policy.roots)
+        }
+    };
+    let mut effective_exclusions = Vec::new();
+    for root in &roots {
+        let path = decode_absolute(&root.root_path)?;
+        let identity = path_identity(&path)?;
+        let (effective, missing) = evaluate_entries(root, &path, &identity)?;
+        if !missing.is_empty() {
+            return Err(io::Error::other("policy_needs_attention"));
+        }
+        effective_exclusions.extend(effective);
+    }
+    Ok(super::GlobalPolicySnapshot {
+        file_state,
+        effective_exclusions,
+        roots,
+    })
+}
+pub fn guard_all(config: &ConfigPath, expected: &super::GlobalPolicySnapshot) -> io::Result<()> {
+    if snapshot_all(config)? != *expected {
+        return Err(io::Error::other("policy_changed"));
+    }
+    Ok(())
+}
