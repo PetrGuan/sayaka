@@ -1921,3 +1921,54 @@ fn bundle_manifest_identity_change_after_capture_is_refused() {
     drop(candidate);
     fixture.finish();
 }
+
+#[test]
+fn existing_app_and_browser_cache_shapes_reach_native_admission() {
+    let mut fixture = Fixture::new();
+    let mut created = std::collections::HashSet::new();
+    fn directory(
+        fixture: &mut Fixture,
+        created: &mut std::collections::HashSet<String>,
+        relative: &str,
+    ) -> PathBuf {
+        let mut prefix = String::new();
+        for component in relative.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            if created.insert(prefix.clone()) {
+                fixture.directory(&prefix);
+            }
+        }
+        fixture.root.join(relative)
+    }
+    for relative in [
+        "Library/Caches/com.microsoft.teams",
+        "Library/Application Support/discord/Cache",
+        "Library/Caches/Google/Chrome/Default/Cache",
+        "Library/Caches/Google/Chrome/Profile 2/Code Cache",
+        "Library/Caches/Google/Chrome/Default/GPUCache",
+        "Library/Caches/Microsoft Edge/Default/Cache",
+        "Library/Caches/Microsoft Edge/Profile 2/Code Cache",
+        "Library/Caches/Microsoft Edge/Default/GPUCache",
+        "Library/Caches/Firefox/Profiles/fixture.default-release/cache2",
+    ] {
+        let path = directory(&mut fixture, &mut created, relative);
+        let candidate = CacheTrashCandidate::capture(&fixture.root, &path, &[])
+            .unwrap_or_else(|error| panic!("{relative}: {error}"));
+        candidate.revalidate().expect("retained native admission");
+        assert!(CacheTrashCandidate::capture(&fixture.root, &path, &[path.clone()]).is_err());
+        assert!(TrashCandidate::capture(&fixture.root, &path, &[]).is_err());
+    }
+    for relative in [
+        "Library/Application Support/discord/Local Storage",
+        "Library/Caches/Google/Chrome/Default/Cookies",
+        "Library/Caches/Google/Chrome/.hidden/Cache",
+        "Library/Caches/Firefox/Profiles/fixture.default-release/storage",
+    ] {
+        let path = directory(&mut fixture, &mut created, relative);
+        assert!(CacheTrashCandidate::capture(&fixture.root, &path, &[]).is_err());
+    }
+    fixture.finish();
+}

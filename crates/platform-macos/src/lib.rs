@@ -18,6 +18,8 @@ mod volume;
 #[cfg(target_os = "macos")]
 pub use volume::{VolumeDiagnostics, is_package, volume_info, volume_info_with_diagnostics};
 
+pub mod cache_locations;
+
 mod trash;
 pub use trash::{
     AdminBundleEvidence, BundleTrashCandidate, CacheTrashCandidate, NativeAdmissionWitness,

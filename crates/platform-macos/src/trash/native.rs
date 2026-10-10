@@ -1286,9 +1286,11 @@ impl Candidate {
                 }
             }
         }
-        if self.shape == TargetShape::CacheDirectory && !developer_cache_rule_suffix(&self.path) {
+        if self.shape == TargetShape::CacheDirectory
+            && !crate::cache_locations::permitted_cache_location(&self.path)
+        {
             return Err(refused(
-                "developer cache path is not a documented rule location",
+                "cache path is not a documented native rule location",
             ));
         }
         for path in [&self.path, &self.target.physical, &self.scope] {
@@ -2287,51 +2289,6 @@ fn protected_path(path: &Path, allow_cache_home_components: bool) -> bool {
             ]
             .iter()
             .any(|suffix| part.ends_with(suffix))
-    })
-}
-
-fn developer_cache_rule_suffix(path: &Path) -> bool {
-    let parts: Vec<_> = path
-        .components()
-        .filter_map(|part| match part {
-            Component::Normal(value) => Some(fold(value)),
-            _ => None,
-        })
-        .collect();
-    let parts = if parts.starts_with(&[b"system".to_vec(), b"volumes".to_vec(), b"data".to_vec()]) {
-        &parts[3..]
-    } else {
-        &parts[..]
-    };
-    [
-        &[
-            b"library".as_slice(),
-            b"developer",
-            b"xcode",
-            b"deriveddata",
-        ][..],
-        &[b"library".as_slice(), b"caches", b"com.apple.dt.xcode"][..],
-        &[
-            b"library".as_slice(),
-            b"developer",
-            b"coresimulator",
-            b"caches",
-        ][..],
-        &[b".npm".as_slice(), b"_cacache"][..],
-        &[b"library".as_slice(), b"pnpm", b"store"][..],
-        &[b"library".as_slice(), b"caches", b"yarn"][..],
-        &[b"library".as_slice(), b"caches", b"pip"][..],
-        &[b".cargo".as_slice(), b"registry", b"cache"][..],
-        &[b".gradle".as_slice(), b"caches", b"modules-2", b"files-2.1"][..],
-        &[b"library".as_slice(), b"caches", b"homebrew", b"downloads"][..],
-    ]
-    .iter()
-    .any(|suffix| {
-        parts.len() >= suffix.len()
-            && parts[parts.len() - suffix.len()..]
-                .iter()
-                .zip(suffix.iter())
-                .all(|(part, expected)| part.as_slice() == *expected)
     })
 }
 
