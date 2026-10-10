@@ -26,10 +26,16 @@ pub use trash::{
     PurgeTrashCandidate, TrashCandidate, full_sync,
 };
 
+#[cfg(target_os = "macos")]
+pub use trash::RelatedTrashCandidate;
+
 mod acl;
 pub use acl::has_extended_acl;
 
 pub mod status;
+
+#[cfg(target_os = "macos")]
+pub mod related;
 
 #[cfg(target_os = "macos")]
 pub mod devtools;

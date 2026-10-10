@@ -325,6 +325,40 @@ pub struct DelegationRecord {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct RelatedItemBinding {
+    pub item_id: String,
+    pub rule_id: String,
+    pub rule_version: u32,
+    pub path: NativePath,
+    pub kind: String,
+    pub consequence: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelatedContext {
+    pub schema_version: u32,
+    pub parent_operation_id: String,
+    pub bundle_path: NativePath,
+    pub bundle_id: String,
+    pub bundle_device: u64,
+    pub bundle_inode: u64,
+    pub manifest_device: u64,
+    pub manifest_inode: u64,
+    pub manifest_digest: String,
+    pub plan_digest: String,
+    pub policy_digest: String,
+    pub home: NativePath,
+    pub library_device: u64,
+    pub library_inode: u64,
+    pub copy_roots: Vec<NativePath>,
+    pub coverage: String,
+    pub approved_unix_ms: u64,
+    pub deadline_unix_ms: u64,
+    pub selected: Vec<RelatedItemBinding>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Record {
     pub schema_version: u32,
     pub plan_schema_version: u32,
@@ -337,6 +371,8 @@ pub struct Record {
     pub clean_policy: Option<CleanPolicyContextRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_operation: Option<ToolOperationRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related_context: Option<RelatedContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<DelegationRecord>,
     pub created_unix_ms: u64,
@@ -380,7 +416,12 @@ impl Record {
             && self.engine_version == DELEGATED_ENGINE_VERSION
             && self.rules_version == DELEGATED_RULES_VERSION
             && self.contract == DELEGATED_CONTRACT;
-        if !(legacy || rule_bound || clean || bundle || purge || tool || delegated)
+        let related = self.schema_version == 8
+            && self.plan_schema_version == 8
+            && self.engine_version == 2
+            && self.rules_version == 1
+            && self.contract == "revalidated_related_trash_v1";
+        if !(legacy || rule_bound || clean || bundle || purge || tool || delegated || related)
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
             || self.items.len() > MAX_ITEMS
@@ -520,6 +561,106 @@ impl Record {
             }
             (None, false) => {}
         }
+        match (&self.related_context, related) {
+            (Some(context), true) => {
+                let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+                if context.schema_version != 1
+                    || !valid_id(&context.parent_operation_id)
+                    || context.parent_operation_id == self.operation_id
+                    || context.bundle_id.is_empty()
+                    || context.bundle_id.len() > 255
+                    || !context.bundle_id.split('.').all(|p| {
+                        !p.is_empty()
+                            && p.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    })
+                    || !hex(&context.plan_digest)
+                    || !hex(&context.manifest_digest)
+                    || !hex(&context.policy_digest)
+                    || context.coverage != "registered_and_selected_roots"
+                    || context.copy_roots.is_empty()
+                    || context.copy_roots.len() > 11
+                    || context
+                        .deadline_unix_ms
+                        .checked_sub(context.approved_unix_ms)
+                        != Some(120_000)
+                    || context.selected.len() != self.items.len()
+                {
+                    return Err(invalid("invalid related context"));
+                }
+                context.bundle_path.validate()?;
+                context.home.validate()?;
+                for root in &context.copy_roots {
+                    root.validate()?;
+                }
+                let mut ids = std::collections::HashSet::new();
+                for (binding, item) in context.selected.iter().zip(&self.items) {
+                    binding.path.validate()?;
+                    if binding.path != item.path
+                        || !valid_id(&binding.item_id)
+                        || !ids.insert(&binding.item_id)
+                        || binding.rule_version != 1
+                        || !matches!(binding.kind.as_str(), "file" | "directory")
+                        || !binding.rule_id.starts_with("org.apple.library.")
+                        || !binding.rule_id.ends_with(".bundle_id_convention.v1")
+                        || binding.consequence.is_empty()
+                        || binding.consequence.len() > 2048
+                    {
+                        return Err(invalid("invalid related item binding"));
+                    }
+                    #[cfg(unix)]
+                    {
+                        let locations = [
+                            ("caches", "Caches", "", "directory"),
+                            ("logs", "Logs", "", "directory"),
+                            (
+                                "saved_state",
+                                "Saved Application State",
+                                ".savedState",
+                                "directory",
+                            ),
+                            ("http_storages", "HTTPStorages", "", "directory"),
+                            (
+                                "http_storages_cookies",
+                                "HTTPStorages",
+                                ".binarycookies",
+                                "file",
+                            ),
+                            ("webkit", "WebKit", "", "directory"),
+                            ("cookies", "Cookies", ".binarycookies", "file"),
+                            ("preferences", "Preferences", ".plist", "file"),
+                            (
+                                "application_support",
+                                "Application Support",
+                                "",
+                                "directory",
+                            ),
+                            ("containers", "Containers", "", "directory"),
+                        ];
+                        let (_, parent, suffix, kind) = locations
+                            .iter()
+                            .find(|(key, _, _, _)| {
+                                binding.rule_id
+                                    == format!("org.apple.library.{key}.bundle_id_convention.v1")
+                            })
+                            .ok_or_else(|| invalid("unknown related rule"))?;
+                        let home = Path::new(std::ffi::OsStr::from_bytes(&context.home.bytes));
+                        let library = home.join("Library");
+                        let expected = library
+                            .join(parent)
+                            .join(format!("{}{suffix}", context.bundle_id));
+                        if binding.kind != *kind
+                            || binding.path != NativePath::from_path(&expected)
+                            || self.scope != NativePath::from_path(&library)
+                        {
+                            return Err(invalid("related rule path/type mismatch"));
+                        }
+                    }
+                }
+            }
+            (None, false) => {}
+            _ => return Err(invalid("missing or unexpected related context")),
+        }
         let mut identities = std::collections::HashSet::new();
         let mut paths = std::collections::HashSet::new();
         for item in &self.items {
@@ -583,7 +724,14 @@ impl Record {
                     Some("interrupted_after_durable_intent; never automatically retried".into());
             } else if item.state == ItemState::Planned {
                 item.state = ItemState::Skipped;
-                item.reason = Some("not_started_before_session_ended".into());
+                item.reason = Some(
+                    if self.schema_version == 8 {
+                        "interrupted"
+                    } else {
+                        "not_started_before_session_ended"
+                    }
+                    .into(),
+                );
             }
         }
         self
@@ -908,6 +1056,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            related_context: None,
             tool_operation: None,
             delegation: None,
             created_unix_ms: 1,
@@ -924,6 +1073,76 @@ mod tests {
                 updated_unix_ms: 1,
             }],
         }
+    }
+
+    fn related_record() -> Record {
+        let mut value = record();
+        value.schema_version = 8;
+        value.plan_schema_version = 8;
+        value.rules_version = 1;
+        value.contract = "revalidated_related_trash_v1".into();
+        value.scope = NativePath::unix_fixture("/fixture/Library");
+        value.items[0].path =
+            NativePath::unix_fixture("/fixture/Library/Caches/org.example.fixture");
+        value.related_context = Some(RelatedContext {
+            schema_version: 1,
+            parent_operation_id: "b-2".into(),
+            bundle_path: NativePath::unix_fixture("/Applications/Fixture.app"),
+            bundle_id: "org.example.fixture".into(),
+            bundle_device: 1,
+            bundle_inode: 3,
+            manifest_device: 1,
+            manifest_inode: 4,
+            manifest_digest: "a".repeat(64),
+            plan_digest: "b".repeat(64),
+            policy_digest: "c".repeat(64),
+            home: NativePath::unix_fixture("/fixture"),
+            library_device: 1,
+            library_inode: 5,
+            copy_roots: vec![NativePath::unix_fixture("/Applications")],
+            coverage: "registered_and_selected_roots".into(),
+            approved_unix_ms: 1,
+            deadline_unix_ms: 120001,
+            selected: vec![RelatedItemBinding {
+                item_id: "c-3".into(),
+                rule_id: "org.apple.library.caches.bundle_id_convention.v1".into(),
+                rule_version: 1,
+                path: value.items[0].path.clone(),
+                kind: "directory".into(),
+                consequence: "Rebuild cache".into(),
+            }],
+        });
+        value
+    }
+    #[test]
+    fn related_context_rejects_forged_paths_parent_and_contract() {
+        let value = related_record();
+        value.validate().unwrap();
+        let mut wrong = value.clone();
+        wrong.items[0].path = NativePath::unix_fixture("/fixture/Library/Other");
+        wrong.related_context.as_mut().unwrap().selected[0].path = wrong.items[0].path.clone();
+        assert!(wrong.validate().is_err());
+        let mut wrong = value.clone();
+        wrong.related_context.as_mut().unwrap().parent_operation_id = wrong.operation_id.clone();
+        assert!(wrong.validate().is_err());
+        let mut wrong = value.clone();
+        wrong.schema_version = 4;
+        wrong.plan_schema_version = 4;
+        wrong.contract = "revalidated_bundle_trash_v1".into();
+        assert!(wrong.validate().is_err());
+        let mut wrong = value;
+        wrong.related_context = None;
+        assert!(wrong.validate().is_err());
+    }
+    #[test]
+    fn related_interruption_never_resumes_planned_or_started_items() {
+        let value = related_record();
+        assert_eq!(value.reconciled().items[0].state, ItemState::Unknown);
+        let mut value = related_record();
+        value.items[0].state = ItemState::Planned;
+        let recovered = value.reconciled();
+        assert_eq!(recovered.items[0].state, ItemState::Skipped);
+        assert_eq!(recovered.items[0].reason.as_deref(), Some("interrupted"));
     }
 
     #[test]

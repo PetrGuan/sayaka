@@ -147,6 +147,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            related_context: None,
             tool_operation: None,
             delegation: None,
             created_unix_ms: created,
@@ -181,6 +182,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            related_context: None,
             tool_operation: None,
             delegation: None,
             created_unix_ms: created,
@@ -470,6 +472,7 @@ mod tests {
             operation_id: "c-3".into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
+            related_context: None,
             tool_operation: None,
             delegation: None,
             clean_policy: Some(CleanPolicyContextRecord {

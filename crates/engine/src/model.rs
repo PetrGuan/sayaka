@@ -271,12 +271,15 @@ pub enum ExecutionContract {
     RevalidatedPurgeTrashV1,
     /// Sealed documented developer-cache directories to the user Trash.
     RevalidatedCacheTrashV1,
+    /// Bundle-first related data, owned only by RelatedUninstallSession.
+    RevalidatedRelatedTrashV1,
 }
 
 impl ExecutionContract {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ModelOnly => "model_only",
+            Self::RevalidatedRelatedTrashV1 => "revalidated_related_trash_v1",
             Self::RevalidatedTrashV1 => "revalidated_trash_v1",
             Self::RevalidatedBundleTrashV1 => "revalidated_bundle_trash_v1",
             Self::RevalidatedPurgeTrashV1 => "revalidated_purge_trash_v1",
@@ -287,6 +290,9 @@ impl ExecutionContract {
     pub const fn warning(self) -> &'static str {
         match self {
             Self::ModelOnly => "Read-only model; no native execution is authorized.",
+            Self::RevalidatedRelatedTrashV1 => {
+                "Bundle-ID conventions do not prove exclusive ownership. Unregistered copies and other-user writers may be missed. A last-check pathname race remains; directory contents can change. Trash does not free space or guarantee restoration."
+            }
             Self::RevalidatedTrashV1 => {
                 "A file or ancestor replaced after the last check could cause a different file to be moved. Trash does not free space or guarantee restoration."
             }
@@ -476,7 +482,8 @@ impl Finding {
             ExecutionContract::RevalidatedTrashV1
             | ExecutionContract::RevalidatedBundleTrashV1
             | ExecutionContract::RevalidatedPurgeTrashV1
-            | ExecutionContract::RevalidatedCacheTrashV1 => Action::RevalidatedMoveToTrash,
+            | ExecutionContract::RevalidatedCacheTrashV1
+            | ExecutionContract::RevalidatedRelatedTrashV1 => Action::RevalidatedMoveToTrash,
         })
     }
 }
@@ -514,7 +521,8 @@ impl PlanItem {
             ExecutionContract::RevalidatedTrashV1
             | ExecutionContract::RevalidatedBundleTrashV1
             | ExecutionContract::RevalidatedPurgeTrashV1
-            | ExecutionContract::RevalidatedCacheTrashV1 => Action::RevalidatedMoveToTrash,
+            | ExecutionContract::RevalidatedCacheTrashV1
+            | ExecutionContract::RevalidatedRelatedTrashV1 => Action::RevalidatedMoveToTrash,
         }
     }
     pub fn reason(&self) -> FindingReason {
@@ -656,6 +664,7 @@ impl Plan {
     pub fn schema_version(&self) -> u32 {
         match self.contract {
             ExecutionContract::ModelOnly => 1,
+            ExecutionContract::RevalidatedRelatedTrashV1 => 8,
             ExecutionContract::RevalidatedBundleTrashV1 => 4,
             ExecutionContract::RevalidatedPurgeTrashV1
             | ExecutionContract::RevalidatedCacheTrashV1 => 5,
