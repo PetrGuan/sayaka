@@ -11,6 +11,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 #[cfg(target_os = "macos")]
+pub mod scan_bulk;
+
+#[cfg(target_os = "macos")]
 mod volume;
 #[cfg(target_os = "macos")]
 pub use volume::{VolumeDiagnostics, is_package, volume_info, volume_info_with_diagnostics};

@@ -923,3 +923,89 @@ fn cache_stream_rejects_changed_root_and_changed_directory() {
             .any(|issue| issue.code == ScanCode::ChangedEntry)
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_workers_share_hardlink_identity_and_unknown_size_accounting() {
+    let mut fake = tree();
+    for (name, inode) in [("left", 2), ("right", 3)] {
+        let child = add_directory(&mut fake, &root(), name, inode);
+        let mut shared = metadata(4, ResourceKind::File, Some(7));
+        shared.link_count = Some(2);
+        fake.directories.get_mut(&child).unwrap().items.push(Item {
+            name: "shared".into(),
+            metadata: Ok(shared),
+        });
+        add_file(&mut fake, &child, "own", inode + 10, Some(3));
+    }
+    let unknown = root().join("right");
+    add_file(&mut fake, &unknown, "unknown", 20, None);
+    let backend = FakeBackend(Arc::new(fake));
+    let result = crate::scan::cache::summarize(
+        &backend,
+        &root(),
+        metadata(1, ResourceKind::Directory, None).identity,
+        &ScanLimits::default(),
+        &Cancellation::default(),
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert!(result.complete);
+    assert_eq!(result.files, 4);
+    assert_eq!(result.entries, 7);
+    assert_eq!(result.logical, None);
+    assert_eq!(result.allocated, None);
+    assert_eq!(
+        backend.0.opened.lock().unwrap().len(),
+        backend.0.closed.load(Ordering::Acquire)
+    );
+    assert_eq!(
+        backend.0.policies_entered.load(Ordering::Acquire),
+        backend.0.policies_restored.load(Ordering::Acquire)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_worker_start_failure_and_child_panic_return_without_stranding_queue() {
+    for fail_spawn in [true, false] {
+        let mut fake = tree();
+        for n in 0..10 {
+            add_directory(&mut fake, &root(), &format!("child-{n}"), n + 2);
+        }
+        if fail_spawn {
+            fake.fail_spawn_at = Some(1);
+        } else {
+            fake.hook = Some(Arc::new(|path, _| {
+                assert_eq!(path, root(), "injected child worker panic");
+            }));
+        }
+        let backend = FakeBackend(Arc::new(fake));
+        let result = crate::scan::cache::summarize(
+            &backend,
+            &root(),
+            metadata(1, ResourceKind::Directory, None).identity,
+            &ScanLimits::default(),
+            &Cancellation::default(),
+            |_, _, _| {},
+        );
+        assert_eq!(
+            result.err().unwrap().code,
+            if fail_spawn {
+                ScanCode::WorkerStartFailed
+            } else {
+                ScanCode::WorkerPanic
+            }
+        );
+        assert_eq!(
+            backend.0.opened.lock().unwrap().len(),
+            backend.0.closed.load(Ordering::Acquire)
+        );
+        if fail_spawn {
+            assert_eq!(
+                backend.0.policies_entered.load(Ordering::Acquire),
+                backend.0.policies_restored.load(Ordering::Acquire)
+            );
+        }
+    }
+}
