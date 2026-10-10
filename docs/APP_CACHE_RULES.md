@@ -1,14 +1,12 @@
-# App cache expansion contract — proposed, awaiting owner approval
+# App cache expansion contract — owner approved
 
-Reviewed sources: 2026-10-11. This is a documentation-only proposal for the
-Developer ID, non-sandboxed macOS product. It does not authorize new native
-allowlist entries until the owner approves this PR. Existing 19-rule admission
+Owner approved this contract on 2026-10-11. Reviewed sources: 2026-10-11. This is the approved contract for the
+Developer ID, non-sandboxed macOS product. The two exact Adobe leaves and separately typed generic shape below are authorized for incremental implementation. Existing 19-rule admission
 repair is separate and described in [PURGE_EXECUTION.md](PURGE_EXECUTION.md).
-No new-rule implementation, native fixture acceptance or measured reclaimed-space
-claim is included here. Implement exact additions and bundle-owned discovery in
+Approval is not native fixture acceptance or evidence of reclaimed space. Implement exact additions and bundle-owned discovery in
 separate subsequent PRs, each independently reviewed before merge.
 
-## Decisions requested
+## Approved decisions
 
 | Decision | Proposed resolution |
 | --- | --- |
@@ -257,3 +255,11 @@ readable. Use disposable data with backups and inspect every outcome; record
 observations separately from build results. No real-user-data deletion is needed
 for agent validation. Native acceptance and any residual limitations must be
 reported before describing new coverage as verified.
+
+### Exact batch implementation
+
+Ruleset revision 5 adds the two Adobe leaves to both engine and native tables.
+A bounded native app inventory and complete effective-user process census guard
+all shared writers at preview, approval and final revalidation. Unknown writer
+metadata/layout is a refusal. Test sources are compiled only; native acceptance
+is pending. Generic discovery and App presentation follow in separate PRs.

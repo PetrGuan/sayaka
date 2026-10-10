@@ -49,8 +49,30 @@ impl CacheLocation {
     }
 }
 
-/// Exactly the existing 19 engine rules. No generic bundle-ID or Containers shape.
+/// The reviewed exact engine rules (including the two approved Adobe leaves). No generic bundle-ID or Containers shape.
 pub const CACHE_LOCATIONS: &[CacheLocation] = &[
+    CacheLocation {
+        rule_id: "com.adobe.common.media_cache_files.macos",
+        base: &[
+            "Library",
+            "Application Support",
+            "Adobe",
+            "Common",
+            "Media Cache Files",
+        ],
+        profile_leaf: None,
+    },
+    CacheLocation {
+        rule_id: "com.adobe.common.media_cache_database.macos",
+        base: &[
+            "Library",
+            "Application Support",
+            "Adobe",
+            "Common",
+            "Media Cache",
+        ],
+        profile_leaf: None,
+    },
     CacheLocation {
         rule_id: "com.apple.xcode.derived_data",
         base: &["Library", "Developer", "Xcode", "DerivedData"],

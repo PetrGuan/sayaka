@@ -745,6 +745,8 @@ documented rebuildable cache/download-store locations:
 | Gradle | `org.gradle.modules_cache` | `~/.gradle/caches/modules-2/files-2.1` |
 | Homebrew | `sh.homebrew.downloads_cache` | `~/Library/Caches/Homebrew/downloads` |
 | Classic Teams | `com.microsoft.teams.classic_cache.macos` | `~/Library/Caches/com.microsoft.teams` |
+| Adobe media files | `com.adobe.common.media_cache_files.macos` | `~/Library/Application Support/Adobe/Common/Media Cache Files` |
+| Adobe media database | `com.adobe.common.media_cache_database.macos` | `~/Library/Application Support/Adobe/Common/Media Cache` |
 | Discord stable | `com.discord.stable.cache.macos` | `~/Library/Application Support/discord/Cache` |
 | Chrome HTTP cache | `com.google.chrome.http_cache.macos` | `~/Library/Caches/Google/Chrome/<profile>/Cache` |
 | Chrome CODE cache | `com.google.chrome.code_cache.macos` | `~/Library/Caches/Google/Chrome/<profile>/Code Cache` |
