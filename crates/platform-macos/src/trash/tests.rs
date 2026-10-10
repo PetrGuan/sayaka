@@ -1946,6 +1946,8 @@ fn existing_app_and_browser_cache_shapes_reach_native_admission() {
     for relative in [
         "Library/Caches/com.microsoft.teams",
         "Library/Application Support/discord/Cache",
+        "Library/Application Support/Adobe/Common/Media Cache Files",
+        "Library/Application Support/Adobe/Common/Media Cache",
         "Library/Caches/Google/Chrome/Default/Cache",
         "Library/Caches/Google/Chrome/Profile 2/Code Cache",
         "Library/Caches/Google/Chrome/Default/GPUCache",
@@ -1963,6 +1965,8 @@ fn existing_app_and_browser_cache_shapes_reach_native_admission() {
     }
     for relative in [
         "Library/Application Support/discord/Local Storage",
+        "Library/Application Support/Adobe/Common",
+        "Library/Application Support/Adobe/Common/Source Media",
         "Library/Caches/Google/Chrome/Default/Cookies",
         "Library/Caches/Google/Chrome/.hidden/Cache",
         "Library/Caches/Firefox/Profiles/fixture.default-release/storage",

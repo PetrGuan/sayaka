@@ -18,13 +18,15 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(target_os = "macos")]
+mod adobe;
 pub mod task;
 
 pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 4;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 5;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -563,6 +565,80 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             license_note: "Discord support documentation",
         }],
     },
+    DeveloperCacheRule {
+        tool: "adobe-media",
+        rule_id: "com.adobe.common.media_cache_files.macos",
+        rule_version: 1,
+        title: "Adobe shared media cache files",
+        suffix: &[
+            "Library",
+            "Application Support",
+            "Adobe",
+            "Common",
+            "Media Cache Files",
+        ],
+        location: "~/Library/Application Support/Adobe/Common/Media Cache Files",
+        location_kind: "directory",
+        rebuildability_note: "Adobe's default shared media cache rebuilds from source media. Premiere, After Effects, Media Encoder and background writers must be idle. Only this leaf is eligible; source media, projects, exports and customized locations are excluded.",
+        lock_siblings: &[],
+        evidence: &[
+            EvidenceSource {
+                title: "Adobe Premiere: manage media cache",
+                url: "https://helpx.adobe.com/premiere/desktop/troubleshooting/media-issues/manage-media-cache.html",
+                reviewed_utc: "2026-10-11",
+                license_note: "Adobe vendor documentation",
+            },
+            EvidenceSource {
+                title: "Adobe Premiere: default media cache location",
+                url: "https://helpx.adobe.com/ie/premiere/desktop/troubleshooting/playback-issues/choppy-playback-and-poor-performance-issue.html",
+                reviewed_utc: "2026-10-11",
+                license_note: "Adobe vendor documentation",
+            },
+            EvidenceSource {
+                title: "Adobe Media Encoder: shared media cache database",
+                url: "https://helpx.adobe.com/sg/media-encoder/desktop/encoding-and-exporting/media-cache-database.html",
+                reviewed_utc: "2026-10-11",
+                license_note: "Adobe vendor documentation",
+            },
+        ],
+    },
+    DeveloperCacheRule {
+        tool: "adobe-media",
+        rule_id: "com.adobe.common.media_cache_database.macos",
+        rule_version: 1,
+        title: "Adobe shared media cache database",
+        suffix: &[
+            "Library",
+            "Application Support",
+            "Adobe",
+            "Common",
+            "Media Cache",
+        ],
+        location: "~/Library/Application Support/Adobe/Common/Media Cache",
+        location_kind: "directory",
+        rebuildability_note: "Adobe's default shared media cache rebuilds from source media. Premiere, After Effects, Media Encoder and background writers must be idle. Only this leaf is eligible; source media, projects, exports and customized locations are excluded.",
+        lock_siblings: &[],
+        evidence: &[
+            EvidenceSource {
+                title: "Adobe Premiere: manage media cache",
+                url: "https://helpx.adobe.com/premiere/desktop/troubleshooting/media-issues/manage-media-cache.html",
+                reviewed_utc: "2026-10-11",
+                license_note: "Adobe vendor documentation",
+            },
+            EvidenceSource {
+                title: "Adobe Premiere: default media cache location",
+                url: "https://helpx.adobe.com/ie/premiere/desktop/troubleshooting/playback-issues/choppy-playback-and-poor-performance-issue.html",
+                reviewed_utc: "2026-10-11",
+                license_note: "Adobe vendor documentation",
+            },
+            EvidenceSource {
+                title: "Adobe Media Encoder: shared media cache database",
+                url: "https://helpx.adobe.com/sg/media-encoder/desktop/encoding-and-exporting/media-cache-database.html",
+                reviewed_utc: "2026-10-11",
+                license_note: "Adobe vendor documentation",
+            },
+        ],
+    },
     browser_cache_rule!(
         "chrome",
         "com.google.chrome.http_cache.macos",
@@ -652,7 +728,7 @@ pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
     UnsupportedOperation {
         tool: "teams-new",
         operation: "New Teams protected container and group data",
-        reason: "the New Teams cache is inside app/group containers that the App Store sandbox cannot treat as a user-granted general cache root; shared identity and settings are excluded",
+        reason: "New Teams stores shared identity/settings in Containers and Group Containers; those data semantics and macOS other-app-data access prompts are outside this cache contract",
     },
     UnsupportedOperation {
         tool: "application-logs",
@@ -667,12 +743,12 @@ pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
     UnsupportedOperation {
         tool: "safari",
         operation: "Safari website cache",
-        reason: "Safari's protected website data is not a file-level App Store sandbox target; use Safari's own website-data controls instead of granting a broad cleanup rule",
+        reason: "Safari website data is outside the exact cache contract; no broad website-data cleanup rule is authorized",
     },
     UnsupportedOperation {
         tool: "homebrew",
         operation: "brew cleanup",
-        reason: "requires launching Homebrew and applying Homebrew policy outside the app sandbox; this profile only reports file-level download cache candidates under user-granted roots",
+        reason: "launching Homebrew cleanup is outside the approved effect class; only the exact downloads cache leaf is supported",
     },
     UnsupportedOperation {
         tool: "xcode",
@@ -692,22 +768,22 @@ pub const UNSUPPORTED_OPERATIONS: &[UnsupportedOperation] = &[
     UnsupportedOperation {
         tool: "pnpm",
         operation: "pnpm store prune",
-        reason: "requires launching pnpm and interpreting store metadata; unsupported in the sandboxed app",
+        reason: "requires launching pnpm and interpreting store metadata; outside the approved cache Trash effect class",
     },
     UnsupportedOperation {
         tool: "yarn",
         operation: "yarn cache clean",
-        reason: "requires launching Yarn; unsupported in the sandboxed app",
+        reason: "requires launching Yarn; outside the approved cache Trash effect class",
     },
     UnsupportedOperation {
         tool: "pip",
         operation: "pip cache purge",
-        reason: "requires launching pip; unsupported in the sandboxed app",
+        reason: "requires launching pip; outside the approved cache Trash effect class",
     },
     UnsupportedOperation {
         tool: "gradle",
         operation: "gradle --stop / cache cleanup",
-        reason: "requires controlling Gradle daemons or Gradle cleanup policy; unsupported in the sandboxed app",
+        reason: "requires controlling Gradle daemons or Gradle cleanup policy; outside the approved cache Trash effect class",
     },
 ];
 
@@ -1594,6 +1670,9 @@ fn revalidate_developer_cache_selection_with_home(
 
 #[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    if tool == "adobe-media" {
+        return adobe::active_or_unknown(account_home);
+    }
     if matches!(tool, "discord" | "teams-classic") {
         // Bundles can be renamed without changing their executables. Prefer a
         // conservative false positive to moving a live application cache.
@@ -1683,7 +1762,7 @@ fn process_paths_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>, bundles: &
 fn application_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
     matches!(
         tool,
-        "chrome" | "edge" | "firefox" | "teams-classic" | "discord"
+        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media"
     )
 }
 
