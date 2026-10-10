@@ -464,6 +464,60 @@ SAYAKA_API int32_t sayaka_uninstall_related_preview_v1(
     const SayakaUninstallRelatedRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+/* Related execution v2 is additive. ABI version remains SAYAKA_ABI_VERSION.
+ * Native acceptance is currently pending: preview rows are not executable and
+ * nonempty execution refuses before effects. No caller flag enables it. */
+typedef struct SayakaUninstallRelatedRequestV2 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t handle;
+    const SayakaPathV1 *app_roots; /* Optional additional roots, never targets. */
+    size_t app_root_count; /* 0..8; pointer may be NULL only when zero. */
+    SayakaPathV1 policy_dir; /* Shared protected-path policy directory. */
+    uint64_t reserved; /* Zero. Home/Library are derived by the core. */
+} SayakaUninstallRelatedRequestV2;
+
+typedef struct SayakaUninstallItemIdV2 {
+    const uint8_t *bytes;
+    size_t byte_length; /* 1..256 UTF-8 bytes from this preview. */
+} SayakaUninstallItemIdV2;
+
+typedef struct SayakaUninstallExecuteRequestV2 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t handle;
+    const uint8_t *plan_digest;
+    size_t plan_digest_length; /* Exactly 64 ASCII hexadecimal bytes. */
+    const SayakaUninstallItemIdV2 *item_ids;
+    size_t item_count; /* 1..32 distinct IDs. Empty selection uses v1. */
+    const uint8_t *approval_token;
+    size_t approval_token_length; /* 1..4096 UTF-8 bytes, exact typed token. */
+    SayakaPathV1 state_dir;
+    uint64_t reserved; /* Zero. */
+} SayakaUninstallExecuteRequestV2;
+
+/* Off UI thread; caller retains required security scopes until release.
+ * Exactly 4 MiB output, no size probe. Returns schema 2 preview or refusal
+ * JSON; each successful refresh replaces the old retained capability. */
+SAYAKA_API int32_t sayaka_uninstall_related_preview_v2(
+    const SayakaUninstallRelatedRequestV2 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+/* Exact token: "uninstall <bundle filename> and trash <N> related items".
+ * A formed attempt is one-shot, including native refusal. INVALID_CANDIDATE
+ * may retain a terminal refusal; retrieve it with result_v1. Schema 2 result
+ * has report (bundle) and related_report; inspect every item and journal error.
+ * Empty selection must call execute_v1/admin_begin_v1 with its old token.
+ * There is no standalone related execution and no permanent-delete fallback. */
+SAYAKA_API int32_t sayaka_uninstall_execute_v2(
+    const SayakaUninstallExecuteRequestV2 *request);
+/* Call Finder ONLY on OK, then admin_finish_v1. Related moves stay ordinary
+ * user operations and run only after the core verifies the bundle move. */
+SAYAKA_API int32_t sayaka_uninstall_admin_begin_v2(
+    const SayakaUninstallExecuteRequestV2 *request);
+/* Sticky, thread-safe cancellation without acquiring the worker mutex.
+ * Does not release the handle or dismiss Finder's administrator dialog. */
+SAYAKA_API int32_t sayaka_uninstall_cancel_v2(uint64_t handle);
+
 SAYAKA_API int32_t sayaka_uninstall_result_v1(uint64_t handle, uint8_t *buffer,
                                              size_t capacity, size_t *required);
 SAYAKA_API int32_t sayaka_uninstall_execute_v1(
