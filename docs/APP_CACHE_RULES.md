@@ -263,3 +263,19 @@ A bounded native app inventory and complete effective-user process census guard
 all shared writers at preview, approval and final revalidation. Unknown writer
 metadata/layout is a refusal. Test sources are compiled only; native acceptance
 is pending. Generic discovery and App presentation follow in separate PRs.
+
+### Bundle-owned core implementation
+
+Ruleset revision 6 implements the separately typed generic native shape and
+additive candidate `rule_kind` / `owner_app` fields. The direct-child discovery
+policy cannot descend into unknown trees, including directories created after
+enumeration. Exact rules reserve their shapes even when inactive/ineligible.
+Ownership retains no-follow bundle/manifest/cache witnesses and a digest; all
+saved exclusion roots and physical state/config overlaps are protected. Unknown
+owner evidence is a bounded scan issue and makes the preview incomplete; running
+owners are visible but non-executable. Every retained owner is rechecked before
+approval and at the final native guard. Other-user/root/external-helper writers
+and the final pathname race remain limitations. Schema 5 keys are unchanged.
+
+Compilation and independent review do not establish native Trash acceptance.
+The App presentation/pin is a separate implementation PR.

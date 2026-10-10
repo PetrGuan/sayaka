@@ -41,6 +41,7 @@ pub(crate) enum TraversalPolicy {
     /// Internal profile scope; never used for general disk-size scans.
     RestrictedTo(std::sync::Arc<[PathBuf]>),
     CacheDiscovery {
+        generic_root: PathBuf,
         scopes: std::sync::Arc<[PathBuf]>,
         leaves: std::sync::Arc<[PathBuf]>,
     },

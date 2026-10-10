@@ -1144,7 +1144,7 @@ impl SharedAuthority {
         Ok(())
     }
 }
-fn physical_location(path: &Path) -> io::Result<PathBuf> {
+pub(crate) fn physical_location(path: &Path) -> io::Result<PathBuf> {
     if !path.is_absolute()
         || path.components().any(|c| {
             matches!(

@@ -934,8 +934,15 @@ impl CacheSession {
                     "cancelled during preview",
                 ));
             }
-            let candidate =
-                CacheTrashCandidate::capture(&selection.scope_root, &selection.path, &[])?;
+            let candidate = if selection.rule_id == purge_preview::bundle_owned::RULE_ID {
+                CacheTrashCandidate::capture_bundle_owned(
+                    &selection.scope_root,
+                    &selection.path,
+                    &[],
+                )?
+            } else {
+                CacheTrashCandidate::capture(&selection.scope_root, &selection.path, &[])?
+            };
             let expected = match selection.expected_identity {
                 FileIdentity::Unix { device, inode } => (device, inode),
                 FileIdentity::Windows { .. } => {
@@ -1036,9 +1043,22 @@ impl CacheSession {
         store: &Store,
         policy: Option<(&ConfigPath, &Path, &PolicySnapshot)>,
     ) -> io::Result<ExecutionReport> {
+        for selection in &self.selections {
+            purge_preview::bundle_owned::ensure_disjoint(&selection.path, store.directory_path())
+                .map_err(|e| journal::invalid(&e))?;
+        }
+        let state_path = store.directory_path().to_owned();
         let selections = self.selections.clone();
         let mut guard = move |point: GuardPoint, path: &Path| -> io::Result<GuardDecision> {
+            if let Err(e) = purge_preview::bundle_owned::ensure_disjoint(path, &state_path) {
+                return Ok(GuardDecision::Refused(e));
+            }
             if let Some((config, root, snapshot)) = policy {
+                if let Err(e) =
+                    purge_preview::bundle_owned::ensure_disjoint(path, &config.directory)
+                {
+                    return Ok(GuardDecision::Refused(e));
+                }
                 match clean_policy::guard_snapshot(config, root, snapshot)? {
                     PolicyGuardStatus::Unchanged => {}
                     PolicyGuardStatus::Refused(reason) => {

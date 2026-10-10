@@ -84,6 +84,8 @@ pub fn scan_preview(
         .validate()
         .map_err(|s| ScanError::new(ScanCode::InvalidLimits, s))?;
     let started = Instant::now();
+    let mut options = options.clone();
+    options.cache_discovery_deadline = Some(started + Duration::from_secs(30));
     let report = match options.profile {
         PurgeProfile::DeveloperCaches => {
             let home =
@@ -94,13 +96,17 @@ pub fn scan_preview(
                 .map(|location| location.path)
                 .collect::<Vec<_>>();
             let mut discovery_limits = limits.clone();
-            discovery_limits.max_entries = limits.max_entries.min(100_000);
+            discovery_limits.time_budget = Duration::from_secs(30)
+                .saturating_sub(started.elapsed())
+                .min(limits.time_budget);
+            discovery_limits.max_entries = limits.max_entries.min(10_000);
             discovery_limits.max_path_bytes = limits.max_path_bytes.min(32 * 1024 * 1024);
             scan::scan_with_policy(
                 roots,
                 &discovery_limits,
                 cancellation,
                 scan::TraversalPolicy::CacheDiscovery {
+                    generic_root: home.join("Library/Caches"),
                     scopes: cache_scopes()?.into(),
                     leaves: leaves.into(),
                 },
@@ -115,7 +121,7 @@ pub fn scan_preview(
     let task_id = report.task_id;
     let mut observed = report.entries.len();
     let index = ScanTree::build(report, cancellation)?;
-    let mut preview = purge_preview(&index, options, SystemTime::now())
+    let mut preview = purge_preview(&index, &options, SystemTime::now())
         .map_err(|s| ScanError::new(ScanCode::InvalidLimits, s))?;
     if options.profile != PurgeProfile::DeveloperCaches {
         return Ok(preview);
@@ -199,6 +205,11 @@ pub fn scan_preview(
             } else {
                 preview.scan_issues_omitted += 1;
             }
+        }
+    }
+    if !preview.complete {
+        for candidate in &mut preview.developer_caches {
+            candidate.complete = false;
         }
     }
     if !preview.complete && preview.status == PurgeStatus::Complete {

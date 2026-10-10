@@ -203,7 +203,7 @@ pub fn project_orphan_caches(
     }
 }
 
-fn cache_bundle_id<'a>(path: &'a Path, root: &Path) -> Option<&'a str> {
+pub(crate) fn cache_bundle_id<'a>(path: &'a Path, root: &Path) -> Option<&'a str> {
     if root.file_name()? != "Caches" || root.parent()?.file_name()? != "Library" {
         return None;
     }

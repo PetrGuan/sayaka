@@ -312,6 +312,8 @@ fn developer_cache_items_json(
                 "reference": { "preview_handle": handle.to_string(), "item_id": id.to_string() },
                 "tool": cache.tool,
                 "rule_id": cache.rule_id,
+                "rule_kind": cache.rule_kind,
+                "owner_app": cache.owner_app.iter().map(|owner| json!({"display_name": owner.display_name, "bundle_path": wire::NativePath(&owner.bundle_path)})).collect::<Vec<_>>(),
                 "rule_version": cache.rule_version,
                 "ruleset_revision": cache.ruleset_revision,
                 "links_not_followed": cache.links_not_followed,
@@ -339,7 +341,7 @@ fn developer_cache_items_json(
                     "license_note": source.license_note,
                 })).collect::<Vec<_>>(),
                 "filesystem_identity": filesystem_identity_json(cache.identity),
-                "execution_supported": cache.complete && cache.cleanup_supported,
+                "execution_supported": preview.complete && cache.complete && cache.cleanup_supported,
                 "execution_unsupported_reason": if !cache.complete {
                     Some("developer cache scan coverage is incomplete; refresh or grant narrower access before execution")
                 } else if cache.activity.as_str() == "lock_file_observed" {
@@ -702,6 +704,15 @@ fn execution_worker(
         )
         .map_err(|code| ScanError::new(ScanCode::Internal, sayaka_status_text(code)));
     }
+    #[cfg(target_os = "macos")]
+    if preview.profile == PurgeProfile::DeveloperCaches {
+        let selections = purge_preview::resolve_cache_selections_by_ids(&preview, &item_ids)
+            .map_err(|e| ScanError::new(ScanCode::InvalidRoot, e))?;
+        for selection in selections {
+            purge_preview::bundle_owned::ensure_disjoint(&selection.path, &state_dir)
+                .map_err(|e| ScanError::new(ScanCode::InvalidRoot, e))?;
+        }
+    }
     if let Some(policy) = &policy {
         let excluded = match preview.profile {
             PurgeProfile::Projects => purge_preview::resolve_selections_by_ids(&preview, &item_ids)
@@ -1048,7 +1059,7 @@ unsafe fn read_item_ids(
 
 fn start_preview(
     root: std::path::PathBuf,
-    options: PurgeOptions,
+    mut options: PurgeOptions,
     policy: Option<PurgePolicy>,
     out_handle: *mut u64,
 ) -> Result<(), i32> {
@@ -1060,6 +1071,15 @@ fn start_preview(
     }
     let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
     let handle = registry.allocate_handle()?;
+    if options.profile == PurgeProfile::DeveloperCaches {
+        let config = match &policy {
+            Some(p) => p.config.clone(),
+            None => clean_policy::resolve_config_path(None).map_err(|_| INVALID_CANDIDATE)?,
+        };
+        options.cache_policy = Some(Arc::new(
+            purge_preview::CachePolicy::capture(config).map_err(|_| INVALID_CANDIDATE)?,
+        ));
+    }
     let task = PurgePreviewTask::start(
         vec![root],
         purge_preview::task::preview_limits(options.profile),
@@ -1107,6 +1127,8 @@ pub unsafe extern "C" fn sayaka_purge_preview_start_v1(
             return Err(UNSUPPORTED_PLATFORM);
         }
         let options = PurgeOptions {
+            cache_policy: None,
+            cache_discovery_deadline: None,
             stale_days: if request.stale_days == 0 {
                 purge_preview::DEFAULT_STALE_DAYS
             } else {
@@ -1147,6 +1169,8 @@ pub unsafe extern "C" fn sayaka_purge_preview_start_profile_v1(
         }
         let profile = PurgeProfile::from_ffi(request.profile).ok_or(INVALID_ARGUMENT)?;
         let options = PurgeOptions {
+            cache_policy: None,
+            cache_discovery_deadline: None,
             stale_days: if request.stale_days == 0 {
                 purge_preview::DEFAULT_STALE_DAYS
             } else {
@@ -1200,6 +1224,8 @@ pub unsafe extern "C" fn sayaka_purge_preview_start_policy_v1(
             snapshot,
         };
         let options = PurgeOptions {
+            cache_policy: None,
+            cache_discovery_deadline: None,
             stale_days: if request.stale_days == 0 {
                 purge_preview::DEFAULT_STALE_DAYS
             } else {

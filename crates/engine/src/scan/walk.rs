@@ -27,11 +27,16 @@ fn app_candidate_directory(path: &Path) -> bool {
 
 fn should_descend_directory(policy: &TraversalPolicy, path: &Path) -> bool {
     match policy {
-        TraversalPolicy::CacheDiscovery { scopes, leaves } => {
-            !leaves.iter().any(|leaf| path.starts_with(leaf))
-                && scopes
-                    .iter()
-                    .any(|scope| path.starts_with(scope) || scope.starts_with(path))
+        TraversalPolicy::CacheDiscovery {
+            scopes,
+            leaves,
+            generic_root,
+        } => {
+            generic_root.starts_with(path)
+                || (!leaves.iter().any(|leaf| path.starts_with(leaf))
+                    && scopes
+                        .iter()
+                        .any(|scope| path.starts_with(scope) || scope.starts_with(path)))
         }
         TraversalPolicy::RestrictedTo(paths) => paths
             .iter()
@@ -427,8 +432,18 @@ fn worker<B: Backend>(
             // consuming entry budgets or following any directory. Ancestors and
             // exact lock-evidence paths stay in scope.
             if match &traversal_policy {
-                TraversalPolicy::RestrictedTo(scopes)
-                | TraversalPolicy::CacheDiscovery { scopes, .. } => !scopes
+                TraversalPolicy::CacheDiscovery {
+                    scopes,
+                    generic_root,
+                    ..
+                } => {
+                    !(path.parent() == Some(generic_root.as_path())
+                        || generic_root.starts_with(&path)
+                        || scopes
+                            .iter()
+                            .any(|scope| path.starts_with(scope) || scope.starts_with(&path)))
+                }
+                TraversalPolicy::RestrictedTo(scopes) => !scopes
                     .iter()
                     .any(|scope| path.starts_with(scope) || scope.starts_with(&path)),
                 _ => false,
@@ -1145,3 +1160,34 @@ fn progress_state(report: &ScanReport, started: Instant) -> ScanProgress {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod cache_discovery_boundary_tests {
+    use super::*;
+    #[test]
+    fn generic_discovery_never_descends_unknown_children_even_after_enumeration() {
+        let root = PathBuf::from("/Users/fixture/Library/Caches");
+        let scope = root.join("Google/Chrome");
+        let leaf = scope.join("Default/Cache");
+        let policy = TraversalPolicy::CacheDiscovery {
+            generic_root: root.clone(),
+            scopes: vec![scope.clone()].into(),
+            leaves: vec![leaf.clone()].into(),
+        };
+        assert!(should_descend_directory(&policy, &root));
+        assert!(should_descend_directory(&policy, &scope));
+        assert!(!should_descend_directory(&policy, &leaf));
+        assert!(!should_descend_directory(
+            &policy,
+            &root.join("com.example.NewAfterEnumeration")
+        ));
+        assert!(!should_descend_directory(
+            &policy,
+            &root.join("Google/UnapprovedSibling")
+        ));
+        assert!(!should_descend_directory(
+            &policy,
+            &root.join("com.apple.Protected")
+        ));
+    }
+}
