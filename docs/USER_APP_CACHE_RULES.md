@@ -1,7 +1,7 @@
 # User application cache rules (issue 140)
 
-The Mac App Store Developer Caches view exposes exact, documented cache
-locations under a user-granted root. It lists each rule's source and does not
+The Developer ID, non-sandboxed Developer Caches view exposes exact, documented cache
+locations under the native account home. It lists each rule's source and does not
 preselect a name-based `~/Library/Caches` sweep. Selection is explicit, and
 the same rule/path is revalidated before native Trash execution. There is no
 permanent-delete fallback.
@@ -16,7 +16,7 @@ permanent-delete fallback.
 | Rebuildability | Microsoft documents clearing this cache after quitting the client; rebuilding may take time, and a new sign-in may be needed |
 | Activity | Running `Teams`/`Microsoft Teams` or a Teams helper blocks selection and execution even when the `.app` bundle is renamed; unavailable process census also blocks; state is checked again at approval and immediately before the move |
 | Non-targets | Application Support, New Teams container/group data, preferences, Keychain credentials and logs are never part of this rule |
-| Scope | The sandbox still needs explicit user authorization for the folder or an ancestor; a denied or partial scan cannot become an executable selection |
+| Scope | The app requires explicit selection and readable/writable native access; a denied or partial scan cannot become an executable selection |
 
 [Microsoft Teams cache guidance](https://learn.microsoft.com/en-us/answers/questions/4437348/i-deleted-classic-teams-from-my-mac-and-now-i-have) names the Classic Teams path. [Microsoft's New Teams cache article](https://learn.microsoft.com/troubleshoot/microsoftteams/teams-administration/clear-teams-cache) locates its data in protected Containers and Group Containers, outside this rule.
 
@@ -39,7 +39,7 @@ the automated unit/UI suites are intentionally not run by agents.
 | Rebuildability | Discord instructs users to clear this cache for troubleshooting and restart the app; the cache is re-created as needed, while signing in again may be necessary |
 | Activity | Running `Discord` executable or a `Discord Helper` process blocks selection and execution even if the `.app` bundle is renamed; unavailable process census also blocks; the check is repeated before the move |
 | Non-targets | Sibling settings, credentials, downloads, other Application Support data, and Canary/PTB directories are excluded |
-| Scope | The sandbox needs explicit user authorization for this folder or an ancestor; incomplete or denied scans cannot become executable selections |
+| Scope | The app requires explicit selection and readable/writable native access; incomplete or denied scans cannot become executable selections |
 
 The App shows this app-specific cache for explicit review, never as a
 preselected recommendation. The fixture assertions cover the exact path,
@@ -62,4 +62,10 @@ is not established by a directory scan, so it is also excluded. Preferences,
 Keychain credentials, Teams group data and application support remain outside
 the exact approved rules. More app-cache rules require their own vendor path,
 version and non-target evidence; broad `~/Library/Caches` sweeps are not part
-of the Mac App Store product.
+of the Developer ID product.
+
+## Proposed expansion
+
+[APP_CACHE_RULES.md](APP_CACHE_RULES.md) records the proposed second batch and
+bundle-owned cache contract. It requires separate owner approval and does not
+change these existing rules until implemented and independently reviewed.
