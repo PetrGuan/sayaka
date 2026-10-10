@@ -6,15 +6,14 @@ use sayaka_engine::execute::{CacheSession, PurgeSession, TrashSession};
 use sayaka_engine::journal::{self, Store};
 use sayaka_engine::model::Cancellation;
 use sayaka_engine::model::Scope;
+use sayaka_engine::purge_preview::task::PurgePreviewTask;
 use sayaka_engine::purge_preview::{
     self, PurgeItemId, PurgeOptions, PurgePreview, PurgeProfile, PurgeStatus,
 };
-use sayaka_engine::scan::index::ScanTree;
-use sayaka_engine::scan::task::{ScanTask, ScanTaskState};
-use sayaka_engine::scan::{ScanCode, ScanError, ScanLimits, wire};
+use sayaka_engine::scan::task::ScanTaskState;
+use sayaka_engine::scan::{ScanCode, ScanError, wire};
 use serde_json::{Value, json};
 use std::thread::JoinHandle;
-use std::time::SystemTime;
 
 pub const MAX_PURGE_SELECTIONS: usize = journal::MAX_ITEMS;
 
@@ -121,8 +120,7 @@ pub struct SayakaPurgeSnapshotV1 {
 }
 
 pub(super) struct PurgePreviewJob {
-    task: ScanTask,
-    options: PurgeOptions,
+    task: PurgePreviewTask,
     policy: Option<PurgePolicy>,
     preview: Option<Result<Arc<PurgePreview>, i32>>,
     result: Option<Result<Vec<u8>, i32>>,
@@ -172,18 +170,13 @@ fn scan_error_code(error: &ScanError) -> i32 {
 
 fn ensure_preview(job: &mut PurgePreviewJob) -> Result<Arc<PurgePreview>, i32> {
     if job.preview.is_none() {
-        let report = job.task.result().ok_or(NOT_READY)?;
-        let preview = match report {
-            Ok(report) => {
-                let cancellation = Cancellation::default();
-                let index = ScanTree::build(report.clone(), &cancellation)
-                    .map_err(|error| scan_error_code(&error))?;
-                purge_preview::purge_preview(&index, &job.options, SystemTime::now())
-                    .map_err(|_| INVALID_ARGUMENT)
-                    .map(Arc::new)
-            }
-            Err(error) => Err(scan_error_code(error)),
-        };
+        let preview = job
+            .task
+            .result()
+            .ok_or(NOT_READY)?
+            .as_ref()
+            .map(|preview| Arc::new(preview.clone()))
+            .map_err(scan_error_code);
         job.preview = Some(preview);
     }
     job.preview
@@ -321,6 +314,7 @@ fn developer_cache_items_json(
                 "rule_id": cache.rule_id,
                 "rule_version": cache.rule_version,
                 "ruleset_revision": cache.ruleset_revision,
+                "links_not_followed": cache.links_not_followed,
                 "title": cache.title,
                 "path": wire::NativePath(&cache.path),
                 "location": cache.location,
@@ -1066,19 +1060,16 @@ fn start_preview(
     }
     let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
     let handle = registry.allocate_handle()?;
-    let task = if options.profile == PurgeProfile::FinderMetadata {
-        ScanTask::start_prune_native_packages(vec![root], ScanLimits::default())
-    } else if options.profile == PurgeProfile::DeveloperCaches {
-        ScanTask::start_developer_caches(vec![root], ScanLimits::default())
-    } else {
-        ScanTask::start(vec![root], ScanLimits::default())
-    }
+    let task = PurgePreviewTask::start(
+        vec![root],
+        purge_preview::task::preview_limits(options.profile),
+        options,
+    )
     .map_err(|error| scan_error_code(&error))?;
     registry.purges.insert(
         handle,
         Arc::new(Mutex::new(PurgeJob::Preview(Box::new(PurgePreviewJob {
             task,
-            options,
             policy,
             preview: None,
             result: None,

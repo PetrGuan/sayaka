@@ -332,6 +332,7 @@ fn from_stat(stat: &Stat) -> Metadata {
             inode: stat.st_ino,
         },
         kind,
+        link_count: Some(u64::from(stat.st_nlink)),
         logical_bytes: regular.then(|| u64::try_from(stat.st_size).ok()).flatten(),
         allocated_bytes: regular
             .then(|| {
@@ -450,4 +451,15 @@ mod tests {
             ScanCode::VolumeUnknown
         );
     }
+}
+
+/// Cache-only streaming accounting; reuses the same native no-follow cursor.
+pub(super) fn summarize_cache(
+    path: &Path,
+    expected: FileIdentity,
+    limits: &ScanLimits,
+    cancellation: &Cancellation,
+    progress: impl FnMut(usize, u64, u64),
+) -> Result<super::cache::Summary, ScanError> {
+    super::cache::summarize(&MacBackend, path, expected, limits, cancellation, progress)
 }

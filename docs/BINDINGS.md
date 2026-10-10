@@ -723,6 +723,7 @@ candidate exposes
 documented `location`, `location_kind`, `kind`, `rebuildability_note`,
 `user_product` (always `false` for this profile), `cleanup_supported`,
 `unsupported_reason`, `sizes.logical`, `sizes.allocated`, `complete`,
+`links_not_followed` (count of internal symbolic links whose targets were skipped),
 `modified_unix_ms`, `activity`, `evidence`, `filesystem_identity`,
 `execution_supported`, `execution_contract: "revalidated_cache_trash_v1"` and
 `execution_unsupported_reason`. `execution_supported` is true only when the
@@ -768,9 +769,17 @@ does not check existence, authorize access or grant cleanup eligibility.
 Hosts can preview each location separately to isolate entry/time budgets and
 incomplete observations. Developer-cache previews traverse only documented cache
 trees plus ancestor and lock evidence inside the requested root; unrelated home
-content is excluded. Broad-root previews still share one bounded scan budget.
-Incomplete in-scope scans and no-follow refusals remain incomplete; no execution
-checks are bypassed. Generic disk scans retain their existing traversal behavior.
+content is excluded. Discovery stops at recognized cache directories; a streaming
+worker measures their contents without building a per-file `ScanTree`. The cache
+profile has a shared cooperative 300-second budget, one million retained identities
+per directory/hard-link table, and bounded depth, open cursors, stack paths and
+issues. Discovery retains its 100,000-entry/32 MiB index caps. See
+[PURGE.md](PURGE.md#developer-cache-profile) for accounting details.
+Internal symlinks are skipped without following or counting their targets;
+root/ancestor no-follow refusals and incomplete in-scope observations remain
+incomplete. No execution checks are bypassed. Generic disk scans retain their
+existing traversal behavior. Preview discovery, indexing and measurement all run
+on the owned cancellable worker; polling/result reads do not start traversal.
 
 `SayakaPurgeExecuteRequestV1` requires:
 

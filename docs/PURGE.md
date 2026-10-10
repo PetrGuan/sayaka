@@ -60,6 +60,24 @@ final cache directory, must be a real directory rather than a symlink; symlinked
 intermediates or cache directories are not followed into their targets and are
 not developer-cache candidates.
 
+The CLI and binding previews discover rule-owned cache directories first, then
+measure each cache with a cancellable streaming walk. Ordinary single-link files
+contribute totals without retaining a file record or path. Directory identities
+and multiply-linked file identities are retained in separately bounded tables;
+hard-linked file contents are counted once per cache. The default cache preview
+budget is 300 seconds across discovery and measurement, with at most one million
+identities in each table, 128 open directory cursors/depth levels, and 32 MiB of
+retained stack paths. Discovery still has the generic 100,000-entry/32 MiB index
+limits. Generic disk and project scans keep their existing limits.
+
+Symbolic links *inside* a recognized cache are counted in `links_not_followed`;
+their targets are neither opened nor included in the byte totals. They do not
+make the cache incomplete. Root/ancestor symlinks, unreadable entries, dataless
+contents, mount boundaries, concurrent directory changes, cancellation and
+exhausted budgets still prevent complete coverage. Byte totals are observations
+of regular-file contents, not a promise of reclaimed space. Rule recognition
+and execution revalidation remain separate from size accounting.
+
 Cache execution revalidates immediately before approval and again before each
 Trash move: the directory must still be the same device/inode and type observed
 in the preview, every component below the home through the target must still be

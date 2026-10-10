@@ -63,6 +63,7 @@ fn metadata(info: &sayaka_platform_windows::Metadata) -> Metadata {
             file_id: info.file_id,
         },
         kind,
+        link_count: None,
         logical_bytes: info.logical_bytes,
         allocated_bytes: info.allocated_bytes,
         modified_unix_ms: None,

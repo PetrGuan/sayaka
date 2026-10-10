@@ -8,10 +8,12 @@ use sayaka_engine::model::Cancellation;
 use sayaka_engine::purge_preview::{
     self, DEFAULT_STALE_DAYS, MAX_STALE_DAYS, PurgeOptions, PurgePreview, PurgeProfile,
 };
+#[cfg(test)]
 use sayaka_engine::scan::index::ScanTree;
 use sayaka_engine::scan::{self, ScanCode, ScanError};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::PathBuf;
+#[cfg(test)]
 use std::time::SystemTime;
 
 pub fn command() -> Command {
@@ -192,7 +194,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
                     .map_err(|error| ScanError::new(ScanCode::InvalidRoot, error.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let limits = sayaka_engine::scan::ScanLimits::default();
+        let limits = purge_preview::task::preview_limits(profile);
         limits
             .validate()
             .map_err(|error| ScanError::new(error.code, error.message))?;
@@ -210,14 +212,13 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
                 }
             }
         };
-        let report = if profile == PurgeProfile::DeveloperCaches {
-            purge_preview::scan_developer_caches(&roots, &limits, &cancellation, progress_callback)
-        } else {
-            scan::scan(&roots, &limits, &cancellation, progress_callback)
-        }?;
-        let index = ScanTree::build(report, &cancellation)?;
-        purge_preview::purge_preview(&index, &options, SystemTime::now())
-            .map_err(|message| ScanError::new(ScanCode::InvalidLimits, message))
+        purge_preview::task::scan_preview(
+            &roots,
+            &limits,
+            &options,
+            &cancellation,
+            progress_callback,
+        )
     })();
 
     if let Some(error) = progress_error {
@@ -409,6 +410,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
             "rule_id": cache.rule_id,
             "rule_version": cache.rule_version,
             "ruleset_revision": cache.ruleset_revision,
+            "links_not_followed": cache.links_not_followed,
             "title": cache.title,
             "path": crate::apps::write_native_path(&cache.path),
             "location": cache.location,
