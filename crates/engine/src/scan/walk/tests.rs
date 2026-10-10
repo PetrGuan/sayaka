@@ -171,6 +171,7 @@ fn metadata(inode: u64, kind: ResourceKind, bytes: Option<u64>) -> Metadata {
     Metadata {
         identity: FileIdentity::Unix { device: 1, inode },
         kind,
+        link_count: Some(1),
         logical_bytes: bytes,
         allocated_bytes: bytes,
         modified_unix_ms: None,
@@ -775,4 +776,150 @@ fn worker_setup_restore_and_panic_failures_surface_without_hanging() {
             report.issues
         );
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_stream_does_not_retain_single_link_files_or_follow_links() {
+    let mut fake = tree();
+    for n in 0..100_001 {
+        add_file(&mut fake, &root(), &format!("file-{n}"), n + 2, Some(3));
+    }
+    fake.directories.get_mut(&root()).unwrap().items.push(Item {
+        name: "external-link".into(),
+        metadata: Ok(metadata(200_000, ResourceKind::Link, None)),
+    });
+    let backend = FakeBackend(Arc::new(fake));
+    let limits = ScanLimits {
+        max_entries: 2,
+        ..ScanLimits::default()
+    };
+    let result = crate::scan::cache::summarize(
+        &backend,
+        &root(),
+        metadata(1, ResourceKind::Directory, None).identity,
+        &limits,
+        &Cancellation::default(),
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert!(result.complete);
+    assert_eq!(result.files, 100_001);
+    assert_eq!(result.logical, Some(300_003));
+    assert_eq!(result.links, 1);
+    assert_eq!(*backend.0.opened.lock().unwrap(), vec![root()]);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_stream_deduplicates_hardlinks_and_bounds_identity_memory() {
+    let mut fake = tree();
+    for (name, id) in [("a", 2), ("b", 2), ("c", 3)] {
+        let mut meta = metadata(id, ResourceKind::File, Some(7));
+        meta.link_count = Some(2);
+        fake.directories.get_mut(&root()).unwrap().items.push(Item {
+            name: name.into(),
+            metadata: Ok(meta),
+        });
+    }
+    let backend = FakeBackend(Arc::new(fake));
+    let limits = ScanLimits {
+        max_entries: 1,
+        ..ScanLimits::default()
+    };
+    let result = crate::scan::cache::summarize(
+        &backend,
+        &root(),
+        metadata(1, ResourceKind::Directory, None).identity,
+        &limits,
+        &Cancellation::default(),
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert!(!result.complete);
+    assert_eq!(result.logical, Some(7));
+    assert_eq!(result.files, 1);
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| issue.code == ScanCode::EntryLimit)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_stream_keeps_permission_gaps_and_cancellation_incomplete() {
+    let mut fake = tree();
+    let child = add_directory(&mut fake, &root(), "denied", 2);
+    fake.directories.get_mut(&child).unwrap().open_error =
+        Some(ScanError::new(ScanCode::PermissionDenied, "denied"));
+    let backend = FakeBackend(Arc::new(fake));
+    let result = crate::scan::cache::summarize(
+        &backend,
+        &root(),
+        metadata(1, ResourceKind::Directory, None).identity,
+        &ScanLimits::default(),
+        &Cancellation::default(),
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert!(!result.complete);
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| issue.code == ScanCode::PermissionDenied)
+    );
+    let cancellation = Cancellation::default();
+    cancellation.cancel();
+    let result = crate::scan::cache::summarize(
+        &backend,
+        &root(),
+        metadata(1, ResourceKind::Directory, None).identity,
+        &ScanLimits::default(),
+        &cancellation,
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert!(result.cancelled && !result.complete);
+    assert_eq!(
+        backend.0.policies_entered.load(Ordering::Acquire),
+        backend.0.policies_restored.load(Ordering::Acquire)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_stream_rejects_changed_root_and_changed_directory() {
+    let mut fake = tree();
+    fake.directories.get_mut(&root()).unwrap().unchanged = false;
+    let backend = FakeBackend(Arc::new(fake));
+    assert!(
+        crate::scan::cache::summarize(
+            &backend,
+            &root(),
+            metadata(999, ResourceKind::Directory, None).identity,
+            &ScanLimits::default(),
+            &Cancellation::default(),
+            |_, _, _| {}
+        )
+        .is_err()
+    );
+    let result = crate::scan::cache::summarize(
+        &backend,
+        &root(),
+        metadata(1, ResourceKind::Directory, None).identity,
+        &ScanLimits::default(),
+        &Cancellation::default(),
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert!(!result.complete);
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| issue.code == ScanCode::ChangedEntry)
+    );
 }

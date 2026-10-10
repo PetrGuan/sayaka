@@ -16,6 +16,7 @@ pub(super) struct Metadata {
     pub allocated_bytes: Option<u64>,
     pub modified_unix_ms: Option<i64>,
     pub dataless: bool,
+    pub link_count: Option<u64>,
 }
 
 fn app_candidate_directory(path: &Path) -> bool {
@@ -26,6 +27,12 @@ fn app_candidate_directory(path: &Path) -> bool {
 
 fn should_descend_directory(policy: &TraversalPolicy, path: &Path) -> bool {
     match policy {
+        TraversalPolicy::CacheDiscovery { scopes, leaves } => {
+            !leaves.iter().any(|leaf| path.starts_with(leaf))
+                && scopes
+                    .iter()
+                    .any(|scope| path.starts_with(scope) || scope.starts_with(path))
+        }
         TraversalPolicy::RestrictedTo(paths) => paths
             .iter()
             .any(|scope| path.starts_with(scope) || scope.starts_with(path)),
@@ -419,9 +426,13 @@ fn worker<B: Backend>(
             // Omit unrelated entries before propagating their metadata errors,
             // consuming entry budgets or following any directory. Ancestors and
             // exact lock-evidence paths stay in scope.
-            if matches!(&traversal_policy, TraversalPolicy::RestrictedTo(_))
-                && !should_descend_directory(&traversal_policy, &path)
-            {
+            if match &traversal_policy {
+                TraversalPolicy::RestrictedTo(scopes)
+                | TraversalPolicy::CacheDiscovery { scopes, .. } => !scopes
+                    .iter()
+                    .any(|scope| path.starts_with(scope) || scope.starts_with(&path)),
+                _ => false,
+            } {
                 continue;
             }
             let metadata = match &item.metadata {
@@ -476,7 +487,11 @@ fn worker<B: Backend>(
                     &sender,
                     issue_event(
                         Some(path),
-                        ScanCode::LinkSkipped,
+                        if matches!(traversal_policy, TraversalPolicy::CacheDiscovery { .. }) {
+                            ScanCode::InvalidRoot
+                        } else {
+                            ScanCode::LinkSkipped
+                        },
                         "symbolic links are not followed",
                     ),
                     shared,

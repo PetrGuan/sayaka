@@ -81,6 +81,11 @@ path budget). Issue overflow is reported as `issues_omitted`, never hidden.
 Queue, descriptor and result budgets are independent; reaching a budget produces
 an explicitly incomplete result rather than pretending the omitted tree is empty.
 
+Developer-cache purge previews use a separate streaming accounting path after
+bounded rule discovery, rather than retaining a general scan index for every
+cache file. This does not change `scan`/`browse` limits or result semantics; see
+[the developer-cache preview contract](PURGE.md#developer-cache-profile).
+
 Exit codes: **0 complete, 3 partial, 130 cancelled, 1 runtime failure, 2 invalid
 arguments/options**. Syntactic argument errors use clap's stderr diagnostics.
 Semantic scan errors under `--json` use the versioned failure envelope.

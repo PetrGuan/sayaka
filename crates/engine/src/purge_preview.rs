@@ -18,6 +18,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub mod task;
+
 pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
@@ -272,6 +274,8 @@ pub struct DeveloperCacheCandidate {
     pub rule_id: &'static str,
     pub rule_version: u32,
     pub ruleset_revision: u32,
+    /// Links observed inside the cache; targets are never traversed or counted.
+    pub links_not_followed: u64,
     pub title: &'static str,
     pub path: PathBuf,
     pub location: &'static str,
@@ -1281,6 +1285,16 @@ pub fn scan_developer_caches(
     cancellation: &crate::model::Cancellation,
     progress: impl FnMut(&crate::scan::ScanProgress),
 ) -> Result<crate::scan::ScanReport, crate::scan::ScanError> {
+    crate::scan::scan_with_policy(
+        roots,
+        limits,
+        cancellation,
+        crate::scan::TraversalPolicy::RestrictedTo(cache_scopes()?.into()),
+        progress,
+    )
+}
+
+fn cache_scopes() -> Result<Vec<PathBuf>, crate::scan::ScanError> {
     let home = effective_account_home().map_err(|message| {
         crate::scan::ScanError::new(crate::scan::ScanCode::InvalidRoot, message)
     })?;
@@ -1295,13 +1309,7 @@ pub fn scan_developer_caches(
         }
         scopes.push(location);
     }
-    crate::scan::scan_with_policy(
-        roots,
-        limits,
-        cancellation,
-        crate::scan::TraversalPolicy::RestrictedTo(scopes.into()),
-        progress,
-    )
+    Ok(scopes)
 }
 
 fn developer_cache_preview(
@@ -1380,6 +1388,7 @@ fn developer_cache_preview_with_home(
             rule_id: rule.rule_id,
             rule_version: rule.rule_version,
             ruleset_revision: DEVELOPER_CACHE_RULESET_REVISION,
+            links_not_followed: 0,
             title: rule.title,
             path: entry.path.clone(),
             location: rule.location,

@@ -3,6 +3,7 @@
 //! Bounded read-only traversal. Results describe observations, not a filesystem
 //! snapshot or authorization to perform maintenance.
 
+pub(crate) mod cache;
 pub mod diagnostics;
 pub mod directory_review;
 pub mod index;
@@ -39,6 +40,10 @@ pub(crate) enum TraversalPolicy {
     PruneNativePackages,
     /// Internal profile scope; never used for general disk-size scans.
     RestrictedTo(std::sync::Arc<[PathBuf]>),
+    CacheDiscovery {
+        scopes: std::sync::Arc<[PathBuf]>,
+        leaves: std::sync::Arc<[PathBuf]>,
+    },
 }
 
 #[cfg(all(test, windows))]
