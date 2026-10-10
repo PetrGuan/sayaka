@@ -315,6 +315,14 @@ struct DeveloperCacheRule {
     evidence: &'static [EvidenceSource],
 }
 
+#[cfg(target_os = "macos")]
+impl DeveloperCacheRule {
+    fn native_location_matches(&self, path: &Path) -> bool {
+        sayaka_platform_macos::cache_locations::cache_location(self.rule_id)
+            .is_some_and(|rule| rule.base == self.suffix && rule.accepts(path))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvidenceSource {
     pub title: &'static str,
@@ -1503,6 +1511,15 @@ fn developer_cache_rule_locations(
             }
         }
     }
+    // Resolve the same rule ID through the native allowlist before exposing
+    // eligibility; the native boundary independently checks the path again.
+    #[cfg(target_os = "macos")]
+    if locations
+        .iter()
+        .any(|location| !location.rule.native_location_matches(&location.path))
+    {
+        return Err("engine cache rule does not match the native allowlist".into());
+    }
     locations.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -2236,5 +2253,36 @@ mod tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod native_cache_consistency_tests {
+    use super::*;
+    #[test]
+    fn engine_and_native_cache_rule_sets_match_in_both_directions() {
+        use sayaka_platform_macos::cache_locations::{CACHE_LOCATIONS, cache_location};
+        let engine: HashSet<_> = DEVELOPER_CACHE_RULES
+            .iter()
+            .map(|rule| rule.rule_id)
+            .collect();
+        let native: HashSet<_> = CACHE_LOCATIONS.iter().map(|rule| rule.rule_id).collect();
+        assert_eq!(engine, native);
+        assert_eq!(engine.len(), DEVELOPER_CACHE_RULES.len());
+        assert_eq!(native.len(), CACHE_LOCATIONS.len());
+        for rule in DEVELOPER_CACHE_RULES {
+            let allowed = cache_location(rule.rule_id).unwrap();
+            assert_eq!(allowed.base, rule.suffix);
+            assert_eq!(allowed.profile_leaf, browser_cache_leaf(rule.rule_id));
+            let mut path = PathBuf::from("/Users/fixture");
+            for component in rule.suffix {
+                path.push(component);
+            }
+            if let Some(leaf) = browser_cache_leaf(rule.rule_id) {
+                path.push("Default");
+                path.push(leaf);
+            }
+            assert!(rule.native_location_matches(&path));
+        }
     }
 }

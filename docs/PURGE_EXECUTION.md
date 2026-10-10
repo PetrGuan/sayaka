@@ -262,6 +262,45 @@ set. A stable directory identity does not prove stable members, and the residual
 final pathname/ancestor replacement race remains disclosed exactly as for other
 Trash contracts.
 
+### Native cache location table
+
+`platform-macos::cache_locations::CACHE_LOCATIONS` is the single native cache
+shape allowlist for the existing 19 rules. Twelve exact suffixes cover the ten
+developer rules plus Classic Teams and Discord; seven profile shapes cover
+Chrome, Edge and Firefox. The previously missing native shapes are:
+
+| Rule family | Allowed suffix below account home |
+| --- | --- |
+| Classic Teams | `Library/Caches/com.microsoft.teams` |
+| Discord stable | `Library/Application Support/discord/Cache` |
+| Chrome HTTP | `Library/Caches/Google/Chrome/<profile>/Cache` |
+| Chrome code | `Library/Caches/Google/Chrome/<profile>/Code Cache` |
+| Chrome GPU | `Library/Caches/Google/Chrome/<profile>/GPUCache` |
+| Edge HTTP | `Library/Caches/Microsoft Edge/<profile>/Cache` |
+| Edge code | `Library/Caches/Microsoft Edge/<profile>/Code Cache` |
+| Edge GPU | `Library/Caches/Microsoft Edge/<profile>/GPUCache` |
+| Firefox HTTP | `Library/Caches/Firefox/Profiles/<profile>/cache2` |
+
+The native profile placeholder matches exactly one nonempty component that does
+not start with a dot; neither the profile root nor its descendants beyond the
+specified leaf are admitted. Native fixed components retain ASCII case folding
+from the previous guard. Engine matching remains stricter: exact passwd-home
+paths, recognized profiles, matching Application Support profile, no symlinks,
+locks/process idleness, complete preview and current user protection. These are
+independent requirements; native shape admission alone never authorizes a move.
+The native guard computes path membership itself and does not trust a caller's
+rule ID. Engine discovery resolves its rule IDs through this same table before
+reporting eligible locations, and execution reuses that discovery at each guard.
+
+This repair adds no engine rule or generic bundle-ID shape. No Containers,
+account databases, cookies, profile roots, logs or other Application Support
+siblings are admitted. Schema 5 and ABI request/result keys are unchanged.
+Adding a native table entry requires an owner-approved rule contract. Test
+sources check both directions of engine/native membership and invalid adjacent
+paths; agent validation compiles these sources without running the tests.
+Owner-side native observations for the nine repaired shapes remain pending;
+the older acceptance record below does not certify these shapes.
+
 ## Recorded native acceptance (2026-09-22)
 
 A separately authorized run on the owner's macOS 27.0 (26A428) arm64 host

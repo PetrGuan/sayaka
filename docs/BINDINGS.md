@@ -746,6 +746,13 @@ documented rebuildable cache/download-store locations:
 | Homebrew | `sh.homebrew.downloads_cache` | `~/Library/Caches/Homebrew/downloads` |
 | Classic Teams | `com.microsoft.teams.classic_cache.macos` | `~/Library/Caches/com.microsoft.teams` |
 | Discord stable | `com.discord.stable.cache.macos` | `~/Library/Application Support/discord/Cache` |
+| Chrome HTTP cache | `com.google.chrome.http_cache.macos` | `~/Library/Caches/Google/Chrome/<profile>/Cache` |
+| Chrome CODE cache | `com.google.chrome.code_cache.macos` | `~/Library/Caches/Google/Chrome/<profile>/Code Cache` |
+| Chrome GPU cache | `com.google.chrome.gpu_cache.macos` | `~/Library/Caches/Google/Chrome/<profile>/GPUCache` |
+| Edge HTTP cache | `com.microsoft.edge.http_cache.macos` | `~/Library/Caches/Microsoft Edge/<profile>/Cache` |
+| Edge CODE cache | `com.microsoft.edge.code_cache.macos` | `~/Library/Caches/Microsoft Edge/<profile>/Code Cache` |
+| Edge GPU cache | `com.microsoft.edge.gpu_cache.macos` | `~/Library/Caches/Microsoft Edge/<profile>/GPUCache` |
+| Firefox HTTP cache | `org.mozilla.firefox.http_cache.macos` | `~/Library/Caches/Firefox/Profiles/<profile>/cache2` |
 
 The profile matches a cache when the granted root is the cache directory itself
 or an ancestor, which supports sandboxed App flows where the user grants
