@@ -405,6 +405,15 @@ pub(crate) fn write_record(out: &mut impl Write, record: &journal::Record) -> io
         "Operation {} ({})",
         record.operation_id, record.contract
     )?;
+    if let Some(context) = &record.runtime_context {
+        for item in &context.items {
+            let name = match &item.target {
+                sayaka_engine::runtime_journal::Target::Runtime { image, .. } => format!("runtime {} {} ({})", image.runtime_identifier, image.version, image.identifier),
+                sayaka_engine::runtime_journal::Target::Device { name, udid, .. } => format!("simulator {name} ({udid})"),
+            };
+            writeln!(out, "  {:?} {:?} estimated_bytes={:?} reason={:?}", item.state, name, item.logical_bytes, item.reason)?;
+        }
+    }
     for item in &record.items {
         writeln!(
             out,

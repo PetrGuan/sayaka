@@ -1,9 +1,10 @@
 # Simulator runtime removal — slice 1b contract
 
-Status: contract only, 2026-10-11. No runtime observation, ABI extension or
-runtime removal is implemented by this change. The maintainer requested this
-contract PR, independent different-model review and merge before implementation.
-Merging accepts the policy below; it does not certify native deletion.
+Status: core implementation, 2026-10-11. Runtime observation, separate session,
+schema 11 journal, read-only CLI and runtime bindings are implemented. App
+integration and disposable native deletion acceptance remain pending. No
+kind/tool-version combination has production deletion enabled. The approved
+contract and compiled fixtures do not certify native deletion.
 
 This extends [SIMULATOR_CLEANUP.md](SIMULATOR_CLEANUP.md). That document remains
 authoritative for device-only slice 1a. For runtime sessions this document

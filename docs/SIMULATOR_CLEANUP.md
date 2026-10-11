@@ -7,7 +7,8 @@ journal schema 6, the `sayaka_simulators_*_v1` bindings
 ([BINDINGS.md](BINDINGS.md)) and `sayaka devtools simulators` implement device
 erase and delete. Their unit tests are written against an injected host and
 journal; the opt-in real-platform cases below have not been run, so no native
-outcome is claimed yet. Slice 1b (runtimes) is not implemented. Its extension contract is
+outcome is claimed yet. Slice 1b core observation/session/bindings are implemented with production
+execution gated on disposable native evidence; App integration is pending. Its extension contract is
 [SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md), which supersedes the historical
 blocked 1b rules below; device-only slice 1a is unchanged.
 
@@ -29,7 +30,7 @@ operation and never touches `CoreSimulator/Devices`.
 | Slice | Operations | Status |
 | --- | --- | --- |
 | 1a | Erase devices; delete devices (including devices `simctl` marks unavailable), always by explicit UDID | This contract |
-| 1b | Delete runtime images | Contract in [SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md); implementation and native evidence pending |
+| 1b | Delete runtime images | Contract in [SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md); core implemented; App integration and native evidence pending |
 | Later | Package-manager cleanups (`brew cleanup`, `npm cache clean`, `pnpm store prune`, `yarn cache clean`, `pip cache purge`) | Separate contract; their caches already have recoverable Trash rules |
 
 Never in scope: `delete unavailable`, `delete all`, `erase all`, `runtime delete

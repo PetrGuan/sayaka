@@ -1256,3 +1256,48 @@ no plan/session/approval. Related items stay unselected; existing admission and
 confirmation remain unchanged. Partial sizes are not complete totals. Shared
 bounds: 4,096 direct children, 32 candidates, 1 MiB plist, 100,000 size entries,
 depth 64 and a cooperative 5-second budget, with no data materialization.
+
+## Runtime images — separate v1 ABI
+
+`sayaka_runtimes_capability_v1`, `sayaka_runtimes_preview_start_v1`,
+`sayaka_runtimes_result_v1`, `sayaka_runtimes_execute_v1`,
+`sayaka_runtimes_cancel_v1`, and `sayaka_runtimes_release_v1` use their own handle
+registry. `SayakaRuntimePreviewRequestV1` has the same field layout as the
+simulator preview request, but operation must be **3** (`runtime_delete`).
+`SayakaRuntimeExecuteRequestV1` has the same field layout as the simulator
+execute request; item IDs refer to runtime rows only. Device operations 1/2
+and their ABI are unchanged. Request reserved fields must be zero.
+
+Results are capped at **1 MiB**, schema_version 1, kind `sayaka.runtime_preview`
+or `sayaka.runtime_execution`. A ready preview has handle, state, operation,
+effect_class, effects_performed=false, execution_eligible, plan_digest,
+expires_unix_ms, tool (fingerprint/versions), developer_activity, size_estimated
+and items. Each item has id, runtime (identifier/runtime_identifier/version/
+build/kind/path/state/deletable/size_bytes/last_used_at/issues), dependents
+(existing Candidate device/paired_with/refusals), custom_devices, refusals,
+suggested, evidence, rebuildability_note and execution_eligible. Nullable sizes
+and dates are unknown. Refused previews use error.code/message/detail and no
+executable plan. The expiry starts after observations complete; the displayed
+wall-clock deadline is conservative relative to the engine monotonic deadline.
+
+Execution requires the retained digest, exact unique IDs, approval=1 and
+`delete N runtimes and M simulators` with both counts derived from the selection.
+It is one-shot with the same cancel/release/NOT_READY lifecycle as simulator
+handles. Finished/unknown results have effects_performed and report containing
+record and journal_error. Record schema **11**, plan schema 11, engine 2, rules 1
+has an empty filesystem items array and runtime_context schema 1: operation,
+tool_evidence, plan_digest and typed items. Each item has target (kind runtime:
+image and dependent_udids; kind device: udid/name/runtime_identifier/paired_with),
+logical_bytes (nullable estimate), state, reason and updated_unix_ms. No Trash
+destination exists. Pending started items reconcile to unknown; planned items
+to skipped. Old schema 6 remains readable; handled_bytes is unknown for schema 11.
+
+The production native-evidence allow-list is empty: all runtime deletion is
+currently refused, including through C. Debug engine-only `prepare_disposable`
+requires the exact explicitly owned image UUID and complete device UUID set; it
+bypasses only the evidence gate and is not in release builds or this C ABI.
+Neither environment variables nor imported JSON can enable production deletion.
+
+`sayaka devtools runtimes` emits a read-only JSON
+report from the selected Xcode, with no execute switch. See
+[SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md) for safety and evidence boundaries.

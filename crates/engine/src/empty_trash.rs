@@ -500,6 +500,7 @@ impl EmptyTrashSession {
             related_context: None,
             orphan_context: None,
             delegation: None,
+            runtime_context: None,
             empty_trash_context: Some(context),
             created_unix_ms: p.approved_unix_ms,
             items: self.items.iter().map(|i| i.item.clone()).collect(),

@@ -123,7 +123,7 @@ pub enum ToolFailure {
 }
 
 impl ToolFailure {
-    fn into_error(self) -> SessionError {
+    pub(super) fn into_error(self) -> SessionError {
         match self {
             ToolFailure::Unavailable(message) | ToolFailure::Io(message) => {
                 SessionError::ToolUnavailable { message }
@@ -133,7 +133,7 @@ impl ToolFailure {
         }
     }
 
-    fn reason(&self) -> String {
+    pub(super) fn reason(&self) -> String {
         match self {
             ToolFailure::Unavailable(message) => format!("tool_unavailable: {message}"),
             ToolFailure::Timeout => "timeout".into(),
@@ -252,7 +252,7 @@ fn list<H: Host>(host: &H) -> Result<Listing, SessionError> {
 
 /// Orders a validated selection into batches of at most [`MAX_BATCH`],
 /// keeping both members of a pair in the same call.
-fn pair_batches(candidates: &[Candidate], selected: &[String]) -> Vec<Vec<String>> {
+pub(super) fn pair_batches(candidates: &[Candidate], selected: &[String]) -> Vec<Vec<String>> {
     let mut units: Vec<Vec<String>> = Vec::new();
     let mut placed = BTreeSet::new();
     for udid in selected {
@@ -468,6 +468,7 @@ impl<H: Host> SimulatorSession<H> {
                 contract: journal::TOOL_CONTRACT.into(),
                 scope: NativePath::from_path(scope),
                 clean_policy: None,
+                runtime_context: None,
                 empty_trash_context: None,
                 orphan_context: None,
                 related_context: None,
@@ -745,7 +746,7 @@ impl ToolJournal for Store {
 
 /// Opens the journal under its exclusive lock; a held lock means another
 /// execution is running and is reported as `busy`.
-fn open_journal(state_dir: &Path) -> Result<Store, SessionError> {
+pub(super) fn open_journal(state_dir: &Path) -> Result<Store, SessionError> {
     journal::validate_state_directory_path(state_dir).map_err(|error| {
         SessionError::JournalUnavailable {
             message: error.to_string(),
@@ -968,12 +969,11 @@ impl Host for MacHost {
         let _serialized = tool_lock();
         self.runner
             .run(args, timeout)
-            .map(|output| ToolResult {
-                success: output.success,
-                stdout: output.stdout,
-                stderr: output.stderr,
-            })
             .map_err(tool_failure)
+            .and_then(|output| {
+                if output.code.is_none() { return Err(ToolFailure::Io("tool terminated without an exit status".into())); }
+                Ok(ToolResult { success: output.success, stdout: output.stdout, stderr: output.stderr })
+            })
     }
 
     fn developer_activity(&self) -> io::Result<Vec<String>> {

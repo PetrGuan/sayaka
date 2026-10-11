@@ -685,6 +685,53 @@ SAYAKA_API int32_t sayaka_simulators_cancel_v1(uint64_t handle);
 /* Cancels and joins owned work. BUSY: retain the handle and retry later. */
 SAYAKA_API int32_t sayaka_simulators_release_v1(uint64_t handle);
 
+/* Separate runtime-image ABI: operation must be 3. Device-only ABI is unchanged.
+ * Runtime report cap: 1 MiB. No production kinds have native evidence yet. */
+#define SAYAKA_RUNTIME_DELETE_V1 3u
+typedef struct SayakaRuntimePreviewRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t operation; /* SAYAKA_RUNTIME_DELETE_V1 (3) only. */
+    uint32_t reserved;  /* Must be zero. */
+} SayakaRuntimePreviewRequestV1;
+
+typedef struct SayakaRuntimeExecuteRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    const uint8_t *plan_digest; /* 64 ASCII hex bytes from preview JSON, no NUL. */
+    size_t plan_digest_length;
+    const uint64_t *item_ids; /* 1..32 unique runtime row ids; dependencies are sealed by the preview. */
+    size_t item_count;
+    uint32_t approval; /* Must be 1. */
+    uint32_t reserved; /* Must be zero. */
+    const uint8_t *approval_token; /* Exact "delete N runtimes and M simulators";
+                                      N = item_count, M = total unique selected dependencies. */
+    size_t approval_token_length;
+    uint32_t has_state_dir; /* 0 = default journal dir, 1 = state_dir present. */
+    uint32_t reserved2;     /* Must be zero. */
+    SayakaPathV1 state_dir;
+} SayakaRuntimeExecuteRequestV1;
+
+/* Effect-free JSON: whether this host may use simulator cleanup and why not. */
+SAYAKA_API int32_t sayaka_runtimes_capability_v1(uint8_t *buffer,
+                                                   size_t capacity, size_t *required);
+/* Asynchronous preview of one operation kind; result returns NOT_READY while
+ * active. Preview JSON state is "ready" or "refused" with an error code. */
+SAYAKA_API int32_t sayaka_runtimes_preview_start_v1(
+    const SayakaRuntimePreviewRequestV1 *request, uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_runtimes_result_v1(uint64_t handle, uint8_t *buffer,
+                                             size_t capacity, size_t *required);
+/* Once per handle, within 120 s of the preview. INVALID_CANDIDATE: digest,
+ * token, ids, pairing or expiry did not match; make a fresh preview. OK means
+ * execution started, not success: read every journal item in the result.
+ * INVALID_ARGUMENT also covers a state_dir inside any previewed device. */
+SAYAKA_API int32_t sayaka_runtimes_execute_v1(
+    uint64_t handle, const SayakaRuntimeExecuteRequestV1 *request);
+/* Skips batches not yet started; never interrupts a running simctl call. */
+SAYAKA_API int32_t sayaka_runtimes_cancel_v1(uint64_t handle);
+/* Cancels and joins owned work. BUSY: retain the handle and retry later. */
+SAYAKA_API int32_t sayaka_runtimes_release_v1(uint64_t handle);
+
 /* Finder-delegated entire-Trash sessions: synchronous, call off the UI thread.
  * JSON input <=128 KiB; result <=8 MiB. Strict version=1, exact sizeof, reserved=0.
  * Preview JSON: {sources:[{path:NativePath,schemas:[...]}],finder:null|{count:u64,

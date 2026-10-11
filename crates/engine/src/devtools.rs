@@ -856,3 +856,6 @@ mod tests {
         );
     }
 }
+
+/// Runtime image observations and separately approved deletion.
+pub mod runtimes;

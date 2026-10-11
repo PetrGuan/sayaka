@@ -28,6 +28,8 @@ mod picked;
 pub use picked::*;
 mod purge;
 pub use purge::*;
+mod runtimes;
+pub use runtimes::*;
 mod simulators;
 pub use simulators::*;
 mod system_status;
@@ -119,6 +121,7 @@ struct Registry {
     installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
     purges: HashMap<u64, Arc<Mutex<purge::PurgeJob>>>,
     uninstalls: HashMap<u64, Arc<uninstall::UninstallSlot>>,
+    runtimes: HashMap<u64, Arc<runtimes::RuntimeJob>>,
     simulators: HashMap<u64, Arc<simulators::SimulatorJob>>,
     orphans: HashMap<u64, Arc<Mutex<orphan_execution::OrphanJob>>>,
 }
@@ -154,7 +157,8 @@ fn registry() -> &'static Mutex<Registry> {
             installers: HashMap::new(),
             purges: HashMap::new(),
             uninstalls: HashMap::new(),
-            simulators: HashMap::new(),
+            runtimes: HashMap::new(),
+    simulators: HashMap::new(),
             orphans: HashMap::new(),
         })
     })
