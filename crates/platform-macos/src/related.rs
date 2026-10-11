@@ -114,17 +114,20 @@ struct Stamp {
     mode: u32,
     uid: u32,
     gid: u32,
+    flags: u32,
     size: u64,
     mtime: (i64, i64),
 }
 impl Stamp {
     fn read(m: &std::fs::Metadata) -> Self {
+        use std::os::macos::fs::MetadataExt;
         Self {
             device: m.dev(),
             inode: m.ino(),
             mode: m.mode(),
             uid: m.uid(),
             gid: m.gid(),
+            flags: m.st_flags(),
             size: if m.is_dir() { 0 } else { m.len() },
             mtime: if m.is_dir() {
                 (0, 0)
@@ -151,15 +154,19 @@ impl PathWitness {
         let policy = crate::ReadOnlyPolicy::enter()?;
         let result = (|| {
             for part in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+                // Darwin rejects O_NOFOLLOW together with O_NOFOLLOW_ANY.
                 let f = OpenOptions::new()
                     .read(true)
                     .custom_flags(
-                        libc::O_NOFOLLOW | 0x20000000 | libc::O_CLOEXEC | libc::O_NONBLOCK,
+                        0x20000000 | libc::O_CLOEXEC | libc::O_NONBLOCK,
                     )
                     .open(part)?;
                 let m = f.metadata()?;
                 use std::os::macos::fs::MetadataExt;
-                if m.st_flags() & (0x40000000 | 0x00080000 | 0x00100000) != 0
+                // This is a read-only witness: protected roots such as / and
+                // /Applications may be observed. Native Trash admission still
+                // rejects protected move targets. Dataless paths remain refused.
+                if m.st_flags() & 0x40000000 != 0
                     || (part != path && !m.is_dir())
                     || (!m.is_dir() && !m.is_file())
                 {
@@ -349,4 +356,20 @@ fn process_identity(pid: i32) -> io::Result<(u32, u64, u64)> {
         return Err(invalid("invalid_process_identity"));
     }
     Ok((value.pbi_uid, value.pbi_start_tvsec, value.pbi_start_tvusec))
+}
+
+#[cfg(test)]
+mod witness_tests {
+    use super::*;
+
+    #[test]
+    fn protected_system_roots_can_be_observed_without_move_authority() {
+        // These read-only witnesses must accept Darwin's protected ancestors.
+        // Trash target admission is a separate capability and is not invoked.
+        for path in [Path::new("/"), Path::new("/Applications")] {
+            let witness = PathWitness::capture(path).expect("read-only root witness");
+            assert!(witness.is_directory());
+            witness.revalidate().expect("unchanged root identity");
+        }
+    }
 }
