@@ -315,3 +315,6 @@ pub mod empty_trash;
 
 #[cfg(target_os = "macos")]
 pub mod firmware;
+
+#[cfg(target_os = "macos")]
+pub mod installer_size;

@@ -87,3 +87,41 @@ pub unsafe extern "C" fn sayaka_firmware_preview_v1(
         unsafe { copy_output(&bytes, buffer, capacity, required) }
     })
 }
+
+/// Samples read-only system facts on demand. No process names or paths are
+/// collected. This call may block for the 5-second cooperative metadata budget and native
+/// probe time; clients must invoke it off the UI thread.
+///
+/// # Safety
+/// The request must be readable/aligned. This volatile query is one-shot:
+/// `buffer` must hold exactly `MAX_QUERY_BYTES` bytes; a size-probe call is
+/// invalid. `required` is writable and disjoint from the request and buffer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_macos_installer_preview_v1(
+    request: *const SayakaSystemStorageRequestV1,
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        // SAFETY: Caller promises valid, non-overlapping output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_QUERY_BYTES)? };
+        if capacity != MAX_QUERY_BYTES {
+            return Err(INVALID_ARGUMENT);
+        }
+        pointer(request)?;
+        // SAFETY: Caller promises readable, aligned request storage.
+        let request = unsafe { *request };
+        if request.abi_version != ABI_VERSION
+            || request.struct_size as usize != size_of::<SayakaSystemStorageRequestV1>()
+        {
+            return Err(UNSUPPORTED_VERSION);
+        }
+        if request.reserved != 0 {
+            return Err(INVALID_ARGUMENT);
+        }
+        let bytes = bounded_json(&sayaka_engine::macos_installers::preview(), MAX_QUERY_BYTES)?;
+        // SAFETY: validated caller output and privately owned serialized bytes.
+        unsafe { copy_output(&bytes, buffer, capacity, required) }
+    })
+}

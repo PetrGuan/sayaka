@@ -792,6 +792,13 @@ pub fn read_bundle_identifier(bundle: &Path) -> BundleIdentifierRead {
 pub fn read_bundle_identifier_with_digest(
     bundle: &Path,
 ) -> Result<(StringField, [u8; 32], u64, u64), &'static str> {
+    read_bundle_metadata_with_digest(bundle).map(|(id, _, digest, dev, ino)| (id, digest, dev, ino))
+}
+
+/// Bounded existing plist parser, preserving installer app version separately.
+pub fn read_bundle_metadata_with_digest(
+    bundle: &Path,
+) -> Result<(StringField, StringField, [u8; 32], u64, u64), &'static str> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
     let limits = AppInventoryLimits::default();
@@ -827,10 +834,10 @@ pub fn read_bundle_identifier_with_digest(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        Ok((parsed.bundle_id, digest, metadata.dev(), metadata.ino()))
+        Ok((parsed.bundle_id, parsed.short_version, digest, metadata.dev(), metadata.ino()))
     }
     #[cfg(not(unix))]
-    Ok((parsed.bundle_id, digest, 0, 0))
+    Ok((parsed.bundle_id, parsed.short_version, digest, 0, 0))
 }
 
 #[cfg(unix)]

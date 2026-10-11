@@ -1243,3 +1243,16 @@ regular `.ipsw` children of the three historical native-home iTunes leaves are
 counted. Descriptor-relative reads do not follow links or materialize content.
 The shared 2-second budget is cooperative; native filesystem calls may outlive
 it, so call off-main and serialize host refreshes. There is no execution route.
+
+`sayaka_macos_installer_preview_v1` shares the SystemStorage request and fixed
+one-shot 1 MiB output. Schema 1, kind `sayaka.macos_installer_preview`,
+effects_performed=false. The sourced candidates observation contains path,
+actual bundle ID, optional installer app version, null target_os_major and
+same_current_os_major (target OS metadata not established), logical_bytes and
+size_complete, and directory/plist identity plus SHA-256 evidence. All are
+Review/unselected. The host must rediscover and compare identity before handing
+one path to a fresh existing bundle-only uninstall preview. This call creates
+no plan/session/approval. Related items stay unselected; existing admission and
+confirmation remain unchanged. Partial sizes are not complete totals. Shared
+bounds: 4,096 direct children, 32 candidates, 1 MiB plist, 100,000 size entries,
+depth 64 and a cooperative 5-second budget, with no data materialization.
