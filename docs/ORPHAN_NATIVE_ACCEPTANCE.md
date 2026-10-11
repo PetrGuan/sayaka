@@ -119,3 +119,60 @@ T1 observation. No real service configuration or application was modified.
 
 No native move was performed. The production gate remains false and the full
 move/restore/race/fault matrix remains pending.
+
+
+## 2026-10-11: delegated manual native fixture observations
+
+The owner explicitly delegated manual application/native fixture acceptance.
+No unit or UI tests, test runners, scenario harnesses or automated UI tests were
+executed. Individual native CLI interactions and Finder/App inspection were
+performed manually through the interactive tools.
+
+Build provenance:
+
+- Core production source: `c5d085260961c9ca923b88b24c93ef1e55ec88df` (PR #114).
+- App: `d73fe6c` (PR #434), pinning that core; build-for-testing succeeded
+  without executing tests.
+- macOS 27.0.1 (26A434), Apple Silicon, local APFS.
+- Unpublished detached fixture checkout: `/private/tmp/sayaka144-native-fixture`.
+  Its only source change sets `ORPHAN_NATIVE_ACCEPTANCE_RECORDED=true`.
+  The production checkout, shipped pin and App retain the false gate.
+- Modified source SHA-256: `2cdf58c6fdad4f3e99cb4ec7e7a22d8c8fbc4e60f69da8bf2c5452afff62580f`.
+- Fixture CLI SHA-256: `5063d5283b6b835a3aea70b24375b1349c517935e6660051fd0a82095973a434`; built in the fresh isolated
+  `/private/tmp/sayaka144-native-build-v2` directory. Earlier reused build output
+  still reported the closed gate and was not used for moves.
+- Initial CLI policy path was the absent legacy `SayakaCleaner Direct` location;
+  subsequent refusal observations used current `SayakaCleaner`. These fixture
+  runs do not independently verify nonempty policy matching.
+
+Observed outcomes (all data self-created under `org.sayaka.acceptance144`):
+
+| Observation | Actual result |
+| --- | --- |
+| T3 old cache | Forty-day-old leaf was eligible and default-off; exactly one explicitly selected cache moved. Operation `12d45-1a1298351d9-1`, schema 9, `succeeded/moved_to_trash`. |
+| T3 recent descendant | Forty-day-old root with one-day-old file remained non-executable with `recently_modified`. |
+| T3 user data | Application Support remained non-executable with `name_only_read_only`. |
+| T3 Finder recovery | Put Back restored the original path, device 16777231, inode 1714500 and exact disposable contents. Other three original fixture identities/content were unchanged. |
+| T1 normal | Self-created App manually moved to Trash; matching cache became `trashed_bundle`, eligible/default-on. Exactly the selected cache moved. Operation `12e61-1a12985b173-1`, schema 9, `succeeded/moved_to_trash`. |
+| T1 recovery | Finder Put Back restored the cache; the recovered artifact was preserved in the fixture workspace. Finder added native metadata attributes; a subsequent cleanup preview conservatively refused that recovered cache rather than relaxing admission. |
+| T1 restore after preview | A new disposable cache (inode 1774380) was previewed with the App in Trash. Finder then restored the App. Approval refused `resource_changed: trash evidence`; cache unchanged and no new journal. |
+| Observed installed copy | Restored/new fixture Apps outside the mandatory roots were found as copies; their cache rows refused `installed_copy_present`. This does not cover every mandatory/extra-root or family case. |
+| Running after preview | A separate App/cache (`org.sayaka.acceptance144.running`, cache inode 1774562) was eligible while the App was in Trash. Starting its self-built sleep executable after preview made approval refuse `running`; cache unchanged, no new journal. The cleanup implementation sent no signals. Only the disposable process was interrupted afterward. |
+| Journal initialization refusal | With an eligible fixture selected, an existing ordinary fixture source file supplied as state-dir caused `Not a directory (os error 20)` before any move. Cache inode 1774562 and source contents remained unchanged. This covers initialization rejection, not a later atomic-publication fault. |
+| App permissions/gate | Initial `Operation not permitted` was resolved by the owner updating Full Disk Access for the compiled App. The next App preview completed and visibly kept removal disabled pending native acceptance. |
+| History | Copies of the two actual fixture records placed in App's dedicated LeftoversJournal rendered as successful Apps operations with 62 logical bytes per row and recovery caveats. An existing legacy record remained visible. These are CLI execution records, not App-issued moves. |
+
+Success journal originals remain in `~/Library/Application Support/Sayaka144AcceptanceJournal`.
+Disposable source/apps, restored T1 cache, manifest and local progress evidence
+are under the App workspace `.build/acceptance144-20261011` directory. No real
+application/service or user data was moved, removed or signalled for acceptance.
+
+These observations are partial acceptance, not permission to open the gate.
+Still pending: bundle/manifest replacement; exhaustive copy/family roots;
+protection of Apple/group/EDR IDs and sensitive T3;
+LaunchAgent fixture reference/malformed/replacement cases; native spelling,
+ancestor and dataless cases at each phase; altered digest/count/token/IDs, replay,
+expiry/clock rollback and over-32 batching; initial atomic journal publication
+failure; interruption after started and unknown
+recovery/no retry. No positive fault-injection result is inferred from source
+review or compiled test sources. The production gate remains false.
