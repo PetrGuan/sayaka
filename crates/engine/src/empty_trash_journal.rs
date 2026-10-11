@@ -488,7 +488,7 @@ mod review_regressions {
             "/Users/u/.Trash/x/",
             "/Users/u/./.Trash/x",
         ] {
-            assert!(path(&NativePath::unix_fixture(p)).is_err());
+            assert!(path(&NativePath::from_path(std::path::Path::new(p))).is_err());
         }
     }
     #[test]
