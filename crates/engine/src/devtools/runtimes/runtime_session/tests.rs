@@ -12,6 +12,7 @@ struct Fake {
     image: RefCell<bool>,
     fail_device: bool,
     timeout_image: bool,
+    nonzero_image: bool,
     runtime_called: Cell<bool>,
     post_images: RefCell<VecDeque<serde_json::Value>>,
     post_device: bool,
@@ -35,6 +36,7 @@ fn fake() -> Fake {
         image: RefCell::new(true),
         fail_device: false,
         timeout_image: false,
+        nonzero_image: false,
         runtime_called: Cell::new(false),
         post_images: RefCell::new(VecDeque::new()),
         post_device: false,
@@ -175,6 +177,7 @@ impl Host for Fake {
                 if self.timeout_image {
                     return Err(ToolFailure::Timeout);
                 }
+                success = !self.nonzero_image;
                 self.runtime_called.set(true);
                 if let Some(cancel) = &self.cancellation {
                     cancel.cancel();
@@ -642,4 +645,15 @@ fn registration_reappearing_while_asset_remains_is_unknown() {
         .borrow_mut()
         .push_back(post_image(IMAGE, "Deleting", "/fixture/image"));
     assert!(runtime_reason(&execute_fixture(h)).contains("runtime_reappeared;observations=2"));
+}
+
+#[test]
+fn nonzero_runtime_absence_does_not_bypass_asset_confirmation() {
+    let mut h = fake();
+    h.nonzero_image = true;
+    let r = execute_fixture(h);
+    assert_eq!(
+        runtime_reason(&r),
+        "runtime_absence_after_nonzero_exit;observations=1"
+    );
 }

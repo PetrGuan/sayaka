@@ -679,7 +679,15 @@ impl<H: Host> RuntimeSession<H> {
                                         })
                                 }
                             };
-                            if absent {
+                            if absent
+                                && matches!(item.target, Target::Runtime { .. })
+                                && !output.success
+                            {
+                                (
+                                    ItemState::Unknown,
+                                    "runtime_absence_after_nonzero_exit;observations=1".into(),
+                                )
+                            } else if absent {
                                 (
                                     ItemState::Succeeded,
                                     if output.success {
