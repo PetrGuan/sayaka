@@ -10,6 +10,8 @@ mod browse;
 pub use browse::*;
 mod ai_footprint;
 pub use ai_footprint::*;
+mod empty_trash;
+pub use empty_trash::*;
 mod orphan_execution;
 pub use orphan_execution::*;
 mod app_orphans;
@@ -109,6 +111,7 @@ struct Job {
 
 struct Registry {
     next_handle: u64,
+    empty_trash: HashMap<u64, Arc<Mutex<empty_trash::EmptyTrashJob>>>,
     picked: HashMap<u64, Arc<picked::PickedJob>>,
     jobs: HashMap<u64, Arc<Mutex<Job>>>,
     installers: HashMap<u64, Arc<Mutex<installer::InstallerJob>>>,
@@ -127,6 +130,7 @@ impl Registry {
             + self.picked.len()
             + self.simulators.len()
             + self.orphans.len()
+            + self.empty_trash.len()
             >= MAX_TASKS
         {
             return Err(LIMIT_EXCEEDED);
@@ -142,6 +146,7 @@ fn registry() -> &'static Mutex<Registry> {
     REGISTRY.get_or_init(|| {
         Mutex::new(Registry {
             next_handle: 1,
+            empty_trash: HashMap::new(),
             picked: HashMap::new(),
             jobs: HashMap::new(),
             installers: HashMap::new(),

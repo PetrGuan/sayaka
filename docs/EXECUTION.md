@@ -15,16 +15,15 @@ Apple's `simctl` is the separately owned `permanent_tool_operation_v1` class in
 journal schema and confirmation. Nothing in this document's Trash executor can
 reach it, and it is never a fallback for a failed Trash operation.
 
-A second, separately owned permanent effect is proposed in
-[Finder-delegated empty Trash](EMPTY_TRASH.md):
-`finder_delegated_empty_trash_v1`. Unlike simulator operations, it is **not yet
-approved or implemented**. The owner selected its product choices for drafting;
-explicit approval of that reviewed contract is required before implementation.
-Only that independent flow could ask Finder to empty all current Trash, including
-attached volumes, under its own typed confirmation and journal. Ordinary cleaning
-has no permanent-delete fallback. No existing Trash approval, success, failure or
-cancellation reaches this proposed effect, and contract approval is not permission
-to send an empty event on a real account.
+A second, separately owned permanent effect was approved by the owner on
+2026-10-11: [Finder-delegated empty Trash](EMPTY_TRASH.md), contract
+`finder_delegated_empty_trash_v1`. Its core session retains read-only evidence,
+issues a single-use permit after durable intent, and records independent outcome
+observations. Only its separately confirmed App flow can ask Finder to empty all
+current Trash, including attached volumes. Ordinary cleaning has no permanent-delete
+fallback. No existing Trash approval, success, failure or cancellation reaches
+this effect. Contract approval is not permission to send an empty event on a real
+account; irreversible native acceptance remains pending.
 
 ## Approved guarantee and its limit
 

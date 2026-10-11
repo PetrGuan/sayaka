@@ -173,6 +173,9 @@ impl Store {
                 item.reason = Some("outcome_publication_not_confirmed".into());
             }
         }
+        if fallback.empty_trash_context.is_some() {
+            crate::empty_trash_journal::unconfirmed(&mut fallback);
+        }
         // Keep a durably named conservative receipt until the final receipt has
         // passed every durability barrier. Rename must not consume this marker.
         let marker_file = self.write_snapshot(&marker, &fallback)?;
@@ -321,6 +324,185 @@ impl Store {
     }
 }
 
+/// One shared budget for all supplied source roots, including ignored names.
+pub(crate) struct EvidenceBudget {
+    pub entries: usize,
+    pub records: usize,
+    pub bytes: usize,
+    pub deadline: std::time::Instant,
+}
+impl EvidenceBudget {
+    pub fn check(&self) -> io::Result<()> {
+        if std::time::Instant::now() >= self.deadline {
+            Err(invalid("source observation deadline exceeded"))
+        } else {
+            Ok(())
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EvidenceStamp {
+    device: u64,
+    inode: u64,
+    size: i64,
+    mtime: (i64, i64),
+    ctime: (i64, i64),
+}
+impl EvidenceStamp {
+    fn capture(fd: &OwnedFd) -> io::Result<Self> {
+        let s = fs::fstat(fd)?;
+        Ok(Self {
+            device: s.st_dev as u64,
+            inode: s.st_ino,
+            size: s.st_size,
+            mtime: (s.st_mtime, s.st_mtime_nsec),
+            ctime: (s.st_ctime, s.st_ctime_nsec),
+        })
+    }
+}
+pub(crate) struct SourceEvidence {
+    pub record: Record,
+    pub digest: String,
+    pub stamp: EvidenceStamp,
+}
+impl Store {
+    /// Used only after the caller's shared-budget barrier snapshot validated
+    /// this locked store and its record capacity; publication checks collision.
+    pub(crate) fn empty_trash_id(&self) -> io::Result<String> {
+        self.unchanged()?;
+        Ok(format!(
+            "{:x}-{:x}-{:x}",
+            std::process::id(),
+            now_ms()?,
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+    pub(crate) fn identity(&self) -> io::Result<(u64, u64)> {
+        self.unchanged()?;
+        let s = fs::fstat(&self.directory)?;
+        Ok((s.st_dev as u64, s.st_ino))
+    }
+    pub(crate) fn source_record(
+        &self,
+        id: &str,
+        b: &mut EvidenceBudget,
+    ) -> io::Result<SourceEvidence> {
+        use sha2::{Digest, Sha256};
+        b.check()?;
+        self.unchanged()?;
+        if !valid_id(id) || b.records >= MAX_RECORDS || b.bytes >= MAX_READ_BYTES {
+            return Err(invalid("source budget or identity invalid"));
+        }
+        for ext in ["pending", "next"] {
+            match fs::statat(
+                &self.directory,
+                format!("{id}.{ext}"),
+                AtFlags::SYMLINK_NOFOLLOW,
+            ) {
+                Err(rustix::io::Errno::NOENT) => {}
+                _ => return Err(invalid("source publication is unresolved")),
+            }
+        }
+        let name = format!("{id}.json");
+        let fd = fs::openat(
+            &self.directory,
+            &name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )?;
+        check_file(&fd)?;
+        let stamp = EvidenceStamp::capture(&fd)?;
+        let limit = MAX_RECORD_BYTES.min((MAX_READ_BYTES - b.bytes) as u64);
+        b.records += 1;
+        let mut bytes = Vec::new();
+        File::from(fd.try_clone()?)
+            .take(limit + 1)
+            .read_to_end(&mut bytes)?;
+        b.bytes += bytes.len();
+        b.check()?;
+        if bytes.len() as u64 > limit || EvidenceStamp::capture(&fd)? != stamp {
+            return Err(invalid("source bytes changed or exceeded budget"));
+        }
+        check_file(&fd)?;
+        let named = fs::statat(&self.directory, &name, AtFlags::SYMLINK_NOFOLLOW)?;
+        if named.st_dev as u64 != stamp.device || named.st_ino != stamp.inode {
+            return Err(invalid("source file replaced"));
+        }
+        let record: Record = serde_json::from_slice(&bytes)?;
+        record.validate()?;
+        if record.operation_id != id {
+            return Err(invalid("source name mismatch"));
+        }
+        self.unchanged()?;
+        b.check()?;
+        Ok(SourceEvidence {
+            record,
+            digest: format!("{:x}", Sha256::digest(&bytes)),
+            stamp,
+        })
+    }
+    pub(crate) fn source_records(&self, b: &mut EvidenceBudget) -> io::Result<Vec<SourceEvidence>> {
+        self.unchanged()?;
+        b.check()?;
+        let fd = fs::openat(
+            &self.directory,
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        let mut dir = fs::Dir::new(fd)?;
+        let mut names = std::collections::BTreeSet::new();
+        while let Some(e) = dir.read() {
+            b.check()?;
+            if b.entries >= 10000 {
+                return Err(invalid("source directory entry budget exceeded"));
+            }
+            b.entries += 1;
+            let e = e?;
+            let bytes = e.file_name().to_bytes();
+            if [b".".as_slice(), b"..", b".lock"].contains(&bytes) {
+                continue;
+            }
+            let n = std::str::from_utf8(bytes).map_err(|_| invalid("unknown source filename"))?;
+            let id = n
+                .strip_suffix(".json")
+                .ok_or_else(|| invalid("uncommitted or unexpected source entry"))?;
+            if !valid_id(id)
+                || !names.insert(id.to_owned())
+                || names.len() > MAX_RECORDS - b.records
+            {
+                return Err(invalid("source record budget or identity invalid"));
+            }
+        }
+        let mut result = Vec::new();
+        for id in names {
+            result.push(self.source_record(&id, b)?)
+        }
+        self.unchanged()?;
+        b.check()?;
+        Ok(result)
+    }
+    /// Only the live finishing session calls this after a durable nonambiguous
+    /// maintenance receipt. Normal history archival never opens this store.
+    pub(crate) fn clear_empty_trash_guard(&self, id: &str) -> io::Result<()> {
+        self.unchanged()?;
+        if !valid_id(id) {
+            return Err(invalid("invalid guard id"));
+        }
+        let snapshot = self.records()?;
+        if !snapshot.uncommitted_snapshots.is_empty()
+            || snapshot.records.len() != 1
+            || snapshot.records[0].operation_id != id
+            || snapshot.records[0].schema_version != 10
+        {
+            return Err(invalid("inconsistent empty Trash guard"));
+        }
+        fs::unlinkat(&self.directory, format!("{id}.json"), AtFlags::empty())?;
+        fs::fsync(&self.directory)?;
+        self.unchanged()
+    }
+}
+
 fn check_file(fd: &OwnedFd) -> io::Result<()> {
     let stat = fs::fstat(fd)?;
     if stat.st_mode & libc::S_IFMT != libc::S_IFREG
@@ -376,6 +558,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::from_path(Path::new("/fixture")),
             clean_policy: None,
+            empty_trash_context: None,
             orphan_context: None,
             related_context: None,
             tool_operation: None,
@@ -653,5 +836,57 @@ mod tests {
             drop(store);
             fixture.close().unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod empty_trash_tests {
+    use super::*;
+    #[test]
+    fn zero_item_pending_publication_does_not_look_completed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("journal"), true).unwrap();
+        let r = crate::empty_trash_journal::tests::intent();
+        assert!(
+            store
+                .publish_with(&r, true, |p| if p == PublishPoint::FinalFileSync {
+                    Err(io::Error::other("injected sync failure"))
+                } else {
+                    Ok(())
+                })
+                .is_err()
+        );
+        let read = store.records().unwrap();
+        assert!(!read.uncommitted_snapshots.is_empty());
+        assert_eq!(read.records.len(), 1);
+        let c = read.records[0].empty_trash_context.as_ref().unwrap();
+        assert_eq!(
+            c.aggregate_outcome,
+            Some(crate::empty_trash_journal::Aggregate::Unknown)
+        );
+        assert!(c.dispatch_may_continue);
+        assert!(store.new_id().is_err());
+    }
+    #[test]
+    fn source_digest_is_of_exact_bytes_and_pending_prevents_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("journal"), true).unwrap();
+        let r = crate::empty_trash_journal::tests::intent();
+        store.publish(&r, true).unwrap().require_clean().unwrap();
+        let budget = || EvidenceBudget {
+            entries: 0,
+            records: 0,
+            bytes: 0,
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(2),
+        };
+        let before = store.source_record("a-1", &mut budget()).unwrap();
+        let p = dir.path().join("journal/a-1.json");
+        let mut bytes = std::fs::read(&p).unwrap();
+        bytes.push(b'\n');
+        std::fs::write(&p, bytes).unwrap();
+        let after = store.source_record("a-1", &mut budget()).unwrap();
+        assert_ne!(before.digest, after.digest);
+        store.write_snapshot("a-1.pending", &r).unwrap();
+        assert!(store.source_record("a-1", &mut budget()).is_err());
     }
 }

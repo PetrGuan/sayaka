@@ -660,6 +660,35 @@ SAYAKA_API int32_t sayaka_simulators_cancel_v1(uint64_t handle);
 /* Cancels and joins owned work. BUSY: retain the handle and retry later. */
 SAYAKA_API int32_t sayaka_simulators_release_v1(uint64_t handle);
 
+/* Finder-delegated entire-Trash sessions: synchronous, call off the UI thread.
+ * JSON input <=128 KiB; result <=8 MiB. Strict version=1, exact sizeof, reserved=0.
+ * Preview JSON: {sources:[{path:NativePath,schemas:[...]}],finder:null|{count:u64,
+ * warns_before_emptying:bool}}. Preview request handle must be zero.
+ * Begin JSON: {plan_digest,approval_token:"empty trash",finder:{...}}.
+ * Finish JSON: {outcome,error_code:null|i32,message:null|string,
+ * finder_after_count:null|u64}. See BINDINGS.md for states and trust boundary.
+ * Core never sends events; result JSON is audit data, not authority.
+ */
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t handle;
+    const uint8_t *json;
+    size_t json_length;
+    uint64_t reserved;
+} SayakaEmptyTrashRequestV1;
+SAYAKA_API int32_t sayaka_empty_trash_preview_v1(const SayakaEmptyTrashRequestV1 *, uint64_t *out_handle);
+SAYAKA_API int32_t sayaka_empty_trash_begin_v1(const SayakaEmptyTrashRequestV1 *);
+/* Consumes permit, returns remaining monotonic milliseconds. Host rechecks its
+ * license/cancellation/deadline immediately before sending ONE fndr/empt event. */
+SAYAKA_API int32_t sayaka_empty_trash_claim_dispatch_v1(uint64_t handle, uint64_t *remaining_milliseconds);
+SAYAKA_API int32_t sayaka_empty_trash_finish_v1(const SayakaEmptyTrashRequestV1 *);
+SAYAKA_API int32_t sayaka_empty_trash_result_v1(uint64_t handle, uint8_t *buffer, size_t capacity, size_t *required);
+/* BUSY means retain handle; release after begin preserves unresolved barrier. */
+SAYAKA_API int32_t sayaka_empty_trash_release_v1(uint64_t handle);
+/* Read-only strict schema-10 decoder; <=1 MiB. No authority is restored. */
+SAYAKA_API int32_t sayaka_empty_trash_validate_record_v1(const uint8_t *json, size_t json_length);
+
 #ifdef __cplusplus
 }
 #endif

@@ -713,6 +713,7 @@ impl RelatedUninstallSession {
             ),
             clean_policy: None,
             tool_operation: None,
+            empty_trash_context: None,
             orphan_context: None,
             related_context: None,
             delegation: self.admin.as_ref().map(|a| journal::DelegationRecord {
@@ -736,6 +737,7 @@ impl RelatedUninstallSession {
             clean_policy: None,
             tool_operation: None,
             delegation: None,
+            empty_trash_context: None,
             orphan_context: None,
             related_context: Some(RelatedContext {
                 schema_version: 1,

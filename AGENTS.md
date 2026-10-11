@@ -31,6 +31,14 @@ inside Trash review, and hosts must present it in a separate, strong
 confirmation. Its argument table is fixed in that document; extending it, or
 adding any other permanent effect, needs a new contract and maintainer approval.
 
+The maintainer also approved (2026-10-11) the separately owned
+`finder_delegated_empty_trash_v1` contract in [docs/EMPTY_TRASH.md](docs/EMPTY_TRASH.md).
+The core observes and journals; only the App sends the one Finder event after
+independent typed confirmation. It has no recursive deletion, helper, CLI
+execution, retry or ordinary-cleaning fallback. Never send the empty event on a
+real account during this task. Native irreversible acceptance needs a separately
+authorized disposable account/VM.
+
 ## Implementation
 
 Keep changes surgical. The fourth crate, `sayaka-platform-macos`, is an explicitly

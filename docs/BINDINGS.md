@@ -1176,3 +1176,46 @@ completed move nor releases resources. `sayaka_orphan_release_v1` cancels active
 work and returns BUSY until it exits; retry, and only OK invalidates the handle.
 Never unload the library while a handle remains live. No callbacks, native
 object pointers, test bypasses or permanent-delete fallbacks cross this ABI.
+
+### Empty Trash: independent single-use v1 delegation
+
+`SayakaEmptyTrashRequestV1` has ABI version 1, exact struct size, live handle,
+UTF-8 JSON bytes (1..128 KiB), and zero reserved. Preview requires handle 0 and
+returns a fresh owned handle. Inputs reject unknown keys. `sources` contains up
+to 8 explicit `NativePath` roots and schema allowlists (1–5, 7–9); `finder` is null
+for read-only use or `{count:u64,warns_before_emptying:bool}` from successful strict
+Finder reads. Unknown observations cannot be converted to zero/false.
+
+All calls are synchronous and must run off the UI thread. Calls on a busy handle
+return BUSY. Result uses the ordinary two-call byte-buffer convention (8 MiB cap),
+returning the current preview, permit, durable schema-10 receipt, or bounded error.
+No serialized input can recreate session authority. Other OSes return
+UNSUPPORTED_PLATFORM; malformed pointers/version/size/reserved return the usual
+INVALID_ARGUMENT/UNSUPPORTED_VERSION. The shared four-handle limit applies.
+
+`preview → begin → claim_dispatch → finish → release` is the only dispatch path.
+Begin takes `{plan_digest,approval_token,finder}` with exact `empty trash` token
+and fresh equal Finder observations; even refused begin consumes the preview.
+It writes both fixed per-account stores durably before returning the permit.
+The additional claim call consumes the permit once and returns remaining
+monotonic milliseconds; expired claim does not authorize a send. Host cancellation
+before dispatch uses finish `not_dispatched` (claim is unnecessary).
+
+Finish takes required `{outcome,error_code,message,finder_after_count}` keys,
+with nullable code/text/count. Outcome is `reported_completed`, `user_cancelled`,
+`automation_denied`, `failed`, `timed_out`, `transport_unknown`, or `not_dispatched`.
+Finish is single-use after begin; core never sends an event. The trusted host must
+prove no send for `not_dispatched`, preserve error classifications, recheck the
+license and cancellation immediately before begin and dispatch, and send at most
+one event with the 600-second timeout. Expiry gates starting the event, not finish.
+Unknown results and timeout/transport ambiguity preserve the external guard.
+
+Release before begin cancels the preview. Release after begin, a crash or a failed
+publication preserves unresolved intent, including zero-item intents. Release
+cannot cancel Finder. There is no retry or supported guard-resolution API.
+See [the approved contract](EMPTY_TRASH.md) for scope, race disclosure and history
+semantics. Tests are source-compiled only; destructive native acceptance pending.
+
+`sayaka_empty_trash_validate_record_v1` is a bounded (1 MiB) read-only schema-10
+validator for host history. It allocates no handle or authority and rejects
+unknown/missing/conflicting fields through the same core validator.

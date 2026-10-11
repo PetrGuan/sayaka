@@ -377,12 +377,18 @@ pub struct Record {
     pub orphan_context: Option<crate::orphan_journal::Context>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<DelegationRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub empty_trash_context: Option<crate::empty_trash_journal::Context>,
     pub created_unix_ms: u64,
     pub items: Vec<ItemRecord>,
 }
 
 impl Record {
     pub fn validate(&self) -> io::Result<()> {
+        if self.schema_version == 10 {
+            return self.empty_trash_context.as_ref().ok_or_else(|| invalid("missing empty Trash context"))?.validate(self);
+        }
+        if self.empty_trash_context.is_some() { return Err(invalid("unexpected empty Trash context")); }
         let legacy = self.schema_version == LEGACY_SCHEMA_VERSION
             && self.plan_schema_version == LEGACY_PLAN_SCHEMA_VERSION
             && self.engine_version == LEGACY_ENGINE_VERSION
@@ -725,6 +731,9 @@ impl Record {
 
     /// This is a read-time interpretation; it neither rewrites nor retries work.
     pub fn reconciled(mut self) -> Self {
+        if self.empty_trash_context.as_ref().is_some_and(|c| c.operation_state == crate::empty_trash_journal::OperationState::Started) {
+            crate::empty_trash_journal::unconfirmed(&mut self);
+        }
         for item in &mut self.items {
             if item.state == ItemState::Started {
                 item.state = ItemState::Unknown;
@@ -748,6 +757,7 @@ impl Record {
     /// Sum the approved logical sizes of verified moved identities, not a fresh
     /// destination measurement or a free-space delta.
     pub fn handled_bytes(&self) -> Option<u64> {
+        if self.empty_trash_context.is_some() { return None; }
         if let Some(context) = &self.orphan_context {
             return context.selected.iter().zip(&self.items).filter(|(_,i)|i.state==ItemState::Succeeded).try_fold(0u64,|sum,(b,_)|sum.checked_add(b.measured_logical_bytes?));
         }
@@ -1012,6 +1022,8 @@ pub(crate) fn valid_id(id: &str) -> bool {
 mod store;
 #[cfg(target_os = "macos")]
 pub use store::Store;
+#[cfg(target_os = "macos")]
+pub(crate) use store::{EvidenceBudget, EvidenceStamp};
 
 #[cfg(not(target_os = "macos"))]
 pub struct Store;
@@ -1067,6 +1079,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            empty_trash_context: None,
             orphan_context: None,
             related_context: None,
             tool_operation: None,
