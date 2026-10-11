@@ -321,7 +321,10 @@ impl OrphanSession {
                 }
             }
         }
-        session.system_inventory = inventory.into_iter().filter(Bundle::is_system_safari).collect();
+        session.system_inventory = inventory
+            .into_iter()
+            .filter(Bundle::is_system_safari)
+            .collect();
         session.preview.spotlight = summaries.into_values().collect();
         if let Err(e) = session.budget(deadline) {
             session.preview.issues.push(e.to_string());
@@ -504,7 +507,9 @@ impl OrphanSession {
         for b in &self.bundles {
             b.revalidate()?;
         }
-        for bundle in &self.system_inventory { bundle.revalidate()?; }
+        for bundle in &self.system_inventory {
+            bundle.revalidate()?;
+        }
         let owned;
         let inventory = if let Some(cached) = cached {
             cached
@@ -512,7 +517,10 @@ impl OrphanSession {
             owned = observation::inventory(&self.roots, deadline, &self.entries_remaining)?;
             &owned
         };
-        if cached.is_none() && inventory.iter().filter(|b| b.is_system_safari()).count() != self.system_inventory.len() {
+        if cached.is_none()
+            && inventory.iter().filter(|b| b.is_system_safari()).count()
+                != self.system_inventory.len()
+        {
             return Err(error("resource_changed: system application observation"));
         }
         let mut queries = BTreeMap::<String, bool>::new();
@@ -616,7 +624,14 @@ impl OrphanSession {
                         return Err(error("launch_agent_path_unknown"));
                     }
                     if path.starts_with(candidate)
-                        || shared::physical_location(path)?.starts_with(&physical)
+                        || entry
+                            .programs
+                            .iter()
+                            .find(|(original, _)| original == field)
+                            .ok_or_else(|| error("launch_agent_path_unknown"))?
+                            .1
+                            .path()
+                            .starts_with(&physical)
                     {
                         return Err(error("launch_agent_reference"));
                     }
@@ -840,6 +855,7 @@ struct LaunchEntry {
     witness: PathWitness,
     digest: String,
     fields: Vec<(String, bool)>,
+    programs: Vec<(String, platform::launch_program::ProgramPath)>,
 }
 struct LaunchSnapshot {
     root: Root,
@@ -875,11 +891,24 @@ impl LaunchSnapshot {
                 if bytes_read > 16 * 1024 * 1024 {
                     return Err(error("launch_agent_limit"));
                 }
+                let mut programs = Vec::new();
+                for (field, program) in &fields {
+                    if *program {
+                        programs.push((
+                            field.clone(),
+                            platform::launch_program::ProgramPath::capture(
+                                Path::new(field),
+                                limit,
+                            )?,
+                        ));
+                    }
+                }
                 witness.revalidate()?;
                 entries.push(LaunchEntry {
                     witness,
                     digest: hash(bytes),
                     fields,
+                    programs,
                 });
             }
         }
@@ -893,6 +922,9 @@ impl LaunchSnapshot {
         self.root.revalidate()?;
         for entry in &self.entries {
             entry.witness.revalidate()?;
+            for (_, program) in &entry.programs {
+                program.revalidate(deadline)?;
+            }
         }
         let fresh = Self::capture(home, deadline)?;
         if fresh.root.absent != self.root.absent
@@ -902,6 +934,11 @@ impl LaunchSnapshot {
                 a.witness.path() != b.witness.path()
                     || a.witness.identity() != b.witness.identity()
                     || a.digest != b.digest
+                    || a.programs.len() != b.programs.len()
+                    || a.programs
+                        .iter()
+                        .zip(&b.programs)
+                        .any(|(a, b)| a.0 != b.0 || !a.1.same_evidence(&b.1))
             })
         {
             return Err(error("resource_changed: LaunchAgents"));
@@ -909,6 +946,9 @@ impl LaunchSnapshot {
         self.root.revalidate()?;
         for entry in &self.entries {
             entry.witness.revalidate()?;
+            for (_, program) in &entry.programs {
+                program.revalidate(deadline)?;
+            }
         }
         Ok(())
     }

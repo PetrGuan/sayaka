@@ -43,6 +43,9 @@ pub mod related;
 pub mod system_safari;
 
 #[cfg(target_os = "macos")]
+pub mod launch_program;
+
+#[cfg(target_os = "macos")]
 pub mod devtools;
 #[cfg(target_os = "macos")]
 mod installer_provenance;
