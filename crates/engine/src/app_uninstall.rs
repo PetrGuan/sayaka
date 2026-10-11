@@ -377,7 +377,17 @@ pub fn classify_bundle_uninstaller(
         (StringState::TooLong, _) => return Err("bundle identifier exceeds parser limit"),
         _ => return Err("bundle identifier is unavailable"),
     };
-    let vendor = match identifier.as_str() {
+    let vendor = vendor_uninstaller_for_id(&identifier);
+    Ok(BundleUninstallClassification {
+        vendor,
+        manifest_digest,
+        manifest_device,
+        manifest_inode,
+    })
+}
+
+pub(crate) fn vendor_uninstaller_for_id(identifier: &str) -> Option<VendorUninstaller> {
+    match identifier {
         "com.docker.docker" => Some(VendorUninstaller {
             name: "Docker Desktop",
             instruction: "Back up containers, images and volumes first. Use Docker Desktop > Troubleshoot > Uninstall, or follow Docker's documented Mac uninstaller; then move Docker.app to Trash as instructed by Docker. SayakaCleaner will not launch or replace that workflow.",
@@ -387,13 +397,7 @@ pub fn classify_bundle_uninstaller(
             restart: "Not established by the cited Docker instructions; verify the vendor result",
         }),
         _ => None,
-    };
-    Ok(BundleUninstallClassification {
-        vendor,
-        manifest_digest,
-        manifest_device,
-        manifest_inode,
-    })
+    }
 }
 
 impl UninstallPreview {

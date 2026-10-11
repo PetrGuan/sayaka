@@ -30,7 +30,7 @@ const BUDGET: Duration = Duration::from_secs(5);
 /// Not configurable by callers, environment, an approval token or imported JSON.
 pub const NATIVE_ACCEPTANCE_RECORDED: bool = false;
 const COVERAGE: &str = "registered_and_selected_roots";
-const DENIED: &[&str] = &[
+pub(crate) const DENIED: &[&str] = &[
     "com.apple.",
     "group.",
     "com.crowdstrike.",
@@ -43,7 +43,7 @@ const DENIED: &[&str] = &[
     "com.cisco.anyconnect",
     "com.cisco.secureclient",
 ];
-const SENSITIVE: &[&str] = &[
+pub(crate) const SENSITIVE: &[&str] = &[
     "com.1password.",
     "com.agilebits.",
     "com.lastpass.",
@@ -68,10 +68,10 @@ fn digest(bytes: impl AsRef<[u8]>) -> String {
 fn overlap(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
-fn rule_id(rule: Rule) -> String {
+pub(crate) fn rule_id(rule: Rule) -> String {
     format!("org.apple.library.{}.bundle_id_convention.v1", rule.key())
 }
-fn rule_evidenced(rule: Rule) -> bool {
+pub(crate) fn rule_evidenced(rule: Rule) -> bool {
     // Exact Apple-published paths. Other proposed rows stay read-only pending
     // their exact-leaf evidence/OS acceptance; no widening by basename alone.
     matches!(
@@ -79,7 +79,7 @@ fn rule_evidenced(rule: Rule) -> bool {
         Rule::Caches | Rule::ApplicationSupport | Rule::Preferences
     )
 }
-fn consequence(rule: Rule) -> &'static str {
+pub(crate) fn consequence(rule: Rule) -> &'static str {
     match rule {
         Rule::Caches => "Cached data may need to be downloaded or rebuilt.",
         Rule::Logs => "Diagnostic history will be lost and cannot be regenerated.",
@@ -713,6 +713,7 @@ impl RelatedUninstallSession {
             ),
             clean_policy: None,
             tool_operation: None,
+            orphan_context: None,
             related_context: None,
             delegation: self.admin.as_ref().map(|a| journal::DelegationRecord {
                 schema_version: 1,
@@ -735,6 +736,7 @@ impl RelatedUninstallSession {
             clean_policy: None,
             tool_operation: None,
             delegation: None,
+            orphan_context: None,
             related_context: Some(RelatedContext {
                 schema_version: 1,
                 parent_operation_id: parent_id,
@@ -1013,7 +1015,7 @@ fn native_path(p: &NativePath) -> PathBuf {
     use std::os::unix::ffi::OsStrExt;
     PathBuf::from(std::ffi::OsStr::from_bytes(&p.bytes))
 }
-fn item(path: &Path, info: &NativeFileInfo, now: u64) -> ItemRecord {
+pub(crate) fn item(path: &Path, info: &NativeFileInfo, now: u64) -> ItemRecord {
     ItemRecord {
         path: NativePath::from_path(path),
         device: info.device,
@@ -1027,11 +1029,11 @@ fn item(path: &Path, info: &NativeFileInfo, now: u64) -> ItemRecord {
         updated_unix_ms: now,
     }
 }
-fn skip(item: &mut ItemRecord, reason: &str) {
+pub(crate) fn skip(item: &mut ItemRecord, reason: &str) {
     item.state = ItemState::Skipped;
     item.reason = Some(reason.into());
 }
-fn publish(store: &Store, report: &mut ExecutionReport) -> io::Result<()> {
+pub(crate) fn publish(store: &Store, report: &mut ExecutionReport) -> io::Result<()> {
     let now = journal::now_ms().map_err(|e| {
         report.journal_error = Some(e.to_string());
         e
@@ -1047,7 +1049,7 @@ fn publish(store: &Store, report: &mut ExecutionReport) -> io::Result<()> {
             e
         })
 }
-fn apply(item: &mut ItemRecord, outcome: NativeTrashOutcome) {
+pub(crate) fn apply(item: &mut ItemRecord, outcome: NativeTrashOutcome) {
     match outcome {
         NativeTrashOutcome::Moved { destination } => {
             item.state = ItemState::Succeeded;
@@ -1086,7 +1088,7 @@ fn file_evidence(info: &NativeFileInfo) -> journal::FileEvidence {
         modified: journal::NativeTime::from_system_time(info.modified_at),
     }
 }
-fn absent_without_links(path: &Path) -> io::Result<bool> {
+pub(crate) fn absent_without_links(path: &Path) -> io::Result<bool> {
     for component in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
         match std::fs::symlink_metadata(component) {
             Ok(m) if m.file_type().is_symlink() => return Err(error("symlink_path")),
@@ -1097,7 +1099,7 @@ fn absent_without_links(path: &Path) -> io::Result<bool> {
     }
     Ok(false)
 }
-fn measure_size(path: &Path, start: Instant) -> io::Result<u64> {
+pub(crate) fn measure_size(path: &Path, start: Instant) -> io::Result<u64> {
     let policy = platform::ReadOnlyPolicy::enter()?;
     let result = (|| {
         let mut total = 0u64;

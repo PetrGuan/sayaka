@@ -2,10 +2,11 @@
 
 # Orphaned application data: proposed execution contract
 
-Status: **draft for owner approval; no orphan execution implemented or enabled**.
-This is the documentation slice for issue 144. Approval of this document is
-required before the engine/platform implementation. Native acceptance is a
-separate, later gate; document approval cannot open it.
+Status: **owner approved 2026-10-11; core implementation is acceptance-gated**.
+The engine/platform session and CLI are implemented with
+`ORPHAN_NATIVE_ACCEPTANCE_RECORDED = false`. Bindings and App integration remain
+subsequent slices. Native acceptance is a separate, later gate; document
+approval does not open it. No native acceptance is claimed.
 
 The baseline is core `ee504503`: related uninstall and installed-app cache
 cleaning provide reusable machinery, but neither authorizes orphan execution.
@@ -14,9 +15,9 @@ Read with [UNINSTALL_RELATED_EXECUTION.md](UNINSTALL_RELATED_EXECUTION.md),
 and [ORPHAN_APP_CACHE_REVIEW.md](ORPHAN_APP_CACHE_REVIEW.md).
 If a referenced existing rule is more restrictive, preserve that restriction.
 
-## Proposed owner decisions
+## Owner-approved decisions
 
-| Decision | Recommended resolution awaiting approval |
+| Decision | Approved resolution |
 | --- | --- |
 | D1: tiers | T1 verified trashed bundle may use evidenced related rules; T3 name-only may execute only an eligible exact cache directory. |
 | D2: inactivity | T3 needs at least 30 days since the latest observed mtime in the entire bounded candidate tree, including its root. |
@@ -180,7 +181,9 @@ a newly discovered bundle requires a new preview, not approval-time recapture.
 
 Bound the Trash listing and history locator inventory within the discovery
 budget; every required source must finish. Bound LaunchAgent inventory to
-1,024 plists, 1 MiB per plist and two seconds per observation. Budget exhaustion
+1,024 entries, 1 MiB per plist, 16 MiB total parsed bytes and two seconds per
+observation. Retain the root/absence witness and full plist identity/digest
+set across phases; relative program paths are unknown, even without a slash. Budget exhaustion
 refuses, never silently truncates. The implementation must record exact native
 scope and capability errors in preview/ABI documentation before enablement.
 
@@ -236,20 +239,21 @@ item IDs and typed token on a terminal: no `--yes`, pipe token or auto-selection
 
 ## Journal draft and history isolation
 
-Reserve record/plan **9/9**, engine/rules **1/1**, with required
+Use record/plan **9/9**, engine/rules **1/1**, with required
 `orphan_context` schema **1**. Schema 9 was unoccupied at `ee504503`; recheck
-before implementation. This is a draft key table, not a released ABI.
+before implementation. The engine slice freezes the following schema-9 keys; the bindings slice must
+publish the same shape before App integration.
 Use existing NativePath encoding, bounded integers and lowercase SHA-256
 hex digests; never use escaped display strings as path authority.
 
 | Object | Proposed keys and validation |
 | --- | --- |
 | Record | Existing `schema_version`, `plan_schema_version`, `engine_version`, `rules_version`, `operation_id`, `contract`, `scope`, `created_unix_ms`, `items`; required `orphan_context`. Unrelated optional contexts absent. Exact contract/version tuple required. |
-| Item | Existing `path`, `device`, `inode`, `logical_bytes`, `state`, optional `reason`, optional `destination`, `updated_unix_ms`; rule binding uses existing encoding. No claim that an unknown advisory size is measured zero; execution uses validated accounting or explicit supported unknown representation frozen in PR 2. |
+| Item | Existing `path`, `device`, `inode`, `logical_bytes`, `state`, optional `reason`, optional `destination`, `updated_unix_ms`; `rule_binding` absent (typed orphan binding is in context). `logical_bytes` is the native identity/recovery size; directory advisory totals use selected[].measured_logical_bytes and never substitute a measured zero. |
 | orphan_context | `schema_version`, `home`, `library_device`, `library_inode`, `copy_roots`, `coverage`, `spotlight`, `policy_digest`, `plan_digest`, `approved_unix_ms`, `deadline_unix_ms`, `selected`. |
-| copy_roots[] | `path`, `state`, `device`, `inode`; present roots require identities, proven absent roots explicitly tagged and their ancestor witnesses retained in the live plan. Bounded complete root set, not caller omissions. |
-| spotlight[] | `bundle_id`, `scope`, `status`, `result_count`, `verified_trash_count`; one summary for each queried ID, explicit unknown distinct from zero, bound into plan digest. |
-| selected[] | `item_id`, `bundle_id`, `tier`, `rule_id`, `rule_version`, `path`, `kind`, `consequence`, optional `trashed_bundles`. One-to-one with items in approved order; no missing, duplicated or extra binding. |
+| copy_roots[] | `path`, `state`, `device`, `inode`; present roots record their identities; proven-absent roots record their retained existing parent identities and are explicitly tagged. Bounded complete root set, not caller omissions. |
+| spotlight[] | `bundle_id`, `scope`, `status`, `result_count`, `verified_trash_count`, `stale_registrations` (NativePath array); one summary for each queried ID, explicit unknown distinct from zero, bound into plan digest. |
+| selected[] | `item_id`, `bundle_id`, `tier`, `rule_id`, `rule_version`, `path`, `kind`, `consequence`, nullable `measured_logical_bytes`, optional `trashed_bundles`. One-to-one with items in approved order; no missing, duplicated or extra binding. |
 | trashed_bundles[] | T1 required nonempty; T3 absent. `path`, `device`, `inode`, `manifest_device`, `manifest_inode`, `manifest_digest`, `trash_root`, `trash_device`, `trash_inode`. All retained T1 evidence, not only one chosen convenient copy. |
 
 Validate tier/rule/path/type combinations, version tuple, binding equality,
@@ -327,3 +331,30 @@ A complete mtime traversal does not prove inactivity or dispensability. These
 limitations must remain visible in confirmation and cannot be removed by
 calling an unknown observation “complete.” If this evidence level is not
 acceptable to the owner, retain the read-only surface and keep the gate closed.
+
+## Core implementation notes
+
+`OrphanSession` owns retained identities and the selection. The release gate
+rejects approval before opening a journal or moving anything. CLI
+`orphans --related --policy-dir <directory> [--app-root <root>] [--execute]`
+uses the same session; `--execute` requires terminal input for IDs and token.
+The default CLI leftovers root is native-home
+`Library/Application Support/SayakaLeftoversJournal`; its parent must already
+exist. A caller-supplied state directory must be a dedicated leftovers root,
+and cannot overlap or nest inside an existing journal root.
+
+Trash locators read only existing journals at native-home
+`Library/Application Support/Sayaka`, `SayakaCleaner/UninstallJournal` and
+`SayakaCleaner Direct/UninstallJournal`. Missing roots are recorded by bounded
+absence checks; unreadable or incomplete locator inventories refuse. The
+retained bundle/manifest evidence, not the locator, determines T1.
+
+Shared copy observations now cover native application roots, all registered
+URLs and Spotlight for both orphan and generic installed-cache contracts. This
+may conservatively refuse previously eligible generic caches if the added
+observations cannot finish. It does not widen their allowed namespaces or
+change related-uninstall's bundle-first behavior.
+
+Build validation compiles the workspace and positive/negative fixture sources;
+unit/UI tests and native fixture moves are not executed by the implementation
+agent. Native acceptance and enabling the release gate remain pending.

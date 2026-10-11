@@ -1650,6 +1650,7 @@ mod tests {
                 contract: "revalidated_purge_trash_v1".into(),
                 scope: journal::NativePath::from_path(std::path::Path::new("/repo")),
                 clean_policy: None,
+                orphan_context: None,
                 related_context: None,
                 tool_operation: None,
                 delegation: None,

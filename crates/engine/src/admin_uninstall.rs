@@ -161,6 +161,7 @@ mod native {
             contract: journal::DELEGATED_CONTRACT.into(),
             scope: NativePath::from_path(scope),
             clean_policy: None,
+            orphan_context: None,
             related_context: None,
             tool_operation: None,
             delegation: Some(DelegationRecord {

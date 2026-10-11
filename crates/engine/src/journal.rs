@@ -131,7 +131,7 @@ impl NativePath {
         }
     }
 
-    fn validate(&self) -> io::Result<()> {
+    pub(crate) fn validate(&self) -> io::Result<()> {
         if self.encoding != "unix_bytes"
             || self.bytes.is_empty()
             || self.bytes.len() > 4096
@@ -374,6 +374,8 @@ pub struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related_context: Option<RelatedContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orphan_context: Option<crate::orphan_journal::Context>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<DelegationRecord>,
     pub created_unix_ms: u64,
     pub items: Vec<ItemRecord>,
@@ -421,7 +423,13 @@ impl Record {
             && self.engine_version == 2
             && self.rules_version == 1
             && self.contract == "revalidated_related_trash_v1";
-        if !(legacy || rule_bound || clean || bundle || purge || tool || delegated || related)
+        let orphan = self.schema_version == 9 && self.plan_schema_version == 9 && self.engine_version == 1 && self.rules_version == 1 && self.contract == "revalidated_orphan_trash_v1";
+        match (&self.orphan_context, orphan) {
+            (Some(context), true) => context.validate(self)?,
+            (None, false) => {},
+            _ => return Err(invalid("missing or unexpected orphan context")),
+        }
+        if !(legacy || rule_bound || clean || bundle || purge || tool || delegated || related || orphan)
             || !valid_id(&self.operation_id)
             || self.items.is_empty()
             || self.items.len() > MAX_ITEMS
@@ -740,6 +748,9 @@ impl Record {
     /// Sum the approved logical sizes of verified moved identities, not a fresh
     /// destination measurement or a free-space delta.
     pub fn handled_bytes(&self) -> Option<u64> {
+        if let Some(context) = &self.orphan_context {
+            return context.selected.iter().zip(&self.items).filter(|(_,i)|i.state==ItemState::Succeeded).try_fold(0u64,|sum,(b,_)|sum.checked_add(b.measured_logical_bytes?));
+        }
         self.items
             .iter()
             .filter(|item| item.state == ItemState::Succeeded)
@@ -1056,6 +1067,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            orphan_context: None,
             related_context: None,
             tool_operation: None,
             delegation: None,

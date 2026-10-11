@@ -36,3 +36,11 @@ pub use plan::{Clock, IdSource, Planner, SequentialIds, SystemClock};
 
 #[cfg(target_os = "macos")]
 pub mod related_uninstall;
+
+#[cfg(target_os = "macos")]
+mod app_observation;
+
+pub mod orphan_journal;
+
+#[cfg(target_os = "macos")]
+pub mod orphan_execution;

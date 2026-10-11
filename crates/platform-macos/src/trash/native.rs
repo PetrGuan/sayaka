@@ -649,12 +649,14 @@ enum TargetShape {
     CacheDirectory,
     BundleOwnedCacheDirectory,
     RelatedDirectory,
+    OrphanDirectory,
+    OrphanFile,
     RelatedFile,
 }
 
 impl TargetShape {
     fn is_directory(self) -> bool {
-        !matches!(self, Self::File | Self::RelatedFile)
+        !matches!(self, Self::File | Self::RelatedFile | Self::OrphanFile)
     }
 
     fn allows_scope_target(self) -> bool {
@@ -808,6 +810,11 @@ impl Candidate {
         )
     }
 
+    pub(super) fn capture_orphan(path: &Path, file: bool, protected: &[PathBuf]) -> Result<Self, NativeCaptureFailure> {
+        let home = crate::effective_account_home().map_err(|error| NativeCaptureFailure {phase:"home",operation:"native_home",error,restoration_error:None})?;
+        Self::capture_diagnostic_mode(&home.join("Library"), path, &[], protected, if file {TargetShape::OrphanFile} else {TargetShape::OrphanDirectory})
+    }
+
     fn capture_diagnostic_mode(
         scope: &Path,
         path: &Path,
@@ -923,11 +930,11 @@ impl Candidate {
             TargetShape::PurgeArtifact
             | TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
-            | TargetShape::RelatedDirectory => {
+            | TargetShape::RelatedDirectory | TargetShape::OrphanDirectory => {
                 stage.operation = "purge_admission";
                 admissible_purge_target(&target.stamp, uid)?;
             }
-            TargetShape::File | TargetShape::RelatedFile => {
+            TargetShape::File | TargetShape::RelatedFile | TargetShape::OrphanFile => {
                 stage.operation = "file_admission";
                 admissible_file(&target.stamp, uid)?;
             }
@@ -1183,10 +1190,10 @@ impl Candidate {
             }
             TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
-            | TargetShape::RelatedDirectory => {
+            | TargetShape::RelatedDirectory | TargetShape::OrphanDirectory => {
                 admissible_purge_target(&self.target.stamp, self.uid)?;
             }
-            TargetShape::File | TargetShape::RelatedFile => {
+            TargetShape::File | TargetShape::RelatedFile | TargetShape::OrphanFile => {
                 admissible_file(&self.target.stamp, self.uid)?;
             }
         }
@@ -1260,7 +1267,7 @@ impl Candidate {
     fn check_protection(&self) -> io::Result<()> {
         let related = matches!(
             self.shape,
-            TargetShape::RelatedDirectory | TargetShape::RelatedFile
+            TargetShape::RelatedDirectory | TargetShape::RelatedFile | TargetShape::OrphanDirectory | TargetShape::OrphanFile
         );
         if related {
             let home = crate::effective_account_home()?;
@@ -1282,7 +1289,8 @@ impl Candidate {
                 let (_, suffix) = rule.location();
                 leaf.strip_suffix(suffix).is_some_and(|id| {
                     rule.path(&home, id).ok().as_ref() == Some(&self.path)
-                        && rule.is_file() == (self.shape == TargetShape::RelatedFile)
+                        && rule.is_file() == matches!(self.shape, TargetShape::RelatedFile | TargetShape::OrphanFile)
+                        && (!matches!(self.shape, TargetShape::OrphanDirectory | TargetShape::OrphanFile) || *rule != crate::related::Rule::Containers)
                 })
             });
             if !admitted || self.scope != library {
@@ -1541,10 +1549,10 @@ impl Candidate {
             TargetShape::PurgeArtifact
             | TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
-            | TargetShape::RelatedDirectory => {
+            | TargetShape::RelatedDirectory | TargetShape::OrphanDirectory => {
                 admissible_moved_bundle(&stamp, self.uid, self.shape)?;
             }
-            TargetShape::File | TargetShape::RelatedFile => {
+            TargetShape::File | TargetShape::RelatedFile | TargetShape::OrphanFile => {
                 admissible_file(&stamp, self.uid)?;
             }
         }

@@ -296,3 +296,8 @@ mod tests {
         assert_eq!(get_policy().unwrap(), before);
     }
 }
+
+#[cfg(target_os = "macos")]
+pub mod orphans;
+#[cfg(target_os = "macos")]
+pub use trash::OrphanTrashCandidate;
