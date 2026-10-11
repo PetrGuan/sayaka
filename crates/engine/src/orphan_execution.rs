@@ -370,6 +370,7 @@ impl OrphanSession {
     fn policy_guard(&self, path: &Path, state: Option<&Path>) -> io::Result<()> {
         clean_policy::guard_all(&self.config, &self.policy)?;
         disjoint(path, &self.config.directory)?;
+        disjoint(path, &self.default_state_directory())?;
         for p in &self.policy.effective_exclusions {
             disjoint(path, p)?;
         }
