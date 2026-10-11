@@ -101,7 +101,16 @@ pub fn query(read: JournalRead, query: &Query) -> io::Result<Page> {
                 && !record
                     .items
                     .iter()
-                    .any(|item| query.states.contains(&item.state)))
+                    .any(|item| query.states.contains(&item.state))
+                && !record.empty_trash_context.as_ref().is_some_and(|c| {
+                    use crate::empty_trash_journal::Aggregate;
+                    query.states.contains(&match c.aggregate_outcome {
+                        Some(Aggregate::Succeeded) => ItemState::Succeeded,
+                        Some(Aggregate::Cancelled) => ItemState::Skipped,
+                        Some(Aggregate::Partial) => ItemState::Failed,
+                        _ => ItemState::Unknown,
+                    })
+                }))
         {
             continue;
         }
@@ -147,6 +156,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            empty_trash_context: None,
             orphan_context: None,
             related_context: None,
             tool_operation: None,
@@ -183,6 +193,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            empty_trash_context: None,
             orphan_context: None,
             related_context: None,
             tool_operation: None,
@@ -474,6 +485,7 @@ mod tests {
             operation_id: "c-3".into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
+            empty_trash_context: None,
             orphan_context: None,
             related_context: None,
             tool_operation: None,
@@ -526,5 +538,27 @@ mod tests {
         assert_eq!(page.records[1].schema_version, 2);
         assert_eq!(page.records[2].operation_id, "a-1");
         assert_eq!(page.records[2].schema_version, 1);
+    }
+}
+
+#[cfg(test)]
+mod empty_trash_history_tests {
+    use super::*;
+    #[test]
+    fn unknown_filter_preserves_zero_item_interrupted_maintenance() {
+        let record = crate::empty_trash_journal::tests::intent();
+        let page = query(
+            JournalRead {
+                records: vec![record],
+                uncommitted_snapshots: vec![],
+            },
+            &Query {
+                states: vec![ItemState::Unknown],
+                ..Query::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert!(page.records[0].items.is_empty());
     }
 }

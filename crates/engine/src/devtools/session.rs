@@ -468,6 +468,7 @@ impl<H: Host> SimulatorSession<H> {
                 contract: journal::TOOL_CONTRACT.into(),
                 scope: NativePath::from_path(scope),
                 clean_policy: None,
+                empty_trash_context: None,
                 orphan_context: None,
                 related_context: None,
                 tool_operation: Some(ToolOperationRecord {

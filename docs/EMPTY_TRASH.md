@@ -1,14 +1,14 @@
 # Finder-delegated empty Trash contract
 
-Status: **proposal for owner approval; no implementation or native acceptance**.
-This is PR 1 of the empty-Trash work. On 2026-10-11 the owner selected the product
-choices below for drafting. Those choices are not approval of this completed
-contract, permission to implement PR 2, or permission to empty a real account's
-Trash. PR 2 must wait for explicit approval of the reviewed contract.
+Status: **owner-approved contract (2026-10-11); core implementation supplied;
+native irreversible acceptance pending**. The owner approved and requested merge
+of reviewed contract PR #116, followed by separate core and App implementation
+PRs with independent review. Approval does not authorize emptying a real
+account's Trash. App integration is a separate deliverable.
 
 ## 1. Product decisions and scope
 
-| Decision | Owner-selected draft scope (2026-10-11) |
+| Decision | Owner-approved scope (2026-10-11) |
 | --- | --- |
 | D1 | S2 only: ask Finder to empty the entire current Trash. |
 | D2 | Independent destructive confirmation; exact typed `empty trash`. |
@@ -264,7 +264,7 @@ point-in-time reports and can race; neither is a filesystem authority. Global
 permanent deletion is not independently verified in v1. No bytes-freed headline,
 secure erasure claim or guaranteed backup/restore statement is permitted.
 
-## 6. Journal schema 10 draft and history
+## 6. Journal schema 10 and history
 
 Repository inspection at core `d1f2a1d` finds schemas 1–9 allocated; reserve
 schema/plan **10/10**, engine/rules **1/1** for this contract only. Recheck before
@@ -272,7 +272,7 @@ PR 2. The exact strict decoding keys must be frozen together in core, bindings
 and App fixtures before integration; unknown/missing/conflicting fields fail
 closed. Other contracts cannot carry `empty_trash_context`.
 
-Top-level draft (all required unless explicitly stated):
+Top-level format (all required unless explicitly stated):
 
 | Keys | Value / invariant |
 | --- | --- |
@@ -283,7 +283,7 @@ Top-level draft (all required unless explicitly stated):
 | `items` | Zero to 4,096 aligned known-entry ItemRecords. |
 | `empty_trash_context` | Required context below; no tool/rule/clean/delegation/related/orphan context. |
 
-`empty_trash_context` draft:
+`empty_trash_context`:
 
 | Keys | Type / meaning |
 | --- | --- |
@@ -424,3 +424,32 @@ See [execution](EXECUTION.md), [delegated uninstall](UNINSTALL_EXECUTION.md),
 [simulator permanent operations](SIMULATOR_CLEANUP.md), and [bindings](BINDINGS.md).
 This proposal does not authorize S1/S3, general permanent deletion, secure erase,
 recursive filesystem effects or changes to any existing cleanup contract.
+
+## Core implementation details
+
+The wire format uses `SourceRoot {path, schemas, status, device, inode}` with
+status `read`, `absent`, or `incomplete`; identities are required nullable fields.
+Per-record SHA-256 digests are the exact on-disk bytes, retained in `source_refs`.
+All nullable context fields are required JSON keys. The canonical account state
+base is native-home `Library/Application Support/SayakaCleaner`; preview requires
+that existing base and retains its ancestry/identity/ACL witness. It never creates
+or repairs that base or Trash. Begin may create only the private child stores.
+
+`EmptyTrashState` is the separate private guard store outside `MaintenanceJournal`.
+It holds the full started record bound to operation ID and digest before the
+history intent and permit. Any guard entry, staging receipt or corruption blocks
+new work. Only a live session's durable, nonambiguous finish removes its guard
+record and syncs the directory. Missing guard with unresolved history also blocks.
+Zero known entries never independently establish success and therefore retain
+an unresolved barrier after a reported completion. No archive or resolution API
+for the guard is provided.
+
+The synchronous ABI adds `sayaka_empty_trash_claim_dispatch_v1` between begin and
+finish so the host consumes the single-use, monotonic-expiring permit immediately
+before dispatch. Releasing after begin preserves unknown intent. CLI
+`empty-trash --journal-root PATH --schema N --json` is read-only; repeated
+`--schema` values explicitly allow source formats, applied to each supplied root.
+It has no Finder probe, execution option, or event-sending path.
+
+Validation: workspace/test-source compilation only; unit/UI tests have not been
+executed. No destructive native acceptance has been performed.

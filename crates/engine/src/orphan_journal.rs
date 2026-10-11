@@ -281,6 +281,7 @@ mod tests {
             tool_operation: None,
             related_context: None,
             delegation: None,
+            empty_trash_context: None,
             orphan_context: Some(Context {
                 schema_version: 1,
                 home: NativePath::from_path(Path::new("/Users/fixture")),

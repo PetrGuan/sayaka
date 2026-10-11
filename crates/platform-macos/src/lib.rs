@@ -307,3 +307,6 @@ mod tests {
 pub mod orphans;
 #[cfg(target_os = "macos")]
 pub use trash::OrphanTrashCandidate;
+
+#[cfg(target_os = "macos")]
+pub mod empty_trash;

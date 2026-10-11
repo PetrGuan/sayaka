@@ -726,6 +726,7 @@ impl OrphanSession {
             tool_operation: None,
             related_context: None,
             delegation: None,
+            empty_trash_context: None,
             orphan_context: Some(wire::Context {
                 schema_version: 1,
                 home: NativePath::from_path(&self.home),
