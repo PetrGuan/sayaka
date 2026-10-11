@@ -416,3 +416,46 @@ Real Safari/Cryptex paths are read-only during acceptance. Mutation/race fixture
 must be disposable self-created data; an unsafe or unobservable system-chain
 scenario remains pending, not substituted by fixture results. Passing this
 observation alone is not acceptance of native Trash execution.
+
+
+## Approved #144 LaunchAgent program observation amendment (2026-10-11)
+
+The owner approved bounded read-only resolution of absolute Program and
+ProgramArguments[0] locations. This applies only to #144 writer evidence, not
+#149, executable trust, cleanup targets or general path admission. Exact ID,
+ID-prefix and lexical overlap vetoes remain; physical overlap also vetoes.
+
+The platform observer explicitly walks descriptor-relative components with
+exact byte spelling, at most eight links and 64 components under the existing
+shared deadline. It refuses cycles, missing/unknown metadata, unsupported types,
+dataless entries and incomplete observations. Relative link text is interpreted
+against its held parent; input paths must be absolute. It never executes programs,
+rewrites plists, invokes launchd or implicitly follows a symlink.
+
+Only directories are opened, using directory-only/no-follow flags. Regular files
+and links are inspected with no-follow fstatat/readlinkat, preventing device-open
+side effects even during replacement. Retained leaf evidence includes device,
+inode, uid/gid, mode, flags, size, mtime, ctime, birth time and generation; link
+text is bracketed by matching metadata. Directory identities, permissions and
+native ACLs are retained; mutable directory size/mtime/ctime are not identity.
+Directory enumeration/search must succeed. Leaf content readability and leaf
+ACLs are not assertions of location evidence: leaves are neither opened nor
+executed, and this observer grants no executable or cleanup trust.
+
+Each held directory must positively report local APFS through fstatfs. Retain
+and compare fsid, filesystem type, mount flags, mount location and source.
+Read-only or removable local APFS may supply writer-location evidence; this
+explicitly does not relax cleanup's internal/nonremovable volume policy. Leaf
+mount/device changes relative to the held parent are unknown. Network and other
+filesystems are unsupported. A synchronous native call cannot be interrupted by
+the deadline; elapsed deadlines are checked before/after bounded observation and
+refuse approval, without claiming a hard syscall timeout.
+
+The final physical path comes from the held directory's F_GETPATH_NOFIRMLINK,
+plus an exact regular-file name when needed. All retained evidence is rechecked
+after resolution. LaunchSnapshot keeps it in memory alongside the plist digest;
+old-vs-fresh observations must match at approval and final guards, followed by
+another retained observation check. There is no new journal/ABI field: no path
+observation crosses the session boundary or independently authorizes a move.
+Last-check races and undetected loaded writers remain residual risks. Neither
+this amendment nor successful preview opens the native acceptance gate.

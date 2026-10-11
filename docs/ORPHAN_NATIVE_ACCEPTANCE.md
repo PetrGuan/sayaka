@@ -99,3 +99,23 @@ cleanup or complete acceptance is claimed. The execution gate remains false.
 Positive moves, recovery, approval/race/fault cases remain pending while this
 writer-evidence prerequisite is unknown. Any extension of LaunchAgent evidence
 rules requires its own explicit contract decision and independent review.
+
+## 2026-10-11: approved LaunchAgent location observation
+
+The owner approved the separate LaunchAgent proposal. The implementation retains
+bounded, descriptor-relative location evidence with explicit link interpretation.
+Independent GPT-6 Astra review found missing fresh-vs-retained program comparison,
+unsafe device opening before type rejection, and an unspecified volume policy.
+All were fixed and reverified: only directories are opened, leaf/link metadata
+is bracketed and retained, and positive local APFS volume evidence is compared.
+Workspace and test sources compiled successfully; no tests were executed.
+
+A native read-only CLI preview completed with no global issues and no LaunchAgent
+path refusal for the disposable fixtures. The old cache now has only
+`native_acceptance_pending`; the recent cache retains `recently_modified`, and
+Application Support retains `name_only_read_only`. The previous app-in-Trash
+fixture currently appears as `name_only`, so this run does not renew the earlier
+T1 observation. No real service configuration or application was modified.
+
+No native move was performed. The production gate remains false and the full
+move/restore/race/fault matrix remains pending.
