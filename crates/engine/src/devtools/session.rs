@@ -16,7 +16,7 @@ use crate::journal::{
 use crate::model::Cancellation;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub const MIN_MACOS_MAJOR: u32 = 26;
 pub const MIN_XCODE_MAJOR: u32 = 26;
@@ -171,6 +171,24 @@ pub trait Host {
     fn tool_versions(&self, tool: &ToolIdentity) -> ToolVersions;
     /// Runs one fixed vector after `xcrun`; `execute` selects the long timeout.
     fn run(&self, args: &[String], execute: bool) -> Result<ToolResult, ToolFailure>;
+    /// Bounded read-only runtime post-check. Native hosts honor the remaining budget.
+    fn run_read_with_timeout(
+        &self,
+        args: &[String],
+        _timeout: Duration,
+    ) -> Result<ToolResult, ToolFailure> {
+        self.run(args, false)
+    }
+    /// Read-only presence of the retained managed image path; errors are unknown.
+    fn runtime_path_present(&self, _path: &Path) -> io::Result<bool> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "runtime path observation unavailable",
+        ))
+    }
+    fn wait_for_runtime_post_check(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
     fn developer_activity(&self) -> io::Result<Vec<String>>;
     fn data_modified_unix_ns(&self, data_path: &Path) -> Option<i128>;
     fn data_identity(&self, data_path: &Path) -> Option<(u64, u64)>;
@@ -971,9 +989,49 @@ impl Host for MacHost {
             .run(args, timeout)
             .map_err(tool_failure)
             .and_then(|output| {
-                if output.code.is_none() { return Err(ToolFailure::Io("tool terminated without an exit status".into())); }
-                Ok(ToolResult { success: output.success, stdout: output.stdout, stderr: output.stderr })
+                if output.code.is_none() {
+                    return Err(ToolFailure::Io(
+                        "tool terminated without an exit status".into(),
+                    ));
+                }
+                Ok(ToolResult {
+                    success: output.success,
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                })
             })
+    }
+
+    fn run_read_with_timeout(
+        &self,
+        args: &[String],
+        timeout: Duration,
+    ) -> Result<ToolResult, ToolFailure> {
+        use sayaka_platform_macos::devtools::{LIST_TIMEOUT, ToolRunner};
+        let _serialized = tool_lock();
+        self.runner
+            .run(args, timeout.min(LIST_TIMEOUT))
+            .map_err(tool_failure)
+            .and_then(|output| {
+                if output.code.is_none() {
+                    return Err(ToolFailure::Io(
+                        "tool terminated without an exit status".into(),
+                    ));
+                }
+                Ok(ToolResult {
+                    success: output.success,
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                })
+            })
+    }
+
+    fn runtime_path_present(&self, path: &Path) -> io::Result<bool> {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     fn developer_activity(&self) -> io::Result<Vec<String>> {

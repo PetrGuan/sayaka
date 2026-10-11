@@ -166,8 +166,35 @@ For each runtime in deterministic UUID order:
    tool return and a complete post-check proving that UUID absent and no device
    still references its runtimeIdentifier. A nonzero return with absence can be
    recorded as observed removal with command diagnostics; never claim untouched.
-   A nonzero exit with unchanged image is failed; exit zero with image still
-   present, changed identity or new dependent is unknown. Timeout, interruption,
+   A nonzero exit with unchanged image is failed; no settling occurs after a
+   nonzero return or a tool error. After exit zero, keep the durable started
+   record and operation lock while performing a bounded read-only settlement:
+   at most 120 image/device observations, separated by up to 250 ms, within a
+   30-second monotonic observation window. Pass the remaining budget to each
+   native list command. Existing tool-identity/activity probes and process
+   teardown can overrun that window by their existing bounded in-flight work;
+   no success is accepted after the window expires. This does not retry delete.
+   Wait only while the original UUID/runtime identifier/version/build/kind/path
+   and deletability match, state is Ready or Deleting, and no dependent or other
+   image of the same runtime identifier is observed. Tool/activity changes,
+   cancellation, malformed/incomplete observations, changed identity, unexpected
+   state, new dependent or ambiguous image latch unknown immediately. Deadline
+   or observation-count exhaustion also latches unknown. Report success only
+   from a complete in-window observation of no matching UUID, no replacement
+   image and no dependent, followed by unchanged tool/activity evidence and a
+   read-only absence check of the sealed managed image path. A path still
+   present continues bounded settlement with `asset_path_present` evidence;
+   an observation error is unknown, never absence. Reappearance of the UUID
+   after an absence observation latches unknown instead of resuming waiting.
+   The native host uses
+   `symlink_metadata`: a remaining symlink counts as present, and only NotFound
+   establishes absence. This is not a recursive scan, filesystem deletion,
+   measurement of freed bytes, or proof that unrelated exported/downloaded
+   source copies were removed. Production kind/version gating still requires
+   separately recorded associated-asset acceptance.
+   Preserve bounded reason codes and observation counts in the existing journal
+   reason field; old unknown records are never promoted by later observations.
+   Timeout, interruption,
    output cap, failed post-check or ambiguous mutation is unknown, regardless of
    a later partial observation. Stop later effects and preserve evidence.
 
