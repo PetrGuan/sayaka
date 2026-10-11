@@ -1234,3 +1234,12 @@ and reclaimable observations, each with source/time/completeness/issues/value.
 Partial snapshots have null count. Configured destination text and nested active
 status formats without native evidence stay unknown. Last backup is unknown.
 The capacity estimate is never cleanup accounting. See [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
+
+`sayaka_firmware_preview_v1` shares the SystemStorage request and fixed one-shot
+1 MiB buffer. Schema 1, kind `sayaka.firmware_preview`, effects_performed=false.
+Three sourced leaf observations report present, file_count and logical_bytes;
+incomplete means a partial metadata total, never cleanable bytes. Only direct
+regular `.ipsw` children of the three historical native-home iTunes leaves are
+counted. Descriptor-relative reads do not follow links or materialize content.
+The shared 2-second budget is cooperative; native filesystem calls may outlive
+it, so call off-main and serialize host refreshes. There is no execution route.

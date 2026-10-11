@@ -102,6 +102,12 @@ SAYAKA_API int32_t sayaka_system_storage_overview_v1(
     const SayakaSystemStorageRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+/* Read-only metadata of historical firmware leaves; never cleanup candidates.
+   Same one-shot 1 MiB buffer, cooperative 2-second metadata budget. */
+SAYAKA_API int32_t sayaka_firmware_preview_v1(
+    const SayakaSystemStorageRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 typedef struct SayakaMaintenanceCatalogRequestV1 {
     uint32_t abi_version;
     uint32_t struct_size;
