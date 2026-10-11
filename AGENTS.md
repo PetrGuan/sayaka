@@ -54,7 +54,9 @@ or permanent deletion after a failed trash operation. Process launch is limited
 to the signed `/usr/bin/xcrun` boundary in `sayaka-platform-macos::devtools`
 and the fixed read-only `/usr/bin/tmutil` three-verb boundary in
 `sayaka-platform-macos::system_storage`, approved in
-[docs/SYSTEM_STORAGE.md](docs/SYSTEM_STORAGE.md). No caller command arguments.
+[docs/SYSTEM_STORAGE.md](docs/SYSTEM_STORAGE.md). No caller command arguments. The owner-approved read-only diagnostic table in
+[docs/MAINTENANCE.md](docs/MAINTENANCE.md) additionally permits its fixed tools
+and native observation APIs, with no helper or maintenance effects.
 
 The browser's terminal, input and worker lifecycle belongs in `sayaka-cli`;
 the immutable scan tree and directory accounting stay in the engine. Follow

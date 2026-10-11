@@ -1,50 +1,27 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Closed, read-only system storage boundary. No caller-supplied commands.
-use crate::devtools::{run_bounded, verify_code_requirement};
-use std::ffi::{OsString, c_long, c_void};
+use std::ffi::{c_long, c_void};
 use std::path::Path;
-use std::time::Duration;
-
 #[derive(Clone, Copy)]
 pub enum Query {
     Snapshots,
     Status,
     Destinations,
 }
-
 pub fn query(query: Query) -> Result<Vec<u8>, &'static str> {
-    let path = Path::new("/usr/bin/tmutil");
-    verify_code_requirement(path, "anchor apple and identifier \"com.apple.tmutil\"")
-        .map_err(|_| "tool_trust_unavailable")?;
-    let args = match query {
-        Query::Snapshots => vec!["listlocalsnapshots".into(), "/".into()],
-        Query::Status => vec!["status".into()],
-        Query::Destinations => vec!["destinationinfo".into()],
-    };
-    let env = [
-        (OsString::from("LANG"), OsString::from("C")),
-        (OsString::from("LC_ALL"), OsString::from("C")),
-    ];
-    let output = run_bounded(
-        path,
-        &args,
-        &env,
-        Duration::from_secs(5),
-        256 * 1024,
-        16 * 1024,
-    )
-    .map_err(|error| match error {
-        crate::devtools::ToolError::Timeout => "command_timeout",
-        crate::devtools::ToolError::OutputCap => "output_limit",
-        _ => "command_unavailable",
+    use crate::diagnostic_tools::{Tool, run};
+    let out = run(match query {
+        Query::Snapshots => Tool::Snapshots,
+        Query::Status => Tool::BackupStatus,
+        Query::Destinations => Tool::Destinations,
     })?;
-    if !output.success {
+    if !out.success {
         return Err("command_failed");
     }
-    if !output.stderr.is_empty() {
+    if !out.stderr.is_empty() {
         return Err("command_diagnostic");
     }
-    Ok(output.stdout)
+    Ok(out.stdout)
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
