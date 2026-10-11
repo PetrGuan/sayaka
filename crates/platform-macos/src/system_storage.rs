@@ -55,12 +55,18 @@ unsafe extern "C" {
         n: c_long,
         d: u8,
     ) -> *const c_void;
-    fn CFURLCopyResourcePropertyForKey(
-        u: *const c_void,
-        k: *const c_void,
-        v: *mut *const c_void,
-        e: *mut *const c_void,
-    ) -> u8;
+    fn CFArrayCreate(
+        a: *const c_void,
+        values: *const *const c_void,
+        count: c_long,
+        callbacks: *const c_void,
+    ) -> *const c_void;
+    fn CFURLCopyResourcePropertiesForKeys(
+        url: *const c_void,
+        keys: *const c_void,
+        error: *mut *const c_void,
+    ) -> *const c_void;
+    fn CFDictionaryGetValue(dictionary: *const c_void, key: *const c_void) -> *const c_void;
     fn CFRelease(v: *const c_void);
     fn CFGetTypeID(v: *const c_void) -> usize;
     fn CFNumberGetTypeID() -> usize;
@@ -80,21 +86,17 @@ impl Drop for Owned {
         }
     }
 }
-fn number(url: &Owned, key: *const c_void) -> Result<u64, &'static str> {
-    let mut value = std::ptr::null();
-    let mut error = std::ptr::null();
-    // SAFETY: live owned URL and framework key, initialized writable out-pointers.
-    let ok = unsafe { CFURLCopyResourcePropertyForKey(url.0, key, &mut value, &mut error) };
-    let value = Owned(value);
-    let _error = Owned(error);
-    if ok == 0 || value.0.is_null() {
+fn number(dictionary: &Owned, key: *const c_void) -> Result<u64, &'static str> {
+    // SAFETY: dictionary is the live Copy result; returned value is borrowed.
+    let value = unsafe { CFDictionaryGetValue(dictionary.0, key) };
+    if value.is_null() {
         return Err("capacity_unavailable");
     }
     let mut n: i64 = -1;
     // SAFETY: type checked before numeric access; 4 is kCFNumberSInt64Type.
     if unsafe {
-        CFGetTypeID(value.0) != CFNumberGetTypeID()
-            || CFNumberGetValue(value.0, 4, (&mut n as *mut i64).cast()) == 0
+        CFGetTypeID(value) != CFNumberGetTypeID()
+            || CFNumberGetValue(value, 4, (&mut n as *mut i64).cast()) == 0
     } {
         return Err("capacity_type");
     }
@@ -119,10 +121,25 @@ pub fn capacity() -> Result<(u64, u64), &'static str> {
     if url.0.is_null() {
         return Err("volume_unavailable");
     }
-    // SAFETY: immutable framework-owned resource keys.
-    let free = number(&url, unsafe { kCFURLVolumeAvailableCapacityKey })?;
-    let important = number(&url, unsafe {
-        NSURLVolumeAvailableCapacityForImportantUsageKey
-    })?;
-    Ok((free, important))
+    // SAFETY: keys are immutable framework objects. The array borrows them
+    // with null callbacks; both keys outlive the array. Copy returns +1 ownership.
+    let keys = unsafe {
+        [
+            kCFURLVolumeAvailableCapacityKey,
+            NSURLVolumeAvailableCapacityForImportantUsageKey,
+        ]
+    };
+    let array =
+        Owned(unsafe { CFArrayCreate(std::ptr::null(), keys.as_ptr(), 2, std::ptr::null()) });
+    if array.0.is_null() {
+        return Err("capacity_unavailable");
+    }
+    let mut error = std::ptr::null();
+    let dictionary =
+        Owned(unsafe { CFURLCopyResourcePropertiesForKeys(url.0, array.0, &mut error) });
+    let error = Owned(error);
+    if dictionary.0.is_null() || !error.0.is_null() {
+        return Err("capacity_unavailable");
+    }
+    Ok((number(&dictionary, keys[0])?, number(&dictionary, keys[1])?))
 }

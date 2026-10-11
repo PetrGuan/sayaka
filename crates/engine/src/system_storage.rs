@@ -138,6 +138,18 @@ pub fn parse_snapshots(bytes: &[u8]) -> Observation<Snapshots> {
     }
     o
 }
+fn valid_scalar(value: &str) -> bool {
+    if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
+        return true;
+    }
+    value
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .is_some_and(|s| {
+            s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._- ".contains(&b))
+        })
+}
 pub fn parse_status(bytes: &[u8]) -> Observation<bool> {
     let rows = match lines(bytes) {
         Ok(v) => v,
@@ -180,7 +192,7 @@ pub fn parse_status(bytes: &[u8]) -> Observation<bool> {
             };
         } else if key == "ClientID" && value == "\"com.apple.backupd\"" {
         } else {
-            if value.is_empty() || value.contains(['{', '}', ';', '=']) {
+            if !valid_scalar(value) {
                 return Observation::unknown(STATUS, "status_format");
             }
             extra = true;
@@ -316,6 +328,18 @@ mod tests {
         assert!(!o.complete);
         assert_eq!(o.value.unwrap().count, None);
         assert!(parse_snapshots(b"\xff").value.is_none());
+    }
+    #[test]
+    fn malformed_status_scalar_is_unknown() {
+        assert!(
+            parse_status(
+                b"Backup session status:\n{\nUnknown = \"unterminated;\nRunning = 0;\n}\n"
+            )
+            .value
+            .is_none()
+        );
+        assert!(!valid_scalar("\"bad\\escape\""));
+        assert!(valid_scalar("\"bounded-value\""));
     }
     #[test]
     fn backup_fail_closed() {
