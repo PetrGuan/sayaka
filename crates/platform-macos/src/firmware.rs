@@ -155,7 +155,7 @@ fn observe_inner(home: &Path, leaf: &str, deadline: Instant) -> io::Result<Leaf>
     let fs = unsafe { fs.assume_init() };
     let named = std::fs::symlink_metadata(home)?;
     let held = current.metadata()?;
-    if fs.f_flags & libc::MNT_LOCAL == 0
+    if fs.f_flags & libc::MNT_LOCAL as u32 == 0
         || !volume.local
         || !volume.internal
         || volume.removable
