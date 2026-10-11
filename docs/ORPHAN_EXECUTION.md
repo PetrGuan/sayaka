@@ -371,3 +371,48 @@ path fields use NativePath. File evidence (`approved`/`held_source`) contains
 `device`, `inode`, `logical_bytes`, and `modified`; `modified` contains
 `before_unix_epoch`, `seconds`, `nanoseconds`. Only an `unknown` item may carry
 this evidence, and approved identity/size must match its Item record.
+
+## Approved system Safari observation amendment (2026-10-11)
+
+The owner approved the narrow system-link proposal during delegated native
+acceptance. This is an observation-only exception to app inventory's no-follow
+rule, shared with #140. It does not authorize linked owners/targets for cleanup
+and does not change #149 related-data execution or either native acceptance gate.
+
+Only `/Applications/Safari.app` with exact link text
+`../System/Cryptexes/App/System/Applications/Safari.app` is recognized. The only
+supported further indirection is `/System/Cryptexes/App` with exact link text
+`../../System/Volumes/Preboot/Cryptexes/App`. No general symlink resolver or
+canonicalize call is used. Other links or OS layouts remain `copies_unknown`.
+This fixed two-link chain is within the approved eight-link/64-component bounds.
+
+Retain no-follow link descriptors, exact text, device/inode/owner/mode/flags,
+parent identities and ACL snapshots. Link parents must be root-owned, no ACLs,
+and not world-writable; only the usual root:admin (gid 80) /Applications parent
+may be group-writable. The physical target chain is opened without following any
+links, requires root-owned directories without ACLs or dataless flags, and rejects
+group/other write permissions with one precisely protected edge: the OS-owned
+`/System/Volumes/Preboot/Cryptexes` container may be writable only when its exact
+root-owned `App` child has SF_NOUNLINK. The child and all following directories
+must be non-writable to group/other. SF_NOUNLINK prevents removal/rename of that
+edge; its flags and identity are retained and rechecked.
+
+Native Security checks require `anchor apple and identifier "com.apple.Safari"`.
+The engine additionally binds the real target bundle and Info.plist identities,
+manifest digest and exact bundle ID. Paths, names and root ownership alone never
+satisfy this exception. Revalidate the entire held chain and signature before and
+after observation as appropriate, retain the observation across preview, and
+recheck it at approval and every final guard. Appearance/disappearance or any
+bound evidence change invalidates the session. Signature work is synchronous;
+budget expiry after native calls still fails closed, never extends the deadline.
+
+The private inventory evidence is retained by the session, not imported from a
+journal. Existing schema 9 describes selected cleanup paths, unchanged by this
+exception; no new executable journal or ABI input is introduced. History cannot
+instantiate this evidence. #140 also retains the private system observation
+across its proof revalidation; linked cache owners and targets remain forbidden.
+
+Real Safari/Cryptex paths are read-only during acceptance. Mutation/race fixtures
+must be disposable self-created data; an unsafe or unobservable system-chain
+scenario remains pending, not substituted by fixture results. Passing this
+observation alone is not acceptance of native Trash execution.

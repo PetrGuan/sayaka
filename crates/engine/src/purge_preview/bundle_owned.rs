@@ -94,6 +94,7 @@ pub struct Proof {
     id: String,
     cache: PathWitness,
     owners: Vec<Owner>,
+    system_inventory: Vec<crate::app_observation::Bundle>,
     digest: [u8; 32],
     policy: CachePolicy,
 }
@@ -130,6 +131,7 @@ impl Proof {
         self.cache
             .revalidate()
             .map_err(|_| "resource_changed: cache identity".to_owned())?;
+        for bundle in &self.system_inventory { bundle.revalidate().map_err(|e| e.to_string())?; }
         for owner in &self.owners {
             owner
                 .bundle
@@ -148,7 +150,7 @@ impl Proof {
         let deadline = Instant::now() + Duration::from_secs(30);
         let fresh = capture(path, home, &self.policy, deadline)?
             .ok_or("resource_changed: owner removed")?;
-        if fresh.digest != self.digest {
+        if fresh.digest != self.digest || fresh.system_inventory.len() != self.system_inventory.len() {
             return Err("resource_changed: owner evidence".into());
         }
         if fresh.idle(deadline)? {
@@ -305,6 +307,7 @@ fn capture(
         id,
         cache,
         owners,
+        system_inventory: inventory.into_iter().filter(crate::app_observation::Bundle::is_system_safari).collect(),
         digest: hash.finalize().into(),
         policy: policy.clone(),
     })))

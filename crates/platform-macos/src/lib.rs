@@ -40,6 +40,9 @@ pub mod status;
 pub mod related;
 
 #[cfg(target_os = "macos")]
+pub mod system_safari;
+
+#[cfg(target_os = "macos")]
 pub mod devtools;
 #[cfg(target_os = "macos")]
 mod installer_provenance;

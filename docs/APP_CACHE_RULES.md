@@ -279,3 +279,12 @@ and the final pathname race remain limitations. Schema 5 keys are unchanged.
 
 Compilation and independent review do not establish native Trash acceptance.
 The App presentation/pin is a separate implementation PR.
+
+### System Safari inventory observation (owner approved 2026-10-11)
+
+The shared inventory may observe the exact signed system Safari link through the
+narrow retained evidence rule in `ORPHAN_EXECUTION.md`'s approved system Safari
+amendment. This only prevents an OS-provided link from making all copy coverage
+unknown. It never admits a symlinked cache owner/target or an Apple-owned cache;
+all existing owner/target restrictions remain. The held system evidence is
+revalidated with the preview proof, and other links still make coverage unknown.
