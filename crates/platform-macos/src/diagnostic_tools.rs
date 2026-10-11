@@ -78,7 +78,7 @@ fn tool_error(e: crate::devtools::ToolError) -> &'static str {
 #[derive(Clone)]
 pub struct Mount {
     path: String,
-    fsid: libc::fsid_t,
+    fsid: [i32; 2],
 }
 impl Mount {
     pub fn path(&self) -> &str {
@@ -113,7 +113,9 @@ pub fn mounts() -> Result<Vec<Mount>, &'static str> {
         if !path.starts_with('/') || path.len() > 4096 {
             return Err("mount_encoding");
         }
-        let fsid = v.f_fsid;
+        // SAFETY: Darwin fsid_t is exactly two int32_t values (sys/mount.h).
+        // Copy the value, without depending on libc's optional extra_traits feature.
+        let fsid = unsafe { std::mem::transmute::<libc::fsid_t, [i32; 2]>(v.f_fsid) };
         if !result.iter().any(|m: &Mount| m.fsid == fsid) {
             result.push(Mount { path, fsid });
         }
@@ -154,7 +156,7 @@ mod tests {
     fn changed_mount_identity() {
         let a = Mount {
             path: "/".into(),
-            fsid: unsafe { std::mem::zeroed() },
+            fsid: [0; 2],
         };
         let mut b = a.clone();
         assert!(same_mount(&a, &b));
