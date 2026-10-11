@@ -18,6 +18,7 @@ pub struct Candidate {
     pub identity: Identity,
     pub logical_bytes: Option<u64>,
     pub size_complete: bool,
+    pub size_issues: Vec<&'static str>,
 }
 #[derive(Serialize)]
 pub struct Identity {
@@ -56,7 +57,7 @@ fn observe() -> std::io::Result<Observation<Vec<Candidate>>> {
 }
 #[cfg(target_os = "macos")]
 fn observe_inner() -> std::io::Result<Observation<Vec<Candidate>>> {
-    use sayaka_platform_macos::{firmware, orphans};
+    use sayaka_platform_macos::{firmware, related::PathWitness};
     use std::{
         os::unix::ffi::OsStrExt,
         path::Path,
@@ -64,7 +65,7 @@ fn observe_inner() -> std::io::Result<Observation<Vec<Candidate>>> {
     };
     let deadline = Instant::now() + Duration::from_secs(5);
     let path = Path::new("/Applications");
-    let witness = orphans::exact(path)?;
+    let witness = PathWitness::capture(path)?;
     let volume = sayaka_platform_macos::volume_info(path)?;
     if !volume.local || !volume.internal || volume.removable || volume.ejectable {
         return Err(std::io::Error::other("volume"));
@@ -94,50 +95,74 @@ fn observe_inner() -> std::io::Result<Observation<Vec<Candidate>>> {
         }
         let bundle = path.join(std::ffi::OsStr::from_bytes(name.to_bytes()));
         let result = (|| -> std::io::Result<Candidate> {
-            let evidence = crate::app_observation::Bundle::capture(&bundle)?;
-            if evidence.bundle.identity().0 != witness.identity().0
-                || evidence.manifest.identity().0 != witness.identity().0
+            let check = || {
+                if Instant::now() >= deadline {
+                    Err(std::io::Error::other("budget"))
+                } else {
+                    Ok(())
+                }
+            };
+            check()?;
+            let bundle_witness = PathWitness::capture(&bundle)?;
+            check()?;
+            if !bundle_witness.is_directory() {
+                return Err(std::io::Error::other("not_directory"));
+            }
+            let manifest = PathWitness::capture(&bundle.join("Contents/Info.plist"))?;
+            if bundle_witness.identity().0 != witness.identity().0
+                || manifest.identity().0 != witness.identity().0
             {
                 return Err(std::io::Error::other("mount"));
             }
-            if !evidence
-                .id
-                .strip_prefix("com.apple.InstallAssistant.")
-                .is_some_and(|s| !s.is_empty())
-            {
-                return Err(std::io::Error::other("identifier_mismatch"));
-            }
+            check()?;
             let (id, version, digest, dev, ino) =
-                crate::app_inventory::read_bundle_metadata_with_digest(&bundle)
+                crate::app_inventory::read_bundle_metadata_before(&bundle, deadline)
                     .map_err(std::io::Error::other)?;
-            if id.value.as_deref() != Some(&evidence.id)
-                || digest != evidence.digest
-                || (dev, ino) != evidence.manifest.identity()
-            {
+            let id = id
+                .value
+                .filter(|id| {
+                    id.strip_prefix("com.apple.InstallAssistant.")
+                        .is_some_and(|s| !s.is_empty())
+                })
+                .ok_or_else(|| std::io::Error::other("identifier_mismatch"))?;
+            if (dev, ino) != manifest.identity() {
                 return Err(std::io::Error::other("changed"));
             }
+            check()?;
             let size =
                 sayaka_platform_macos::installer_size::size(&bundle, deadline, &mut remaining).ok();
-            evidence.revalidate()?;
+            check()?;
+            bundle_witness.revalidate()?;
+            check()?;
+            manifest.revalidate()?;
+            check()?;
             Ok(Candidate {
                 path: bundle.to_string_lossy().into_owned(),
-                bundle_id: evidence.id,
+                bundle_id: id,
                 app_version: version.value,
                 target_os_major: None,
                 same_current_os_major: None,
                 identity: Identity {
-                    device: evidence.bundle.identity().0,
-                    inode: evidence.bundle.identity().1,
+                    device: bundle_witness.identity().0,
+                    inode: bundle_witness.identity().1,
                     plist_device: dev,
                     plist_inode: ino,
                     plist_sha256: digest.iter().map(|b| format!("{b:02x}")).collect(),
                 },
                 logical_bytes: size.map(|s| s.0),
                 size_complete: size.is_some_and(|s| s.1),
+                size_issues: if size.is_some_and(|s| s.1) {
+                    vec![]
+                } else {
+                    vec!["size_unavailable_or_partial"]
+                },
             })
         })();
         match result {
-            Ok(c) => list.push(c),
+            Ok(c) => {
+                complete &= c.size_complete;
+                list.push(c);
+            }
             Err(_) => complete = false,
         }
     }
