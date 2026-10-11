@@ -93,6 +93,27 @@ fn read<H: Host>(
     }
     Ok(output.stdout)
 }
+fn checked_devices(raw: &[u8]) -> Result<Vec<Device>, SessionError> {
+    json(raw).map_err(parse)?;
+    let mut devices = parse_devices(raw).map_err(parse)?;
+    devices.sort_by(|a, b| a.udid.cmp(&b.udid));
+    for d in &devices {
+        if !valid_path(&d.data_path)
+            || [
+                &d.name,
+                &d.runtime_identifier,
+                &d.device_type_identifier,
+                &d.state,
+            ]
+            .iter()
+            .any(|s| s.len() > 4096 || s.contains('\0'))
+        {
+            return Err(invalid("invalid device fields"));
+        }
+    }
+    Ok(devices)
+}
+
 fn listing<H: Host>(
     host: &H,
     cancel: &Cancellation,
@@ -113,23 +134,7 @@ fn listing<H: Host>(
     )?)
     .map_err(parse)?;
     let raw = read(host, &["simctl", "list", "devices", "-j"], cancel, start)?;
-    json(&raw).map_err(parse)?;
-    let mut devices = parse_devices(&raw).map_err(parse)?;
-    devices.sort_by(|a, b| a.udid.cmp(&b.udid));
-    for d in &devices {
-        if !valid_path(&d.data_path)
-            || [
-                &d.name,
-                &d.runtime_identifier,
-                &d.device_type_identifier,
-                &d.state,
-            ]
-            .iter()
-            .any(|s| s.len() > 4096 || s.contains('\0'))
-        {
-            return Err(invalid("invalid device fields"));
-        }
-    }
+    let devices = checked_devices(&raw)?;
     let raw = read(host, &["simctl", "list", "pairs", "-j"], cancel, start)?;
     json(&raw).map_err(parse)?;
     let mut pairs = parse_pairs(&raw).map_err(parse)?;
@@ -643,61 +648,71 @@ impl<H: Host> RuntimeSession<H> {
                 continue;
             }
             let call = self.host.run(&args, true);
-            let after = listing(&self.host, &Cancellation::default(), self.host.now());
+            let settled = (is_runtime && call.as_ref().is_ok_and(|output| output.success))
+                .then(|| self.settle_runtime(&c.runtime, cancel));
+            // Do not add another observation after settlement has latched uncertainty.
+            let after = if settled.is_none() {
+                listing(&self.host, &Cancellation::default(), self.host.now())
+            } else {
+                Err(SessionError::Cancelled)
+            };
             for index in range {
                 let item = &mut report.record.runtime_context.as_mut().unwrap().items[index];
-                let (state, reason) = match (&call, &after) {
-                    (Err(e), _) => (ItemState::Unknown, e.reason()),
-                    (_, Err(e)) => (
-                        ItemState::Unknown,
-                        format!("post_check_failed: {}", e.code()),
-                    ),
-                    (Ok(output), Ok(l)) => {
-                        let absent = match &item.target {
-                            Target::Device { udid, .. } => {
-                                !l.devices.iter().any(|d| &d.udid == udid)
-                            }
-                            Target::Runtime { image, .. } => {
-                                !l.images.iter().any(|r| r.identifier == image.identifier)
-                                    && !l
-                                        .devices
-                                        .iter()
-                                        .any(|d| d.runtime_identifier == image.runtime_identifier)
-                            }
-                        };
-                        if absent {
-                            (
-                                ItemState::Succeeded,
-                                if output.success {
-                                    ""
-                                } else {
-                                    "removed_after_nonzero_exit"
+                let (state, reason) = if let Some(result) = &settled {
+                    result.clone()
+                } else {
+                    match (&call, &after) {
+                        (Err(e), _) => (ItemState::Unknown, e.reason()),
+                        (_, Err(e)) => (
+                            ItemState::Unknown,
+                            format!("post_check_failed: {}", e.code()),
+                        ),
+                        (Ok(output), Ok(l)) => {
+                            let absent = match &item.target {
+                                Target::Device { udid, .. } => {
+                                    !l.devices.iter().any(|d| &d.udid == udid)
                                 }
-                                .into(),
-                            )
-                        } else if !output.success {
-                            let unchanged = match &item.target {
                                 Target::Runtime { image, .. } => {
-                                    l.images.iter().any(|r| r == image)
+                                    !l.images.iter().any(|r| r.identifier == image.identifier)
+                                        && !l.devices.iter().any(|d| {
+                                            d.runtime_identifier == image.runtime_identifier
+                                        })
                                 }
-                                Target::Device { udid, .. } => c
-                                    .dependents
-                                    .iter()
-                                    .find(|d| &d.device.udid == udid)
-                                    .is_some_and(|before| {
-                                        l.devices.iter().any(|d| d == &before.device)
-                                    }),
                             };
-                            (
-                                if unchanged {
-                                    ItemState::Failed
-                                } else {
-                                    ItemState::Unknown
-                                },
-                                "tool_reported_failure".into(),
-                            )
-                        } else {
-                            (ItemState::Unknown, "post_check_mismatch".into())
+                            if absent {
+                                (
+                                    ItemState::Succeeded,
+                                    if output.success {
+                                        ""
+                                    } else {
+                                        "removed_after_nonzero_exit"
+                                    }
+                                    .into(),
+                                )
+                            } else if !output.success {
+                                let unchanged = match &item.target {
+                                    Target::Runtime { image, .. } => {
+                                        l.images.iter().any(|r| r == image)
+                                    }
+                                    Target::Device { udid, .. } => c
+                                        .dependents
+                                        .iter()
+                                        .find(|d| &d.device.udid == udid)
+                                        .is_some_and(|before| {
+                                            l.devices.iter().any(|d| d == &before.device)
+                                        }),
+                                };
+                                (
+                                    if unchanged {
+                                        ItemState::Failed
+                                    } else {
+                                        ItemState::Unknown
+                                    },
+                                    "tool_reported_failure".into(),
+                                )
+                            } else {
+                                (ItemState::Unknown, "post_check_mismatch".into())
+                            }
                         }
                     }
                 };
@@ -733,6 +748,157 @@ impl<H: Host> RuntimeSession<H> {
         Ok(report)
     }
 }
+// A zero-exit runtime deletion may return while CoreSimulator still says Deleting.
+// This is one post-check, not an effect retry or reconciliation of old history.
+const SETTLE_WINDOW: Duration = Duration::from_secs(30);
+const SETTLE_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_SETTLE_OBSERVATIONS: usize = 120;
+
+fn settlement_identity(current: &Runtime, original: &Runtime) -> bool {
+    current.identifier == original.identifier
+        && current.runtime_identifier == original.runtime_identifier
+        && current.version == original.version
+        && current.build == original.build
+        && current.kind == original.kind
+        && current.path == original.path
+        && current.deletable == original.deletable
+}
+
+impl<H: Host> RuntimeSession<H> {
+    fn settle_runtime(&self, image: &Runtime, cancel: &Cancellation) -> (ItemState, String) {
+        let start = self.host.now();
+        let mut attempts = 0;
+        let mut last = "not_observed";
+        let mut registration_absent = false;
+        let unknown = |cause: &str, attempts: usize| {
+            (
+                ItemState::Unknown,
+                format!("runtime_post_check:{cause};observations={attempts}"),
+            )
+        };
+        loop {
+            if cancel.is_cancelled() {
+                return unknown("cancelled", attempts);
+            }
+            if self.host.now().saturating_duration_since(start) >= SETTLE_WINDOW
+                || attempts >= MAX_SETTLE_OBSERVATIONS
+            {
+                return unknown(&format!("deadline_{last}"), attempts);
+            }
+            // Existing identity/activity observations can have an in-flight overrun;
+            // no outcome is accepted after the monotonic settlement window expires.
+            match self.host.tool_identity() {
+                Ok(tool) if tool == self.preview.tool => (),
+                _ => return unknown("tool_changed_or_unavailable", attempts),
+            }
+            match self.host.developer_activity() {
+                Ok(activity) if activity.is_empty() => (),
+                _ => return unknown("activity_changed_or_unavailable", attempts),
+            }
+            let read = |args: &[&str]| -> Result<Vec<u8>, &'static str> {
+                if cancel.is_cancelled() {
+                    return Err("cancelled");
+                }
+                let remaining = SETTLE_WINDOW
+                    .checked_sub(self.host.now().saturating_duration_since(start))
+                    .filter(|v| !v.is_zero())
+                    .ok_or("deadline")?;
+                let output = self
+                    .host
+                    .run_read_with_timeout(
+                        &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                        remaining,
+                    )
+                    .map_err(|_| "read_failed")?;
+                if cancel.is_cancelled() {
+                    return Err("cancelled");
+                }
+                if self.host.now().saturating_duration_since(start) >= SETTLE_WINDOW {
+                    return Err("deadline");
+                }
+                if !output.success || output.stdout.len() > MAX_LIST_BYTES {
+                    return Err("read_failed_or_capped");
+                }
+                Ok(output.stdout)
+            };
+            attempts += 1;
+            let observed = (|| {
+                let images = parse_runtimes(&read(&["simctl", "runtime", "list", "-j"])?)
+                    .map_err(|_| "invalid_images")?;
+                let raw = read(&["simctl", "list", "devices", "-j"])?;
+                let devices = checked_devices(&raw).map_err(|_| "invalid_devices")?;
+                Ok::<_, &str>((images, devices))
+            })();
+            let (images, devices) = match observed {
+                Ok(value) => value,
+                Err(cause) => return unknown(cause, attempts),
+            };
+            if images.iter().any(|r| {
+                r.runtime_identifier == image.runtime_identifier && r.identifier != image.identifier
+            }) {
+                return unknown("ambiguous_images", attempts);
+            }
+            if devices
+                .iter()
+                .any(|d| d.runtime_identifier == image.runtime_identifier)
+            {
+                return unknown("dependent_observed", attempts);
+            }
+            let current = images.iter().find(|r| r.identifier == image.identifier);
+            if let Some(current) = current {
+                if registration_absent {
+                    return unknown("runtime_reappeared", attempts);
+                }
+                if !settlement_identity(current, image) {
+                    return unknown("identity_changed", attempts);
+                }
+                last = match current.state.as_str() {
+                    "Ready" => "ready",
+                    "Deleting" => "deleting",
+                    _ => return unknown("unexpected_state", attempts),
+                };
+            }
+            match self.host.tool_identity() {
+                Ok(tool) if tool == self.preview.tool => (),
+                _ => return unknown("tool_changed_or_unavailable", attempts),
+            }
+            match self.host.developer_activity() {
+                Ok(activity) if activity.is_empty() => (),
+                _ => return unknown("activity_changed_or_unavailable", attempts),
+            }
+            if cancel.is_cancelled() {
+                return unknown("cancelled", attempts);
+            }
+            if self.host.now().saturating_duration_since(start) >= SETTLE_WINDOW {
+                return unknown("deadline", attempts);
+            }
+            if current.is_none() {
+                registration_absent = true;
+                match self.host.runtime_path_present(Path::new(&image.path)) {
+                    Ok(false) => {
+                        if cancel.is_cancelled() {
+                            return unknown("cancelled", attempts);
+                        }
+                        if self.host.now().saturating_duration_since(start) >= SETTLE_WINDOW {
+                            return unknown("deadline", attempts);
+                        }
+                        return (
+                            ItemState::Succeeded,
+                            format!("runtime_and_path_absence_confirmed;observations={attempts}"),
+                        );
+                    }
+                    Ok(true) => last = "asset_path_present",
+                    Err(_) => return unknown("asset_path_unavailable", attempts),
+                }
+            }
+            let remaining =
+                SETTLE_WINDOW.saturating_sub(self.host.now().saturating_duration_since(start));
+            self.host
+                .wait_for_runtime_post_check(SETTLE_INTERVAL.min(remaining));
+        }
+    }
+}
+
 fn set(r: &mut RuntimeReport, range: std::ops::Range<usize>, state: ItemState, reason: &str) {
     for i in &mut r.record.runtime_context.as_mut().unwrap().items[range] {
         i.state = state.clone();
