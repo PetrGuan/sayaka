@@ -734,3 +734,38 @@ impl RelatedTrashCandidate {
         self.native.move_to_trash_with_last_guard(cancelled, guard)
     }
 }
+
+#[cfg(target_os = "macos")]
+pub struct OrphanTrashCandidate {
+    native: native::Candidate,
+}
+#[cfg(target_os = "macos")]
+impl OrphanTrashCandidate {
+    pub fn capture(
+        rule: crate::related::Rule,
+        bundle_id: &str,
+        protected: &[PathBuf],
+    ) -> io::Result<Self> {
+        if rule == crate::related::Rule::Containers { return Err(io::Error::other("orphan containers forbidden")); }
+        let path = rule.path(&crate::effective_account_home()?, bundle_id)?;
+        native::Candidate::capture_orphan(&path, rule.is_file(), protected)
+            .map(|native| Self { native })
+            .map_err(NativeCaptureFailure::into_legacy_error)
+    }
+    pub fn info(&self) -> &NativeFileInfo {
+        &self.native.info
+    }
+    pub fn path(&self) -> &Path {
+        &self.native.path
+    }
+    pub fn revalidate(&self) -> io::Result<()> {
+        self.native.revalidate()
+    }
+    pub fn move_to_trash_with_last_guard(
+        &self,
+        cancelled: impl FnOnce() -> bool,
+        guard: impl FnOnce() -> NativeLastGuard,
+    ) -> NativeTrashOutcome {
+        self.native.move_to_trash_with_last_guard(cancelled, guard)
+    }
+}

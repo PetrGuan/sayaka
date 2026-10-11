@@ -376,6 +376,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::from_path(Path::new("/fixture")),
             clean_policy: None,
+            orphan_context: None,
             related_context: None,
             tool_operation: None,
             delegation: None,

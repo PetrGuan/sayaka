@@ -241,7 +241,11 @@ fn capture(
     if !cache.is_directory() {
         return Err("cache is not a real directory".into());
     }
-    let mut paths = related::registered_applications(&id).map_err(|e| e.to_string())?;
+    let roots = crate::app_observation::roots(home, &[]).map_err(|e| e.to_string())?;
+    let remaining = std::cell::Cell::new(10_000);
+    let inventory = crate::app_observation::inventory(&roots, deadline, &remaining).map_err(|e| e.to_string())?;
+    let observed = crate::app_observation::copies(&id, &inventory, deadline, &remaining).map_err(|e| e.to_string())?;
+    let mut paths = observed.paths;
     paths.sort();
     paths.dedup();
     if paths.is_empty() {

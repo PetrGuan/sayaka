@@ -2,6 +2,7 @@
 
 mod apps;
 mod apps_related;
+mod orphans;
 mod browser;
 mod clean;
 mod completions;
@@ -117,6 +118,7 @@ fn command() -> Command {
         .subcommand(scan)
         .subcommand(apps::command())
         .subcommand(apps_related::command())
+        .subcommand(orphans::command())
         .subcommand(purge::command())
         .subcommand(trash::command())
         .subcommand(trash::receipt_command())
@@ -419,6 +421,7 @@ fn run() -> io::Result<u8> {
         Some(("scan", args)) => run_scan(args, run_start),
         Some(("apps", args)) => apps::run(args),
         Some(("apps-related", args)) => apps_related::run(args),
+        Some(("orphans", args)) => orphans::run(args),
         Some(("purge", args)) => purge::run(args),
         Some(("trash", args)) => trash::run(args),
         Some(("receipt", args)) => trash::receipt(args),
