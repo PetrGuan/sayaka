@@ -41,3 +41,9 @@ The [proposed app-cache expansion](APP_CACHE_RULES.md) keeps sync staging,
 virtualization images, logs and container data excluded. Non-sandboxed shipping
 does not prove those stores disposable. Its proposed generic rule and exact
 additions require owner approval before implementation.
+
+The [proposed System Storage contract](SYSTEM_STORAGE.md) records the separate
+firmware evidence gate: the three historical iTunes firmware leaves are
+read-only metadata observations until Apple-authored location/reconstruction
+and updater-activity evidence support an amended approved contract. They are
+not app-cache execution rules; Configurator Group Containers remain excluded.
