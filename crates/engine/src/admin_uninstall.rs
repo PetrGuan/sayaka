@@ -161,6 +161,7 @@ mod native {
             contract: journal::DELEGATED_CONTRACT.into(),
             scope: NativePath::from_path(scope),
             clean_policy: None,
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: None,
             related_context: None,

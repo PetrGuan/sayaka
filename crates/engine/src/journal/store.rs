@@ -173,6 +173,7 @@ impl Store {
                 item.reason = Some("outcome_publication_not_confirmed".into());
             }
         }
+        if let Some(c) = &mut fallback.runtime_context { c.unconfirmed(previous.as_ref().and_then(|p| p.runtime_context.as_ref())); }
         if fallback.empty_trash_context.is_some() {
             crate::empty_trash_journal::unconfirmed(&mut fallback);
         }
@@ -558,6 +559,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::from_path(Path::new("/fixture")),
             clean_policy: None,
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: None,
             related_context: None,

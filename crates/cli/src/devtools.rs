@@ -50,12 +50,26 @@ pub fn command() -> Command {
                         .help("Private journal directory for the durable intent/outcome record"),
                 ),
         )
+        .subcommand(Command::new("runtimes").about("Read-only runtime image and protection report (JSON)"))
         .after_help(
             "Default is a read-only preview. Erase and delete are PERMANENT: nothing moves to Trash and\nnothing can be restored. Quit Xcode, Simulator and test runs first; only shut-down devices are\noffered. Sizes are CoreSimulator estimates, not guaranteed freed space.",
         )
 }
 
 pub fn run(args: &ArgMatches) -> io::Result<u8> {
+    if args.subcommand_name()==Some("runtimes") {
+        #[cfg(target_os="macos")]
+        {
+            use sayaka_engine::{devtools::{runtimes::RuntimeSession,session::MacHost},model::Cancellation};
+            let result=MacHost::new().and_then(|h|RuntimeSession::prepare(h,&Cancellation::default()));
+            match result {
+                Ok(s)=>{serde_json::to_writer(io::stdout().lock(),&serde_json::json!({"schema_version":1,"kind":"sayaka.runtime_cli_preview","effects_performed":false,"preview":s.preview()}))?;return Ok(0)},
+                Err(e)=>{serde_json::to_writer(io::stdout().lock(),&serde_json::json!({"schema_version":1,"kind":"sayaka.runtime_cli_preview","effects_performed":false,"error":e}))?;return Ok(1)}
+            }
+        }
+        #[cfg(not(target_os="macos"))] return Ok(2);
+    }
+
     let Some(("simulators", args)) = args.subcommand() else {
         return Ok(2);
     };

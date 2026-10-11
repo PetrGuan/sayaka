@@ -53,3 +53,5 @@ pub mod empty_trash;
 pub mod firmware;
 
 pub mod macos_installers;
+
+pub mod runtime_journal;

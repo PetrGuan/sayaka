@@ -713,6 +713,7 @@ impl RelatedUninstallSession {
             ),
             clean_policy: None,
             tool_operation: None,
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: None,
             related_context: None,
@@ -737,6 +738,7 @@ impl RelatedUninstallSession {
             clean_policy: None,
             tool_operation: None,
             delegation: None,
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: None,
             related_context: Some(RelatedContext {

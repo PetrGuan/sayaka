@@ -102,6 +102,7 @@ pub fn query(read: JournalRead, query: &Query) -> io::Result<Page> {
                     .items
                     .iter()
                     .any(|item| query.states.contains(&item.state))
+                && !record.runtime_context.as_ref().is_some_and(|c| c.items.iter().any(|i| query.states.contains(&i.state)))
                 && !record.empty_trash_context.as_ref().is_some_and(|c| {
                     use crate::empty_trash_journal::Aggregate;
                     query.states.contains(&match c.aggregate_outcome {
@@ -156,6 +157,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: None,
             related_context: None,
@@ -193,6 +195,7 @@ mod tests {
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
             clean_policy: None,
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: None,
             related_context: None,
@@ -485,6 +488,7 @@ mod tests {
             operation_id: "c-3".into(),
             contract: "revalidated_trash_v1".into(),
             scope: NativePath::unix_fixture("/fixture"),
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: None,
             related_context: None,

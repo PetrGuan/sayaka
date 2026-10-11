@@ -281,6 +281,7 @@ mod tests {
             tool_operation: None,
             related_context: None,
             delegation: None,
+            runtime_context: None,
             empty_trash_context: None,
             orphan_context: Some(Context {
                 schema_version: 1,
