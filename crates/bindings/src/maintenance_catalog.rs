@@ -48,3 +48,41 @@ pub unsafe extern "C" fn sayaka_maintenance_catalog_v1(
         }
     })
 }
+
+/// Returns a versioned JSON catalog. No application or user data is read.
+///
+/// # Safety
+/// The request must be readable and aligned. `required` must be writable and
+/// disjoint from request/buffer. Nonzero capacity needs a writable buffer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_maintenance_catalog_v2(
+    request: *const SayakaMaintenanceCatalogRequestV1,
+    buffer: *mut u8,
+    capacity: usize,
+    required: *mut usize,
+) -> i32 {
+    boundary(|| {
+        // SAFETY: Caller promises valid, non-overlapping output storage.
+        unsafe { prepare_output(buffer, capacity, required, MAX_QUERY_BYTES)? };
+        pointer(request)?;
+        // SAFETY: Caller promises a readable, aligned request.
+        let request = unsafe { *request };
+        if request.abi_version != ABI_VERSION
+            || request.struct_size as usize != size_of::<SayakaMaintenanceCatalogRequestV1>()
+        {
+            return Err(UNSUPPORTED_VERSION);
+        }
+        if request.reserved != 0 {
+            return Err(INVALID_ARGUMENT);
+        }
+        #[cfg(not(target_os = "macos"))]
+        return Err(UNSUPPORTED_PLATFORM);
+        #[cfg(target_os = "macos")]
+        {
+            let json = sayaka_engine::maintenance_catalog::json_v2();
+            let bytes = json.as_bytes();
+            // SAFETY: Output was validated above; bytes are static.
+            unsafe { copy_output(bytes, buffer, capacity, required) }
+        }
+    })
+}

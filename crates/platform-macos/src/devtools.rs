@@ -251,6 +251,23 @@ pub fn run_bounded(
     stdout_cap: usize,
     stderr_cap: usize,
 ) -> Result<ToolOutput, ToolError> {
+    run_bounded_cancellable(program, args, env, timeout, stdout_cap, stderr_cap, &|| {
+        false
+    })
+}
+
+pub fn run_bounded_cancellable(
+    program: &Path,
+    args: &[String],
+    env: &[(OsString, OsString)],
+    timeout: Duration,
+    stdout_cap: usize,
+    stderr_cap: usize,
+    cancel: &dyn Fn() -> bool,
+) -> Result<ToolOutput, ToolError> {
+    if cancel() {
+        return Err(ToolError::Io(io::ErrorKind::Interrupted.into()));
+    }
     let child = Command::new(program)
         .args(args)
         .env_clear()
@@ -281,6 +298,9 @@ pub fn run_bounded(
         }
         if guard.exited_without_reaping().map_err(ToolError::Io)? {
             break;
+        }
+        if cancel() {
+            return Err(ToolError::Io(io::ErrorKind::Interrupted.into()));
         }
         if started.elapsed() >= timeout {
             return Err(ToolError::Timeout); // guard kills and reaps

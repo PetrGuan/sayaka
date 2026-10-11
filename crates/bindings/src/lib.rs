@@ -34,8 +34,8 @@ mod simulators;
 pub use simulators::*;
 mod system_status;
 mod system_storage;
-pub use system_storage::*;
 pub use system_status::*;
+pub use system_storage::*;
 mod uninstall;
 pub use uninstall::*;
 
@@ -158,7 +158,7 @@ fn registry() -> &'static Mutex<Registry> {
             purges: HashMap::new(),
             uninstalls: HashMap::new(),
             runtimes: HashMap::new(),
-    simulators: HashMap::new(),
+            simulators: HashMap::new(),
             orphans: HashMap::new(),
         })
     })
@@ -734,3 +734,6 @@ mod tests {
         );
     }
 }
+
+mod readonly_diagnostics;
+pub use readonly_diagnostics::*;

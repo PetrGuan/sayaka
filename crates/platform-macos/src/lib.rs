@@ -318,3 +318,8 @@ pub mod firmware;
 
 #[cfg(target_os = "macos")]
 pub mod installer_size;
+
+#[cfg(target_os = "macos")]
+pub mod diagnostic_reads;
+#[cfg(target_os = "macos")]
+pub mod diagnostic_tools;

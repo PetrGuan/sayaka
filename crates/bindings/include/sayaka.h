@@ -114,6 +114,21 @@ SAYAKA_API int32_t sayaka_macos_installer_preview_v1(
     const SayakaSystemStorageRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+/* Closed diagnostic IDs: 1 disk, 2 login items, 3 network, 4 home metadata,
+   5 Spotlight, 6 exclusions, 7 network .DS_Store, 8 legacy overrides,
+   9 sudo Touch ID configuration, 10 periodic availability. */
+typedef struct SayakaDiagnosticsRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t id;
+    uint32_t reserved;
+} SayakaDiagnosticsRequestV1;
+/* One-shot exactly SAYAKA_MAX_QUERY_BYTES_V1; JSON <=512KiB. Off UI thread.
+   No size probe. Ordinary read-only observation, no effect authorization. */
+SAYAKA_API int32_t sayaka_diagnostics_run_v1(
+    const SayakaDiagnosticsRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 typedef struct SayakaMaintenanceCatalogRequestV1 {
     uint32_t abi_version;
     uint32_t struct_size;
@@ -124,6 +139,11 @@ typedef struct SayakaMaintenanceCatalogRequestV1 {
    is read and no maintenance operation is authorized. A zero-capacity probe
    returns SAYAKA_BUFFER_TOO_SMALL and the exact required byte count. */
 SAYAKA_API int32_t sayaka_maintenance_catalog_v1(
+    const SayakaMaintenanceCatalogRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
+/* Developer ID catalog schema 2. v1 retained for older pinned Apps. */
+SAYAKA_API int32_t sayaka_maintenance_catalog_v2(
     const SayakaMaintenanceCatalogRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 

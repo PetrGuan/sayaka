@@ -46,12 +46,14 @@ pub mod orphan_journal;
 #[cfg(target_os = "macos")]
 pub mod orphan_execution;
 
-pub mod empty_trash_journal;
 #[cfg(target_os = "macos")]
 pub mod empty_trash;
+pub mod empty_trash_journal;
 
 pub mod firmware;
 
 pub mod macos_installers;
 
 pub mod runtime_journal;
+
+pub mod readonly_diagnostics;

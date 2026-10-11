@@ -511,3 +511,13 @@ and the already implemented [system storage boundary](SYSTEM_STORAGE.md).
 No "free RAM"/purge-style memory claims, no health score, no daemon or
 scheduled maintenance, no automatic optimization, no arbitrary shell runner,
 no default privilege helper, no change to system authentication defaults.
+
+## Diagnostic implementation compatibility (#152/#153)
+
+The shared CLI replaces the three legacy per-tool JSON envelopes with the
+schema-1 diagnostic report (`id`, `status`, `facts`, `complete`, sources and
+time). `diagnose disk --volume /` remains accepted; arbitrary volume paths and
+caller timeouts are no longer accepted. Spotlight enumerates local mounts.
+Consumers of the old `kind`/raw stdout envelopes must migrate explicitly.
+Catalog ABI v1 remains unchanged for older Apps; the new v2 catalog reports
+schema 2 / `macos_developer_id`. Its unrelated effect rows remain unsupported.
