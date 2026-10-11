@@ -60,3 +60,42 @@ was not removed, relocated, modified or exempted for acceptance.
 No disposable fixture execution can be approved while mandatory copy coverage
 is unknown. Positive move/recovery acceptance remains pending; this observation
 is evidence of fail-closed behavior, not a passed execution acceptance matrix.
+
+## 2026-10-11: approved Safari observation and disposable fixture preview
+
+The owner approved the narrowly typed system Safari amendment. The implementation
+supports only the documented two-link OS layout, verifies the Apple code identity,
+and retains the chain/manifest evidence across preview and final guards. No
+system app was modified. A complete read-only preview returned 43 in-scope rows
+with no global issues. Both new native regression sources are explicitly ignored
+host-layout cases and were compiled, not executed. Independent GPT-6 Astra review
+found the original unconditional host-layout test inappropriate; it was fixed
+and reverified with no remaining findings.
+
+A separate pre-existing process initially had no readable executable path. The
+owner handled it; the next read-only UID census had no unreadable paths. No
+signals were sent by the implementation or acceptance agent.
+
+Disposable fixture data used the `org.sayaka.acceptance144` namespace, with four
+small ordinary data leaves: a 40-day-old cache, a 40-day-old cache containing a
+one-day-old file, an Application Support leaf, and a cache with a matching
+self-created app moved to Trash manually through Finder. The preview then
+completed with 47 rows and these fixture observations:
+
+- The app-in-Trash fixture was recognized as `trashed_bundle`.
+- The old and recent caches were `name_only`; the recent descendant added
+  `recently_modified` as required.
+- The Application Support fixture was `name_only_read_only`.
+- All fixture rows remained default-off and non-executable under the closed gate.
+
+An additional existing LaunchAgent's program path contains a symlink. The current
+writer-evidence contract fails closed with `symlink_path`; this also refuses all
+four fixture rows. The real updater/LaunchAgent configuration was not modified,
+unloaded, moved or exempted to obtain a passing result. The Safari exception is
+not a general symlink-resolution permission and does not alter this check.
+
+Thus tier/age/read-only/gate observations are recorded, but no positive native
+cleanup or complete acceptance is claimed. The execution gate remains false.
+Positive moves, recovery, approval/race/fault cases remain pending while this
+writer-evidence prerequisite is unknown. Any extension of LaunchAgent evidence
+rules requires its own explicit contract decision and independent review.

@@ -82,6 +82,7 @@ pub struct OrphanSession {
     roots: Vec<Root>,
     trash: PathWitness,
     bundles: Vec<Bundle>,
+    system_inventory: Vec<Bundle>,
     candidates: Vec<Candidate>,
     config: ConfigPath,
     policy: GlobalPolicySnapshot,
@@ -133,6 +134,7 @@ impl OrphanSession {
             roots,
             trash,
             bundles: Vec::new(),
+            system_inventory: Vec::new(),
             candidates: Vec::new(),
             config,
             policy,
@@ -319,6 +321,7 @@ impl OrphanSession {
                 }
             }
         }
+        session.system_inventory = inventory.into_iter().filter(Bundle::is_system_safari).collect();
         session.preview.spotlight = summaries.into_values().collect();
         if let Err(e) = session.budget(deadline) {
             session.preview.issues.push(e.to_string());
@@ -501,6 +504,7 @@ impl OrphanSession {
         for b in &self.bundles {
             b.revalidate()?;
         }
+        for bundle in &self.system_inventory { bundle.revalidate()?; }
         let owned;
         let inventory = if let Some(cached) = cached {
             cached
@@ -508,6 +512,9 @@ impl OrphanSession {
             owned = observation::inventory(&self.roots, deadline, &self.entries_remaining)?;
             &owned
         };
+        if cached.is_none() && inventory.iter().filter(|b| b.is_system_safari()).count() != self.system_inventory.len() {
+            return Err(error("resource_changed: system application observation"));
+        }
         let mut queries = BTreeMap::<String, bool>::new();
         for &i in selected {
             let row = &self.preview.candidates[i];

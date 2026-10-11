@@ -23,6 +23,7 @@ pub struct Bundle {
     pub bundle: PathWitness,
     pub manifest: PathWitness,
     pub digest: [u8; 32],
+    system_safari: Option<platform::system_safari::Observation>,
 }
 impl Bundle {
     pub fn capture(path: &Path) -> io::Result<Self> {
@@ -51,9 +52,20 @@ impl Bundle {
             bundle,
             manifest,
             digest,
+            system_safari: None,
         })
     }
+    fn capture_system_safari() -> io::Result<Self> {
+        let observation = platform::system_safari::Observation::capture()?;
+        let mut bundle = Self::capture(observation.path())?;
+        if bundle.id != "com.apple.Safari" { return Err(error("copies_unknown: system Safari identity")); }
+        bundle.system_safari = Some(observation);
+        bundle.revalidate()?;
+        Ok(bundle)
+    }
+    pub fn is_system_safari(&self) -> bool { self.system_safari.is_some() }
     pub fn revalidate(&self) -> io::Result<()> {
+        if let Some(observation) = &self.system_safari { observation.revalidate()?; }
         self.bundle.revalidate()?;
         self.manifest.revalidate()?;
         let (id, digest, dev, ino) =
@@ -146,6 +158,10 @@ pub fn inventory(
                 let entry = entry?;
                 let ty = entry.file_type()?;
                 if ty.is_symlink() {
+                    if entry.path() == Path::new(platform::system_safari::ENTRY) {
+                        result.push(Bundle::capture_system_safari()?);
+                        continue;
+                    }
                     return Err(error("copies_unknown: symlink"));
                 }
                 if !ty.is_dir()
