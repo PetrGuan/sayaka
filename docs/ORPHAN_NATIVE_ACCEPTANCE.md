@@ -169,8 +169,10 @@ application/service or user data was moved, removed or signalled for acceptance.
 
 These observations are partial acceptance, not permission to open the gate.
 Still pending: bundle/manifest replacement; exhaustive copy/family roots;
+protection of Apple/group/EDR IDs and sensitive T3;
 LaunchAgent fixture reference/malformed/replacement cases; native spelling,
 ancestor and dataless cases at each phase; altered digest/count/token/IDs, replay,
-expiry/clock rollback and over-32 batching; interruption after started and unknown
+expiry/clock rollback and over-32 batching; initial atomic journal publication
+failure; interruption after started and unknown
 recovery/no retry. No positive fault-injection result is inferred from source
 review or compiled test sources. The production gate remains false.
