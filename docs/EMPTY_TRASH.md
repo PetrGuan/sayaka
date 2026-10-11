@@ -207,8 +207,9 @@ background continuation, "retry" button or automatic journal eviction exists.
 V1 provides no in-app or CLI transition that clears this barrier. Preserve a
 bounded per-account unresolved marker outside normally archived history, bound
 to the operation ID/digest, durably before returning a dispatch permit. Clear it
-only after a durably confirmed, non-ambiguous finish; a missing/corrupt marker or
-inconsistent active journal fails closed. Ordinary history archival, changed
+only after a durably confirmed, non-ambiguous finish; a corrupt marker, a marker
+missing where an unresolved journal requires one, or inconsistent active evidence
+fails closed. A first use with neither prior intent nor marker is not ambiguous. Ordinary history archival, changed
 output paths and restart do not authorize a new dispatch. Manual inspection of
 Finder is useful but is not machine-verifiable proof of completion. Any future
 supported resolution/acknowledgment transition needs a separately reviewed,
