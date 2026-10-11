@@ -49,3 +49,5 @@ pub mod orphan_execution;
 pub mod empty_trash_journal;
 #[cfg(target_os = "macos")]
 pub mod empty_trash;
+
+pub mod firmware;

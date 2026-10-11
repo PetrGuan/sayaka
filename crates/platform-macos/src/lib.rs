@@ -312,3 +312,6 @@ pub use trash::OrphanTrashCandidate;
 
 #[cfg(target_os = "macos")]
 pub mod empty_trash;
+
+#[cfg(target_os = "macos")]
+pub mod firmware;
