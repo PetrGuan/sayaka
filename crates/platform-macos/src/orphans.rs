@@ -201,7 +201,7 @@ pub fn launch_agent_document(path: &Path) -> io::Result<(Vec<(String, bool)>, Ve
     let result = (|| {
         let f = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOFOLLOW | 0x20000000 | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .custom_flags(0x20000000 | libc::O_NONBLOCK | libc::O_CLOEXEC)
             .open(path)?;
         let m = f.metadata()?;
         if !m.is_file() || m.len() > 1_048_576 || (m.dev(), m.ino()) != witness.identity() {
@@ -283,7 +283,7 @@ pub fn is_finder_alias(path: &Path) -> io::Result<bool> {
     let result = (|| {
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC | 0x20000000)
+            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | 0x20000000)
             .open(path)?;
         let m = file.metadata()?;
         if (m.dev(), m.ino()) != witness.identity() {
