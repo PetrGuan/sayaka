@@ -68,7 +68,9 @@ value. Never retry automatically. Diagnostics expose bounded reason codes, not
 raw destination names, network URLs or command output.
 
 One overview collection at a time, no polling loop. Allow manual refresh; close
-cancels pending work and suppresses late publication. Give the collection a
+cancels queued work and suppresses late publication. Once entered, the synchronous
+collection runs to its bounded completion; no cancellation API is introduced.
+Give the collection a
 20-second observation deadline, including the three sequential commands and
 capacity read. Native filesystem/Foundation calls are not forcibly interruptible:
 run them off the main thread with one bounded worker, report timeout to the
@@ -139,11 +141,13 @@ statistics and never enters selected, cleanable or freed byte totals.
 ### API
 
 Add synchronous bounded `sayaka_system_storage_overview_v1` using the existing
-caller-buffer JSON binding convention; callers invoke it on a background worker.
+fixed 1 MiB, one-shot system-status caller-buffer convention; callers invoke it
+on a background worker. Reject null or smaller buffers before observing. Never
+perform a size-probe collection or recollect to fill a buffer. If serialization
+exceeds the fixed capacity, return an explicit capacity failure, not truncated JSON.
 The envelope has schema_version=1, kind=`sayaka.system_storage_overview`,
 effects_performed=false and separately sourced observations. It creates no
-session, plan, approval, receipt or journal. Buffer sizing/retry must not cause
-multiple simultaneous collections; document the exact binding behavior in PR2.
+session, plan, approval, receipt or journal. The one-shot buffer rule prevents sizing/retry from creating repeat observations.
 Unsupported platforms return explicit unsupported observations. Update the
 header, BINDINGS and the AGENTS process-launch rule only when implementing the
 approved three-verb exception.
@@ -209,7 +213,8 @@ handoff; changes require rediscovery before opening review.
 
 Add `sayaka_macos_installer_preview_v1`, schema_version=1,
 kind=`sayaka.macos_installer_preview`, effects_performed=false, using the same
-read-only JSON buffer conventions. Candidate paths, metadata and provenance are
+fixed 1 MiB one-shot read-only JSON buffer convention and close/publication
+semantics as the overview. Candidate paths, metadata and provenance are
 evidence only, never execution capabilities. App handoff selects exactly one
 bundle in the existing uninstall window and starts a fresh native preview;
 related items stay unselected. Existing typed confirmation, running-process
