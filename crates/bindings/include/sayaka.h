@@ -108,6 +108,12 @@ SAYAKA_API int32_t sayaka_firmware_preview_v1(
     const SayakaSystemStorageRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+/* Direct /Applications macOS installer evidence only; no execution authority.
+   Same one-shot 1 MiB buffer and cooperative 5-second budget. */
+SAYAKA_API int32_t sayaka_macos_installer_preview_v1(
+    const SayakaSystemStorageRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 typedef struct SayakaMaintenanceCatalogRequestV1 {
     uint32_t abi_version;
     uint32_t struct_size;

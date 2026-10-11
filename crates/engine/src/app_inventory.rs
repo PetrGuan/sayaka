@@ -792,6 +792,20 @@ pub fn read_bundle_identifier(bundle: &Path) -> BundleIdentifierRead {
 pub fn read_bundle_identifier_with_digest(
     bundle: &Path,
 ) -> Result<(StringField, [u8; 32], u64, u64), &'static str> {
+    read_bundle_metadata_with_digest(bundle).map(|(id, _, digest, dev, ino)| (id, digest, dev, ino))
+}
+
+/// Bounded existing plist parser, preserving installer app version separately.
+pub fn read_bundle_metadata_with_digest(
+    bundle: &Path,
+) -> Result<(StringField, StringField, [u8; 32], u64, u64), &'static str> {
+    read_bundle_metadata_before(bundle, wall_clock_now() + Duration::from_secs(SINGLE_PLIST_SECONDS))
+}
+
+pub fn read_bundle_metadata_before(
+    bundle: &Path, deadline: Instant,
+) -> Result<(StringField, StringField, [u8; 32], u64, u64), &'static str> {
+    if wall_clock_now() >= deadline { return Err("plist budget"); }
     use sha2::{Digest, Sha256};
     use std::io::Read;
     let limits = AppInventoryLimits::default();
@@ -805,6 +819,7 @@ pub fn read_bundle_identifier_with_digest(
     if metadata.len() > limits.max_info_plist_bytes {
         return Err("Info.plist exceeds the single-file budget");
     }
+    if wall_clock_now() >= deadline { return Err("plist budget"); }
     let mut bytes = Vec::new();
     file.take(limits.max_info_plist_bytes + 1)
         .read_to_end(&mut bytes)
@@ -815,7 +830,7 @@ pub fn read_bundle_identifier_with_digest(
     let cancellation = Cancellation::default();
     let context = ProbeContext {
         cancellation: &cancellation,
-        deadline: wall_clock_now() + Duration::from_secs(SINGLE_PLIST_SECONDS),
+        deadline,
         limits,
         metadata_read_mode: AppInventoryMetadataReadMode::Baseline,
         now: wall_clock_now,
@@ -823,14 +838,15 @@ pub fn read_bundle_identifier_with_digest(
     let mut budget = ProbeBudget::default();
     let parsed = parse_info_plist(&bytes, context, &mut budget)
         .map_err(|_| "Info.plist cannot be parsed")?;
+    if wall_clock_now() >= deadline { return Err("plist budget"); }
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        Ok((parsed.bundle_id, digest, metadata.dev(), metadata.ino()))
+        Ok((parsed.bundle_id, parsed.short_version, digest, metadata.dev(), metadata.ino()))
     }
     #[cfg(not(unix))]
-    Ok((parsed.bundle_id, digest, 0, 0))
+    Ok((parsed.bundle_id, parsed.short_version, digest, 0, 0))
 }
 
 #[cfg(unix)]

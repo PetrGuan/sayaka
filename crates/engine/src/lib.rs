@@ -51,3 +51,5 @@ pub mod empty_trash_journal;
 pub mod empty_trash;
 
 pub mod firmware;
+
+pub mod macos_installers;
