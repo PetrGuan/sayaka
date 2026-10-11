@@ -1,8 +1,9 @@
 # System storage: ordinary-user observation and installer review
 
-Status: proposed contract, not implemented. Scope choices D1–D6 were confirmed
-by the owner on 2026-10-11. A reviewed contract PR still requires owner approval
-before implementation. This document is self-contained; issue numbers identify
+Status: contract approved by the owner on 2026-10-11 after independent review
+of PR #118. Core overview implementation is the next slice; firmware, installer
+discovery and App integration remain pending. Scope choices D1–D6 were confirmed
+by the owner on 2026-10-11. Implementation is authorized within this contract. This document is self-contained; issue numbers identify
 work slices, not additional authority.
 
 ## Product decisions and evidence

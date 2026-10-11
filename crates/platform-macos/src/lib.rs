@@ -35,6 +35,8 @@ mod acl;
 pub use acl::has_extended_acl;
 
 pub mod status;
+#[cfg(target_os = "macos")]
+pub mod system_storage;
 
 #[cfg(target_os = "macos")]
 pub mod related;

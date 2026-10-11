@@ -31,6 +31,8 @@ pub use purge::*;
 mod simulators;
 pub use simulators::*;
 mod system_status;
+mod system_storage;
+pub use system_storage::*;
 pub use system_status::*;
 mod uninstall;
 pub use uninstall::*;
