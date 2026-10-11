@@ -30,6 +30,10 @@ simulator devices named by UDID under
 inside Trash review, and hosts must present it in a separate, strong
 confirmation. Its argument table is fixed in that document; extending it, or
 adding any other permanent effect, needs a new contract and maintainer approval.
+The runtime extension is specified in [docs/SIMULATOR_RUNTIMES.md](docs/SIMULATOR_RUNTIMES.md):
+contract only, with implementation and per-kind/tool-version native evidence
+pending. It retains the separate session, typed approval and no-elevation
+boundaries; it does not authorize deleting existing user runtimes for validation.
 
 The maintainer also approved (2026-10-11) the separately owned
 `finder_delegated_empty_trash_v1` contract in [docs/EMPTY_TRASH.md](docs/EMPTY_TRASH.md).

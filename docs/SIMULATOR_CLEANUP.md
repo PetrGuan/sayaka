@@ -7,7 +7,9 @@ journal schema 6, the `sayaka_simulators_*_v1` bindings
 ([BINDINGS.md](BINDINGS.md)) and `sayaka devtools simulators` implement device
 erase and delete. Their unit tests are written against an injected host and
 journal; the opt-in real-platform cases below have not been run, so no native
-outcome is claimed yet. Slice 1b (runtimes) is not implemented.
+outcome is claimed yet. Slice 1b (runtimes) is not implemented. Its extension contract is
+[SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md), which supersedes the historical
+blocked 1b rules below; device-only slice 1a is unchanged.
 
 Xcode simulators and simulator runtimes are often the largest part of the
 macOS Storage "Developer" and "System Data" categories. One measured developer
@@ -27,7 +29,7 @@ operation and never touches `CoreSimulator/Devices`.
 | Slice | Operations | Status |
 | --- | --- | --- |
 | 1a | Erase devices; delete devices (including devices `simctl` marks unavailable), always by explicit UDID | This contract |
-| 1b | Delete runtime images | **Blocked** on open decisions 4–5; must not be implemented with 1a |
+| 1b | Delete runtime images | Contract in [SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md); implementation and native evidence pending |
 | Later | Package-manager cleanups (`brew cleanup`, `npm cache clean`, `pnpm store prune`, `yarn cache clean`, `pip cache purge`) | Separate contract; their caches already have recoverable Trash rules |
 
 Never in scope: `delete unavailable`, `delete all`, `erase all`, `runtime delete
@@ -334,7 +336,8 @@ Approved by the maintainer (2026-10-06):
 3. The runtime default rule in **Refusals** (chosen **or** default build for any
    SDK) is the rule; it is defined there only.
 
-Open, blocking 1b only:
+Historical open decisions for 1b (resolved as policy and native evidence gates
+in [SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md); retained here for context):
 
 4. Measure whether `simctl runtime delete` needs administrator rights for
    each kind. Observed so far: `--dry-run` succeeds unprivileged
