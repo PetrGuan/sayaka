@@ -1219,3 +1219,18 @@ semantics. Tests are source-compiled only; destructive native acceptance pending
 `sayaka_empty_trash_validate_record_v1` is a bounded (1 MiB) read-only schema-10
 validator for host history. It allocates no handle or authority and rejects
 unknown/missing/conflicting fields through the same core validator.
+
+## System storage overview
+
+`sayaka_system_storage_overview_v1` accepts `SayakaSystemStorageRequestV1`
+(ABI 1, exact struct size, zero reserved) and exactly 1 MiB of caller output.
+It is one-shot: null/size-probe calls are invalid before observation. Invoke off
+main; collection has a 20-second deadline and one global worker. A timeout
+leaves an outstanding OS call alone; further observations report busy until it
+finishes. Close cancels queued client work and suppresses late publication.
+JSON kind `sayaka.system_storage_overview`, schema 1, effects_performed=false
+contains snapshots, backup_running, backup_configured, last_successful_backup,
+and reclaimable observations, each with source/time/completeness/issues/value.
+Partial snapshots have null count. Configured destination text and nested active
+status formats without native evidence stay unknown. Last backup is unknown.
+The capacity estimate is never cleanup accounting. See [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).

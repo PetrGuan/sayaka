@@ -31,6 +31,7 @@ pub mod receipt;
 pub mod rules;
 pub mod scan;
 pub mod status;
+pub mod system_storage;
 
 pub use plan::{Clock, IdSource, Planner, SequentialIds, SystemClock};
 

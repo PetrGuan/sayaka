@@ -89,6 +89,19 @@ SAYAKA_API int32_t sayaka_system_status_v1(
     const SayakaSystemStatusRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+typedef struct SayakaSystemStorageRequestV1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint64_t reserved; /* Must be zero. */
+} SayakaSystemStorageRequestV1;
+
+/* Read-only system storage JSON. One-shot: exactly SAYAKA_MAX_QUERY_BYTES_V1,
+   no size probe. Call off the UI thread; 20-second observation deadline.
+   Timeout does not terminate an outstanding native capacity call. */
+SAYAKA_API int32_t sayaka_system_storage_overview_v1(
+    const SayakaSystemStorageRequestV1 *request,
+    uint8_t *buffer, size_t capacity, size_t *required);
+
 typedef struct SayakaMaintenanceCatalogRequestV1 {
     uint32_t abi_version;
     uint32_t struct_size;
