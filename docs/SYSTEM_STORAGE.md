@@ -201,7 +201,8 @@ installed OS version. Target OS major is unknown unless separately evidenced by
 explicit installer OS metadata; do not equate it with app version or infer it
 from the marketing filename. PR4 must document any accepted exact metadata key
 and fixture; absent that evidence, show unknown and the reuse warning for every
-installer. Same known OS major remains Review, never default selected. Explain
+installer. All installers are Review and initially unselected, including a known
+same-major match, a different major or an unknown target version. Explain
 that the installer can be retained for reinstalling or making bootable media.
 
 Bound enumeration to 4,096 children, 32 candidates, Info.plist to 1 MiB and total
