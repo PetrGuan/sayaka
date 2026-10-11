@@ -1110,3 +1110,69 @@ never preselect it, and explicitly reject selections above 32. Scan roots includ
 `Library/Caches` for direct-child discovery; hosts should avoid duplicate rows
 when exact scan roots overlap. Candidate state stays in the retained capability,
 not in execute inputs or schema 5 journal item keys. See APP_CACHE_RULES.md.
+
+### Orphan cleanup: retained v2 preview and v1 execution
+
+`ORPHAN_EXECUTION.md` defines the owner-approved contract and frozen schema-9
+journal keys. The compile-time native acceptance gate remains false; hosts must
+show `native_acceptance_pending` and cannot override it. The old synchronous
+`sayaka_orphan_preview_v1` is unchanged and cannot authorize execution.
+
+All new structures use ABI version 1, their exact `sizeof`, and zero `reserved`.
+`sayaka_orphan_preview_v2(request, out_handle)` copies 0..8 extra native app roots
+and an explicit policy directory, derives home natively, and starts an owned
+read-only worker. It returns a new opaque handle sharing the global four-task
+limit. No home/path selected by the UI substitutes for native home.
+
+Use `sayaka_orphan_poll_v1` off the UI thread. Snapshot phase 1 is preview and
+phase 2 execution; state 1 is running, 2 complete, 5 failed. Cancellation is an
+independent sticky bit. Poll and result never block on an unfinished worker.
+`sayaka_orphan_result_v1` uses the standard bounded size-probe/copy protocol;
+NOT_READY means no complete result. Repeated reads in one phase return identical
+bytes. Serialize execute/result access in the host: execution replaces the
+preview result on that same handle. Completion only means worker completion,
+not that all items moved; inspect the result's per-item outcomes.
+
+The preview JSON is `kind: sayaka.orphan_preview`, schema 2, with `home`,
+`complete`, `effects_performed: false`, `plan_digest`, `expires_unix_ms`,
+`coverage`, `copy_roots`, `spotlight`, `issues`, `warning` and `candidates`.
+Each candidate flattens the frozen journal Binding fields (`item_id`,
+`bundle_id`, `tier`, `rule_id`, `rule_version`, `path`, `kind`, `consequence`,
+nullable `measured_logical_bytes`, optional `trashed_bundles`) and adds
+`ownership_basis`, `execution_supported`, `default_selected`, `refusals`,
+nullable `latest_mtime_unix_ms`. Paths use NativePath; display text is never
+identity. Unknown size/mtime is null. Refused rows are unselected; tier defaults
+are only suggestions. Escape control characters before presenting identifiers,
+consequences or paths in host controls.
+
+`sayaka_orphan_execute_v1` consumes a completed preview once and starts phase 2
+on the same handle. Inputs are the current 64-byte lowercase-hex digest,
+`selected_ids_json` (UTF-8 JSON array of 1..32 unique 64-byte lowercase-hex item
+IDs, at most 8192 bytes), exact UTF-8 token `trash N leftovers` (at most 128
+bytes), and a dedicated leftovers state directory. Pointers need only remain
+valid for the call. Syntax/version errors do not consume the preview. Once a
+valid request starts execution, even a refusal consumes it; obtain a fresh
+preview for any subsequent attempt. No approval Boolean, paths, imported JSON
+or history can construct a native candidate. State directory parents must
+already exist; core guards reject overlap with other journal roots and refuse
+an existing root containing anything other than schema 9.
+
+Successful worker serialization returns `kind: sayaka.orphan_execution`, schema
+1, `record` (the exact schema-9 record) and nullable `journal_error`. Failed
+preparation/approval or a worker failure returns `kind: sayaka.orphan_error`,
+schema 1 and `message`, with poll state 5. A worker error is not evidence that
+nothing moved: after execution started, inspect durable history; never retry an
+unknown item automatically. With the gate closed, approval specifically returns
+`native_acceptance_pending` before any journal/effect.
+
+The dedicated history root accepts `[9]` only. The complete key tables for
+Record, Item, orphan_context, copy_roots, spotlight, selected and trashed_bundles
+are in ORPHAN_EXECUTION.md; `measured_logical_bytes: null` preserves unknown
+advisory directory totals independently of native identity/recovery size.
+Do not place these records into the older uninstall root.
+
+`sayaka_orphan_cancel_v1` requests sticky cancellation; it neither retracts a
+completed move nor releases resources. `sayaka_orphan_release_v1` cancels active
+work and returns BUSY until it exits; retry, and only OK invalidates the handle.
+Never unload the library while a handle remains live. No callbacks, native
+object pointers, test bypasses or permanent-delete fallbacks cross this ABI.

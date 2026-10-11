@@ -249,7 +249,7 @@ hex digests; never use escaped display strings as path authority.
 | Object | Proposed keys and validation |
 | --- | --- |
 | Record | Existing `schema_version`, `plan_schema_version`, `engine_version`, `rules_version`, `operation_id`, `contract`, `scope`, `created_unix_ms`, `items`; required `orphan_context`. Unrelated optional contexts absent. Exact contract/version tuple required. |
-| Item | Existing `path`, `device`, `inode`, `logical_bytes`, `state`, optional `reason`, optional `destination`, `updated_unix_ms`; `rule_binding` absent (typed orphan binding is in context). `logical_bytes` is the native identity/recovery size; directory advisory totals use selected[].measured_logical_bytes and never substitute a measured zero. |
+| Item | Existing `path`, `device`, `inode`, `logical_bytes`, `state`, optional `reason`, optional `destination`, optional `recovery_evidence`, `updated_unix_ms`; `rule_binding` absent (typed orphan binding is in context). `logical_bytes` is the native identity/recovery size; directory advisory totals use selected[].measured_logical_bytes and never substitute a measured zero. |
 | orphan_context | `schema_version`, `home`, `library_device`, `library_inode`, `copy_roots`, `coverage`, `spotlight`, `policy_digest`, `plan_digest`, `approved_unix_ms`, `deadline_unix_ms`, `selected`. |
 | copy_roots[] | `path`, `state`, `device`, `inode`; present roots record their identities; proven-absent roots record their retained existing parent identities and are explicitly tagged. Bounded complete root set, not caller omissions. |
 | spotlight[] | `bundle_id`, `scope`, `status`, `result_count`, `verified_trash_count`, `stale_registrations` (NativePath array); one summary for each queried ID, explicit unknown distinct from zero, bound into plan digest. |
@@ -358,3 +358,11 @@ change related-uninstall's bundle-first behavior.
 Build validation compiles the workspace and positive/negative fixture sources;
 unit/UI tests and native fixture moves are not executed by the implementation
 agent. Native acceptance and enabling the release gate remain pending.
+
+Schema-9 `recovery_evidence`, when present, uses the existing journal recovery
+shape exactly: `approved`, nullable `returned_destination`, nullable
+`held_source`, nullable `held_source_path`, and `observation_errors`. The two
+path fields use NativePath. File evidence (`approved`/`held_source`) contains
+`device`, `inode`, `logical_bytes`, and `modified`; `modified` contains
+`before_unix_epoch`, `seconds`, `nanoseconds`. Only an `unknown` item may carry
+this evidence, and approved identity/size must match its Item record.
