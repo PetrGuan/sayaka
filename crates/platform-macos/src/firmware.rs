@@ -131,10 +131,39 @@ pub fn child_directory(parent: &File, name: &CStr) -> io::Result<File> {
     Ok(file)
 }
 pub fn observe(home: &Path, leaf: &str, deadline: Instant) -> io::Result<Leaf> {
+    if Instant::now() >= deadline {
+        return Err(fail("budget"));
+    }
+    let policy = crate::ReadOnlyPolicy::enter()?;
+    let result = observe_inner(home, leaf, deadline);
+    let restored = policy.restore();
+    restored?;
+    if Instant::now() >= deadline {
+        return Err(fail("budget"));
+    }
+    result
+}
+fn observe_inner(home: &Path, leaf: &str, deadline: Instant) -> io::Result<Leaf> {
     // Ancestors are opened independently rather than following a failed full path.
     let mut current = directory(home)?;
-    if !crate::volume_info(home)?.local {
-        return Err(fail("nonlocal_home"));
+    let volume = crate::volume_info(home)?;
+    let mut fs = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: live owned descriptor and writable statfs storage.
+    if unsafe { libc::fstatfs(current.as_raw_fd(), fs.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let fs = unsafe { fs.assume_init() };
+    let named = std::fs::symlink_metadata(home)?;
+    let held = current.metadata()?;
+    if fs.f_flags & libc::MNT_LOCAL == 0
+        || !volume.local
+        || !volume.internal
+        || volume.removable
+        || volume.ejectable
+        || named.dev() != held.dev()
+        || named.ino() != held.ino()
+    {
+        return Err(fail("unsupported_or_changed_home_volume"));
     }
     let device = current.metadata()?.dev();
     for name in ["Library", "iTunes", leaf] {

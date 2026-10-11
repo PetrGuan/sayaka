@@ -43,6 +43,9 @@ pub fn preview() -> Firmware {
             .into_iter()
             .zip(SOURCES)
             .map(|(leaf, source)| {
+                if std::time::Instant::now() >= deadline {
+                    return Observation::unknown(source, "budget");
+                }
                 let result = sayaka_platform_macos::effective_account_home().and_then(|home| {
                     sayaka_platform_macos::firmware::observe(&home, leaf, deadline)
                 });
