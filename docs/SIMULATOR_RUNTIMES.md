@@ -164,8 +164,10 @@ For each runtime in deterministic UUID order:
    state, then invoke the single UUID runtime delete.
 4. Re-list runtime images and devices. Report runtime success only after a normal
    tool return and a complete post-check proving that UUID absent and no device
-   still references its runtimeIdentifier. A nonzero return with absence can be
-   recorded as observed removal with command diagnostics; never claim untouched.
+   still references its runtimeIdentifier. A nonzero runtime return with absence
+   is unknown with `runtime_absence_after_nonzero_exit` diagnostics, never
+   untouched or complete success; it cannot bypass asset-path confirmation.
+   Device-only observed-removal classification is unchanged.
    A nonzero exit with unchanged image is failed; no settling occurs after a
    nonzero return or a tool error. After exit zero, keep the durable started
    record and operation lock while performing a bounded read-only settlement:
