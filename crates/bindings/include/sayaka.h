@@ -116,6 +116,46 @@ SAYAKA_API int32_t sayaka_orphan_preview_v1(
     const SayakaOrphanPreviewRequestV1 *request,
     uint8_t *buffer, size_t capacity, size_t *required);
 
+/* Native-home orphan preview. v1 above stays read-only and unchanged.
+ * Roots (0..8) and all request bytes are copied before returning.
+ * The owned async handle shares the global four-task limit. */
+typedef struct SayakaOrphanPreviewRequestV2 {
+    uint32_t abi_version, struct_size;
+    const SayakaPathV1 *extra_app_roots;
+    size_t extra_app_root_count;
+    SayakaPathV1 policy_dir;
+    uint32_t reserved;
+} SayakaOrphanPreviewRequestV2;
+typedef struct SayakaOrphanExecuteRequestV1 {
+    uint32_t abi_version, struct_size;
+    uint64_t handle;
+    const uint8_t *plan_digest;
+    size_t plan_digest_length;
+    const uint8_t *selected_ids_json;
+    size_t selected_ids_json_length;
+    const uint8_t *approval_token;
+    size_t approval_token_length;
+    SayakaPathV1 state_dir;
+    uint32_t reserved;
+} SayakaOrphanExecuteRequestV1;
+typedef struct SayakaOrphanSnapshotV1 {
+    uint32_t abi_version, struct_size;
+    uint32_t phase; /* 1 preview, 2 execution */
+    uint32_t state; /* 1 running, 2 complete, 5 failed (read error JSON) */
+    uint32_t cancellation_requested, reserved;
+} SayakaOrphanSnapshotV1;
+SAYAKA_API int32_t sayaka_orphan_preview_v2(const SayakaOrphanPreviewRequestV2 *, uint64_t *out_handle);
+/* Consumes this handle's preview once. IDs are a JSON string array (1..32),
+ * each 64 lowercase hex bytes, max JSON 8192 bytes. Token: trash N leftovers.
+ * Digest is 64 lowercase hex bytes. The release gate cannot be overridden. */
+SAYAKA_API int32_t sayaka_orphan_execute_v1(const SayakaOrphanExecuteRequestV1 *);
+SAYAKA_API int32_t sayaka_orphan_poll_v1(uint64_t, SayakaOrphanSnapshotV1 *);
+SAYAKA_API int32_t sayaka_orphan_result_v1(uint64_t, uint8_t *, size_t, size_t *);
+SAYAKA_API int32_t sayaka_orphan_cancel_v1(uint64_t);
+/* Cancel first; BUSY until owned work exits. Retry; OK invalidates handle. */
+SAYAKA_API int32_t sayaka_orphan_release_v1(uint64_t);
+
+
 typedef struct SayakaExclusionsRequestV1 {
     uint32_t abi_version;
     uint32_t struct_size;

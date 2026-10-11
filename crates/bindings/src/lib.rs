@@ -10,6 +10,8 @@ mod browse;
 pub use browse::*;
 mod ai_footprint;
 pub use ai_footprint::*;
+mod orphan_execution;
+pub use orphan_execution::*;
 mod app_orphans;
 pub use app_orphans::*;
 mod diagnostics;
@@ -113,6 +115,7 @@ struct Registry {
     purges: HashMap<u64, Arc<Mutex<purge::PurgeJob>>>,
     uninstalls: HashMap<u64, Arc<uninstall::UninstallSlot>>,
     simulators: HashMap<u64, Arc<simulators::SimulatorJob>>,
+    orphans: HashMap<u64, Arc<Mutex<orphan_execution::OrphanJob>>>,
 }
 
 impl Registry {
@@ -123,6 +126,7 @@ impl Registry {
             + self.uninstalls.len()
             + self.picked.len()
             + self.simulators.len()
+            + self.orphans.len()
             >= MAX_TASKS
         {
             return Err(LIMIT_EXCEEDED);
@@ -144,6 +148,7 @@ fn registry() -> &'static Mutex<Registry> {
             purges: HashMap::new(),
             uninstalls: HashMap::new(),
             simulators: HashMap::new(),
+            orphans: HashMap::new(),
         })
     })
 }
