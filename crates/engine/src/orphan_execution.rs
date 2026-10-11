@@ -157,7 +157,7 @@ impl OrphanSession {
                 discovered += 1;
                 observation::consume(&session.entries_remaining)?;
                 session.budget(deadline)?;
-                if discovered > 10_000 || locations.len() >= 256 {
+                if discovered > 10_000 {
                     return Err(error("discovery_incomplete"));
                 }
                 let e = e?;
@@ -169,12 +169,24 @@ impl OrphanSession {
                 else {
                     continue;
                 };
+                // Discovery is limited to reverse-DNS names and owners that this
+                // contract may ever admit. Permanent deny-list entries are not
+                // candidate rows, but still consume the shared entry/time budget.
+                if !id.contains('.')
+                    || shared::DENIED.iter().any(|p| id.starts_with(p))
+                    || app_uninstall::vendor_uninstaller_for_id(id).is_some()
+                {
+                    continue;
+                }
                 // Separate HTTP file and directory shapes, never suffix reinterpretation.
                 if rule == Rule::HttpStorages && name.ends_with(".binarycookies") {
                     continue;
                 }
                 if !locations.insert((e.path(), rule.key().to_owned())) {
                     continue;
+                }
+                if locations.len() > 256 {
+                    return Err(error("discovery_incomplete"));
                 }
                 let matches: Vec<_> = session.bundles.iter().filter(|b| b.id == id).collect();
                 if matches.len() > 8 {
