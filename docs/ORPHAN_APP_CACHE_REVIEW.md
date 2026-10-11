@@ -1,33 +1,35 @@
-# Possible app cache leftovers (issue 144)
+<!-- SPDX-License-Identifier: MPL-2.0 -->
 
-The Mac App Store client asks for two explicit, read-only grants: one folder
-containing `.app` bundles and one `Library/Caches` folder. The shared core
-inventories physical app bundles in the chosen folder and scans the direct
-children of the chosen Caches folder. A direct child named like a bundle ID is
-compared with observed `CFBundleIdentifier` values using exact string equality.
-Display names and case-insensitive substring matches do not establish identity.
+# Possible app cache leftovers: retained read-only v1
+
+The existing `sayaka_orphan_preview_v1` C ABI remains synchronous, bounded and
+strictly read-only. It compares direct `Library/Caches` children with actual
+`CFBundleIdentifier` values from physical app bundles in the selected app root.
+Identity comparisons are exact; display names and case-insensitive substring
+matches do not establish ownership.
 
 The report distinguishes `installed_app_observed`,
-`possible_orphan_review_only` and `protected_shared_or_system`. A candidate is
-only *possibly* orphaned when no exact identifier match was observed. Even a
-complete scan of the selected Applications folder is not a complete inventory
-of the Mac: app copies may live in other folders or volumes. Partial scans,
-row/path limits, skipped symlinks/cloud placeholders and missing metadata are
-explicit uncertainty, never zero apps. Skipped direct children are listed
-separately and make selected-library coverage incomplete even if the generic
-scanner considers a no-follow symlink skip within its normal policy.
-No row is preselected or authorized for Trash by this report.
+`possible_orphan_review_only` and `protected_shared_or_system`.
+`globally_complete` is always false: a complete selected-root scan is not an
+inventory of the Mac. Partial scans, row/path limits, skipped links or cloud
+placeholders and missing metadata are uncertainty, never zero apps. Skipped
+direct children make selected-library coverage incomplete. No row is
+preselected or authorized for Trash; the report contains no execution token.
 
-The first scope is deliberately limited to `Library/Caches/<bundle ID>`.
-`Application Support`, Preferences, Keychain, LaunchAgents, `Containers`,
-`Group Containers`, shared `group.*` identifiers and Apple-owned `com.apple.*`
-identifiers do not become possible cleanup targets. A name-based candidate is
-review evidence, not proof of ownership, inactivity or rebuildability. The
-App presents each candidate separately with observed app copies and uncertainty
-and can reveal it in Finder for owner-side inspection. A future Trash action
-requires a separate execution contract that rechecks identity, activity,
-ownership and native Trash eligibility at approval time.
+Its scope remains `Library/Caches/<bundle ID>`. Application Support,
+Preferences, Keychain, LaunchAgents, Containers, Group Containers, shared
+`group.*` and Apple `com.apple.*` identifiers do not become execution targets.
+Name-based evidence alone proves neither ownership nor inactivity.
 
-The `sayaka_orphan_preview_v1` C ABI is synchronous, bounded and read-only;
-clients call it off the UI thread with two live security-scoped grants. It
-returns one versioned JSON report with no executable selection or action token.
+The Developer ID App currently still presents the legacy two-folder selection
+and Finder-reveal workflow. That is an existing UI/API choice, not a claim that
+sandbox authorization is required to inspect native home. Existing callers
+retain v1's request and access-lifetime requirements unchanged and call it off
+the UI thread.
+
+[ORPHAN_EXECUTION.md](ORPHAN_EXECUTION.md) proposes a separate, acceptance-gated
+contract with native-home discovery, tiered evidence and typed approval. Its
+App integration will replace the two-folder workflow and stop using v1, while
+preserving the v1 ABI for existing clients. That integration is not implemented
+by this documentation change. A v1 result can never instantiate an executable
+orphan session or bypass the new observations, policy and native guards.
