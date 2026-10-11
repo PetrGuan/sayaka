@@ -36,3 +36,27 @@ Validation: workspace and test-source build passed. A read-only protected-root
 regression test source was added; no unit/UI tests were executed. The manual App
 observations above are separate from build validation. The two runtime fixes
 received independent GPT-6 Astra code review.
+
+## 2026-10-11: access enabled; discovery and copy-coverage blockers
+
+After the owner enabled the required OS access, the same CLI read-only preview
+advanced past the permission failure and returned `discovery_incomplete`.
+Read-only directory counts showed more than 500 filename matches, with system
+preferences and non-reverse-DNS names consuming the 256-candidate limit.
+
+The discovery scope correction excludes non-reverse-DNS names and permanently
+denied owners before row accounting. All encountered entries still consume the
+shared entry/time budgets; excess in-scope candidates still fail closed. This
+narrows the target set and does not increase limits or open either native gate.
+Workspace and test sources compiled successfully; no tests were executed.
+Independent GPT-6 Astra source review reported no actionable findings.
+
+With that correction, the CLI advances to `copies_unknown: symlink`. A read-only
+inventory identifies the system-provided `/Applications/Safari.app` link to
+`../System/Cryptexes/App/System/Applications/Safari.app`. The current copy-coverage
+contract refuses such links rather than silently skipping them. The system app
+was not removed, relocated, modified or exempted for acceptance.
+
+No disposable fixture execution can be approved while mandatory copy coverage
+is unknown. Positive move/recovery acceptance remains pending; this observation
+is evidence of fail-closed behavior, not a passed execution acceptance matrix.

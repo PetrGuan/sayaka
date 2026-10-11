@@ -172,7 +172,12 @@ syntax. Record scope and completed initial gathering; stop/release query work
 on completion, failure, timeout or cancellation. Bound each query to five
 seconds/256 results and all discovery/ownership observations to a shared
 30-second deadline, with 10,000 discovered entries/256 candidate rows. Record
-limits and omissions. No shell `mdfind`, arbitrary command or hydration.
+limits and omissions. Non-reverse-DNS names and permanently denied owners
+(Apple/group/EDR prefixes and vendor-uninstaller IDs) are omitted before candidate
+row accounting; their directory entries still consume the shared 10,000-entry
+and 30-second budgets. No such omitted path can be selected or executed. The
+256-row bound applies to in-scope candidate rows, including read-only/refused
+rows, and excess in-scope rows still fail closed. No shell `mdfind`, arbitrary command or hydration.
 A Spotlight positive outside retained verified T1 Trash evidence blocks even
 if unregistered; an uninspectable positive is unknown. For ancestor queries,
 a verified installed ancestor yields `installed_family_member`. An empty query
