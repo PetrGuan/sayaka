@@ -389,10 +389,15 @@ impl Measurements {
     }
 }
 
-#[derive(Default)]
 struct IdentityBag {
     identities: HashSet<FileIdentity>,
     summary: DirectorySummary,
+}
+
+impl Default for IdentityBag {
+    fn default() -> Self {
+        Self { identities: HashSet::new(), summary: DirectorySummary { private_bytes: Some(0), ..Default::default() } }
+    }
 }
 
 impl IdentityBag {

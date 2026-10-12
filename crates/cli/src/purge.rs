@@ -404,6 +404,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                 "markers": artifact.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
                 "logical_bytes": artifact.logical_bytes,
                 "allocated_bytes": artifact.allocated_bytes,
+                "private_bytes": artifact.private_bytes,
                 "complete": artifact.complete,
                         "size_complete": artifact.size_complete,
                 "modified_unix_ms": artifact.modified_unix_ms,

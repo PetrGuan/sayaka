@@ -291,6 +291,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
             "unsupported_operations": preview.counts.unsupported_operations,
             "logical_bytes": sum_known(preview, true),
             "allocated_bytes": sum_known(preview, false),
+            "private_bytes": sum_private(preview),
         },
         "projects": projects,
         "developer_caches": developer_cache_items_json(preview, handle, policy),
@@ -426,6 +427,14 @@ fn filesystem_identity_json(identity: sayaka_engine::model::FileIdentity) -> Val
             "file_id": file_id.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
         }),
     }
+}
+
+fn sum_private(preview: &PurgePreview) -> Option<u64> {
+    if !preview.complete { return None; }
+    preview.projects.iter().flat_map(|p| &p.artifacts).map(|a| a.private_bytes)
+        .chain(preview.developer_caches.iter().map(|c| c.private_bytes))
+        .chain(preview.finder_metadata.iter().map(|f| f.private_bytes))
+        .try_fold(0u64, |total, bytes| total.checked_add(bytes?))
 }
 
 fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
@@ -1763,6 +1772,23 @@ mod tests {
         assert_eq!(item["reason"], "resource_changed");
         assert_eq!(item["path"]["encoding"], "unix_bytes_hex");
         assert_eq!(item["path"]["raw"], "2f7265706f2f746172676574");
+    }
+
+    #[test]
+    fn private_aggregate_preserves_unknown_zero_and_overflow() {
+        let mut p = purge_preview_fixture();
+        assert_eq!(sum_private(&p), None);
+        p.projects[0].artifacts[0].private_bytes = Some(0);
+        assert_eq!(sum_private(&p), Some(0));
+        p.complete = false;
+        assert_eq!(sum_private(&p), None);
+        p.complete = true;
+        p.projects[0].artifacts[0].private_bytes = Some(u64::MAX);
+        p.finder_metadata.push(purge_preview::FinderMetadataCandidate {
+            path: "/repo/.DS_Store".into(), identity: sayaka_engine::model::FileIdentity::Unix { device: 1, inode: 2 },
+            logical_bytes: Some(1), allocated_bytes: Some(1), private_bytes: Some(1),
+        });
+        assert_eq!(sum_private(&p), None);
     }
 
     fn purge_preview_fixture() -> PurgePreview {

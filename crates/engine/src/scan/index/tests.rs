@@ -91,7 +91,7 @@ fn issue(code: ScanCode) -> ScanIssue {
 
 fn summary(unique: u64, logical: u64, allocated: u64) -> DirectorySummary {
     DirectorySummary {
-                        private_bytes: None,
+        private_bytes: (unique == 0).then_some(0),
         unique_files: unique,
         logical_bytes_known: logical,
         allocated_bytes_known: allocated,
@@ -792,6 +792,7 @@ fn native_non_utf8_path_order_is_preserved() {
 
 #[test]
 fn private_totals_require_every_measurement_and_complete_coverage() {
+    assert_eq!(tree(vec![directory(1, ""), directory(2, "empty")]).private_size(1), Some(0));
     let mut a = file(2, "a", 2, Some(100), Some(100)); a.private_bytes = Some(0);
     let mut b = file(3, "b", 3, Some(100), Some(100)); b.private_bytes = Some(0);
     assert_eq!(tree(vec![directory(1, ""), a.clone(), b.clone()]).private_size(1), Some(0));
