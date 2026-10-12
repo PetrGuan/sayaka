@@ -351,6 +351,7 @@ mod native {
         }
         report.issues = (0..128)
             .map(|_| ScanIssue {
+                owner: None,
                 path: None,
                 code: ScanCode::Io,
                 message: "x".repeat(16_384),

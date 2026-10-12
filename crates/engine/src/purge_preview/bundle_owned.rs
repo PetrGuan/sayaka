@@ -323,6 +323,7 @@ pub(super) fn append(
     let deadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(30));
     let mut issues = Vec::new();
     let issue = |path: &Path, message: String| crate::scan::ScanIssue {
+        owner: None,
         path: Some(path.to_owned()),
         code: crate::scan::ScanCode::InvalidRoot,
         message,

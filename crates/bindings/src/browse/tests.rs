@@ -658,6 +658,7 @@ mod native {
             .clone();
         for index in 0..10 {
             report.issues.push(sayaka_engine::scan::ScanIssue {
+                owner: None,
                 path: Some(selected_path.clone()),
                 code: ScanCode::PermissionDenied,
                 message: format!("denied {index}"),
@@ -665,6 +666,7 @@ mod native {
             });
         }
         report.issues.push(sayaka_engine::scan::ScanIssue {
+            owner: None,
             path: Some(root.path.join("unrelated")),
             code: ScanCode::NotFound,
             message: "missing".to_string(),

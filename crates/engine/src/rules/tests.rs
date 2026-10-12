@@ -830,6 +830,7 @@ fn preview_emits_incomplete_and_compatibility_state() {
     report.status = ScanStatus::Partial;
     report.issues_omitted = 2;
     report.issues.push(ScanIssue {
+        owner: None,
         path: Some(path("pkg")),
         code: ScanCode::EntryLimit,
         message: "synthetic".into(),

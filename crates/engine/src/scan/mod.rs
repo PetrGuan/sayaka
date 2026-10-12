@@ -308,6 +308,7 @@ impl std::error::Error for ScanError {}
 
 #[derive(Clone, Debug)]
 pub struct ScanIssue {
+    pub owner: Option<std::sync::Arc<crate::known_owner::KnownOwner>>,
     pub path: Option<PathBuf>,
     pub code: ScanCode,
     pub message: String,

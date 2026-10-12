@@ -25,6 +25,7 @@ impl Summary {
         self.complete = false;
         if self.issues.len() < limits.max_issues {
             self.issues.push(ScanIssue {
+                owner: None,
                 path: Some(path.to_owned()),
                 code: error.code,
                 message: error.message,

@@ -138,6 +138,8 @@ impl Serialize for Entries<'_> {
 #[derive(Serialize)]
 /// Shared diagnostic representation for full reports and bounded native pages.
 pub struct Issue<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<&'a crate::known_owner::KnownOwner>,
     path: Option<NativePath<'a>>,
     code: &'static str,
     message: &'a str,
@@ -147,6 +149,7 @@ pub struct Issue<'a> {
 impl<'a> From<&'a ScanIssue> for Issue<'a> {
     fn from(issue: &'a ScanIssue) -> Self {
         Self {
+            owner: issue.owner.as_deref(),
             path: issue.path.as_deref().map(NativePath),
             code: issue.code.as_str(),
             message: &issue.message,
@@ -158,6 +161,7 @@ impl<'a> From<&'a ScanIssue> for Issue<'a> {
 impl<'a> From<&'a ScanError> for Issue<'a> {
     fn from(error: &'a ScanError) -> Self {
         Self {
+            owner: None,
             path: None,
             code: error.code.as_str(),
             message: &error.message,
@@ -367,6 +371,7 @@ mod tests {
             os_code: Some(13),
         };
         let issue = ScanIssue {
+            owner: None,
             path: None,
             code: error.code,
             message: error.message.clone(),
@@ -414,6 +419,7 @@ mod tests {
         assert_eq!(value["encoding"], "unix_bytes_hex");
         assert_eq!(value["raw"], "2f73796e7468657469632fff0a1b");
         let issue = ScanIssue {
+            owner: None,
             path: Some(path),
             code: ScanCode::Io,
             message: "observed".into(),
@@ -464,6 +470,7 @@ mod tests {
         assert_eq!(value["encoding"], "windows_utf16_hex");
         assert_eq!(value["raw"], "0043003a005cd800");
         let issue = ScanIssue {
+            owner: None,
             path: Some(path),
             code: ScanCode::Io,
             message: "observed".into(),

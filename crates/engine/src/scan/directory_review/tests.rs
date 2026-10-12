@@ -259,6 +259,7 @@ fn partial_failed_cancelled_and_omitted_coverage_stay_blocked() {
     input.status = ScanStatus::Partial;
     input.complete = false;
     input.issues.push(ScanIssue {
+        owner: None,
         path: Some(path("unread")),
         code: ScanCode::PermissionDenied,
         message: "synthetic coverage gap".into(),
@@ -276,6 +277,7 @@ fn partial_failed_cancelled_and_omitted_coverage_stay_blocked() {
             input.issues_omitted = 1;
         } else {
             input.issues.push(ScanIssue {
+                owner: None,
                 path: Some(path("outside")),
                 code: ScanCode::PermissionDenied,
                 message: "synthetic coverage gap".into(),

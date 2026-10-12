@@ -449,6 +449,7 @@ pub fn fatal(writer: &mut impl Write, error: &ScanError, style: Style) -> io::Re
     issue(
         writer,
         &ScanIssue {
+            owner: None,
             path: None,
             code: error.code,
             message: error.message.clone(),

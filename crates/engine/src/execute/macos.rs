@@ -232,6 +232,9 @@ impl TrashSession {
         excluded: &[PathBuf],
         cancellation: &Cancellation,
     ) -> io::Result<Self> {
+        if paths.iter().any(|p| crate::known_owner::managed(p)) {
+            return Err(journal::invalid("System-managed developer data is not a filesystem Trash target; use its owner tool"));
+        }
         let metadata = rules::binding_metadata(rule_id)
             .ok_or_else(|| journal::invalid("unsupported rule for native trash"))?;
         if metadata.rule_id != rule_id {

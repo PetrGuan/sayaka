@@ -137,7 +137,7 @@ fn match_path(path: &Path, home: &Path, catalog: &Catalog) -> Option<(PathBuf, K
             ),
         ));
     }
-    for platform in ["iOS", "watchOS", "tvOS"] {
+    for platform in ["iOS", "watchOS", "tvOS", "visionOS", "xrOS"] {
         let support = home.join(format!("Library/Developer/Xcode/{platform} DeviceSupport"));
         if let Ok(relative) = path.strip_prefix(&support) {
             let version = component(relative);
@@ -250,7 +250,7 @@ pub(crate) fn annotate(report: &mut crate::scan::ScanReport, cancel: &crate::mod
             .as_ref()
             .and_then(|p| match_path(p, &home, &catalog))
         {
-            issue.message = format!("{} {}", owner.explanation, issue.message);
+            issue.owner = Some(Arc::new(owner));
         }
     }
 }

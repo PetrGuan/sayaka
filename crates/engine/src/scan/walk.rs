@@ -871,6 +871,7 @@ fn add_issue(
     }
     if report.issues.len() < limits.max_issues {
         report.issues.push(ScanIssue {
+            owner: None,
             path,
             code: error.code,
             message: error.message,
