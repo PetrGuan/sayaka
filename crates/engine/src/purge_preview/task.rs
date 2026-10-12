@@ -250,6 +250,7 @@ pub fn scan_preview(
                 }
                 (
                     vec![scan::ScanIssue {
+                        owner: None,
                         path: Some(candidate.path.clone()),
                         code: error.code,
                         message: error.message,

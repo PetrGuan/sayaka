@@ -23,6 +23,7 @@ fn identity(inode: u64) -> FileIdentity {
 
 fn entry(id: u64, relative: &str, kind: ResourceKind) -> ScanEntry {
     ScanEntry {
+        owner: None,
         project_signature: None,
         id,
         path: path(relative),
@@ -49,6 +50,7 @@ fn file(
     allocated: Option<u64>,
 ) -> ScanEntry {
     ScanEntry {
+        owner: None,
         identity: identity(inode),
         logical_bytes: logical,
         allocated_bytes: allocated,
@@ -77,6 +79,7 @@ fn tree(entries: Vec<ScanEntry>) -> ScanTree {
 
 fn issue(code: ScanCode) -> ScanIssue {
     ScanIssue {
+        owner: None,
         code,
         path: None,
         message: "synthetic observation".into(),
@@ -397,6 +400,7 @@ fn partial(entries: Vec<ScanEntry>, issues: Vec<ScanIssue>) -> ScanReport {
 
 fn located(code: ScanCode, relative: &str) -> ScanIssue {
     ScanIssue {
+        owner: None,
         path: Some(path(relative)),
         ..issue(code)
     }
@@ -579,6 +583,7 @@ fn absent_requested_roots_do_not_create_complete_empty_directories() {
     let mut alias = report(vec![directory(1, "")]);
     alias.roots.push(path("alias"));
     alias.issues.push(ScanIssue {
+        owner: None,
         path: Some(path("alias")),
         ..issue(ScanCode::DuplicateRoot)
     });

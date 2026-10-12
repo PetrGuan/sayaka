@@ -372,3 +372,28 @@ only. Nothing is preselected. These suggestions do not change approval phrases,
 selection limits, execution revalidation, runtime-removal grouping, or the
 permanent effect class. A duplicate is a newer device model counterpart, not a
 backup: apps/data/settings are not transferred or recoverable through Sayaka.
+
+## System-managed storage ownership
+
+Space scans annotate the following paths and their descendants with read-only
+`owner` evidence. These are never filesystem Trash or project-cleanup targets:
+
+| Path | Owner and route |
+| --- | --- |
+| `~/Library/Developer/CoreDevice/DeviceFS` | CoreDevice; a `device-<UDID>` matched by `simctl list devices -j` routes to the simulator review, otherwise to Xcode Devices and Simulators |
+| `/Library/Developer/CoreSimulator/Volumes` and `/System/Library/AssetsV2/com_apple_MobileAsset_*SimulatorRuntime` | simctl; runtime review |
+| `~/Library/Developer/Xcode/{iOS,watchOS,tvOS} DeviceSupport` | Xcode debug symbols; observation only |
+
+Optional physical-device names use the fixed, read-only
+`xcrun devicectl list devices --json-output - --quiet` command through the
+signature-verified XcrunRunner. Runtime labels use `simctl runtime list -j`.
+The three queries share a three-second budget, at most one second each, with
+existing output limits. Failure retains the path-based owner explanation.
+
+Simulator previews measure matching DeviceFS subtrees using the existing
+no-follow, non-materializing metadata size reader, with a shared two-second
+budget. The advisory combined estimate includes these bytes only when both
+measurements are known and do not overflow. Unknown is never zero. No DeviceFS
+path becomes an execution target: approved erase/delete still names only the
+simulator UDID. Owner-machine visual acceptance and actual reclamation are
+separate from compilation evidence.

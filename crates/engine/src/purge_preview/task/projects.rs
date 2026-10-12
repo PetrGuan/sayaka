@@ -191,6 +191,7 @@ pub(super) fn measure(
                     preview.complete = false;
                     if preview.scan_issues.len() < request.max_issues {
                         preview.scan_issues.push(scan::ScanIssue {
+                            owner: None,
                             path: None,
                             code: ScanCode::WorkerStartFailed,
                             message: error.to_string(),
@@ -253,6 +254,7 @@ pub(super) fn measure(
                             preview.complete = false;
                             if preview.scan_issues.len() < request.max_issues {
                                 preview.scan_issues.push(scan::ScanIssue {
+                                    owner: None,
                                     path: Some(artifact.path.clone()),
                                     code: error.code,
                                     message: error.message,
@@ -272,6 +274,7 @@ pub(super) fn measure(
                 preview.complete = false;
                 if preview.scan_issues.len() < request.max_issues {
                     preview.scan_issues.push(scan::ScanIssue {
+                        owner: None,
                         path: None,
                         code: ScanCode::WorkerPanic,
                         message: "project sizing worker panicked".into(),

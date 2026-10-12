@@ -25,8 +25,8 @@ pub mod journal;
 pub mod maintenance_catalog;
 pub mod model;
 pub mod plan;
-pub mod project_git;
 pub mod project_activity;
+pub mod project_git;
 pub mod purge_preview;
 mod readonly_task;
 pub mod receipt;
@@ -59,3 +59,5 @@ pub mod macos_installers;
 pub mod runtime_journal;
 
 pub mod readonly_diagnostics;
+
+pub mod known_owner;

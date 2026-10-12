@@ -325,13 +325,16 @@ pub mod diagnostic_reads;
 pub mod diagnostic_tools;
 
 #[cfg(target_os = "macos")]
-pub mod project_git;
-#[cfg(target_os = "macos")]
 pub mod project_activity;
+#[cfg(target_os = "macos")]
+pub mod project_git;
 
 #[cfg(target_os = "macos")]
 pub mod xcode_build;
 
-pub mod project_rules;
 #[cfg(target_os = "macos")]
 pub mod project_artifacts;
+pub mod project_rules;
+
+#[cfg(target_os = "macos")]
+pub mod known_owner;

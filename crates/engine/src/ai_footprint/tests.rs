@@ -14,6 +14,7 @@ fn footprint(children: &[(&str, ResourceKind)]) -> Footprint {
         .chain(children.iter().copied())
         .enumerate()
         .map(|(index, (name, kind))| ScanEntry {
+            owner: None,
             project_signature: None,
             id: index as u64 + 1,
             path: if name.is_empty() {

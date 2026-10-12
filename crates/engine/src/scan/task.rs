@@ -168,8 +168,9 @@ mod tests {
         let mut task = ScanTask::spawn(|_, progress| {
             for entries in 1..=100 {
                 progress(&ScanProgress {
-        total_artifacts: 0,
-        sized_artifacts: 0,                    task_id: ScanTaskId::synthetic(1),
+                    total_artifacts: 0,
+                    sized_artifacts: 0,
+                    task_id: ScanTaskId::synthetic(1),
                     entries,
                     unique_files: entries as u64,
                     logical_bytes_known: entries as u64,

@@ -189,6 +189,13 @@ pub trait Host {
     fn wait_for_runtime_post_check(&self, duration: Duration) {
         std::thread::sleep(duration);
     }
+    fn device_files(
+        &self,
+        _devices: &[Device],
+        _cancel: &Cancellation,
+    ) -> std::collections::BTreeMap<String, crate::known_owner::DeviceFiles> {
+        Default::default()
+    }
     fn developer_activity(&self) -> io::Result<Vec<String>>;
     fn data_modified_unix_ns(&self, data_path: &Path) -> Option<i128>;
     fn data_identity(&self, data_path: &Path) -> Option<(u64, u64)>;
@@ -350,7 +357,11 @@ impl<H: Host> SimulatorSession<H> {
                 .map_err(|_| SessionError::DeveloperActivity {
                     executables: Vec::new(),
                 })?;
+        let files = host.device_files(&devices, cancellation);
         let mut candidates = candidates(&devices, &pairs, operation);
+        for candidate in &mut candidates {
+            candidate.device_files = files.get(&candidate.device.udid).cloned();
+        }
         if let Some(types) = types {
             suggestions::assess(&mut candidates, &types, operation, host.unix_seconds());
         }
@@ -978,6 +989,13 @@ fn tool_failure(error: sayaka_platform_macos::devtools::ToolError) -> ToolFailur
 
 #[cfg(target_os = "macos")]
 impl Host for MacHost {
+    fn device_files(
+        &self,
+        devices: &[Device],
+        cancel: &Cancellation,
+    ) -> std::collections::BTreeMap<String, crate::known_owner::DeviceFiles> {
+        crate::known_owner::device_files(devices, cancel)
+    }
     fn tool_identity(&self) -> Result<ToolIdentity, ToolFailure> {
         let _serialized = tool_lock();
         let evidence =

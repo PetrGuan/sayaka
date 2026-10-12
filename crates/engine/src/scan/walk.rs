@@ -871,6 +871,7 @@ fn add_issue(
     }
     if report.issues.len() < limits.max_issues {
         report.issues.push(ScanIssue {
+            owner: None,
             path,
             code: error.code,
             message: error.message,
@@ -1005,6 +1006,7 @@ fn record_entry(
     report.totals = totals;
     report.metrics.retained_path_bytes = path_bytes;
     report.entries.push(ScanEntry {
+        owner: None,
         project_signature: None,
         id: report.entries.len() as u64 + 1,
         path,

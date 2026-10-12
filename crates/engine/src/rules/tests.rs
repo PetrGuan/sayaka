@@ -45,6 +45,7 @@ fn identity(id: u64) -> FileIdentity {
 
 fn directory(id: u64, relative: &str) -> ScanEntry {
     ScanEntry {
+        owner: None,
         project_signature: None,
         id,
         path: path(relative),
@@ -61,6 +62,7 @@ fn directory(id: u64, relative: &str) -> ScanEntry {
 
 fn file(id: u64, relative: &str, bytes: Option<u64>) -> ScanEntry {
     ScanEntry {
+        owner: None,
         project_signature: None,
         id,
         path: path(relative),
@@ -77,6 +79,7 @@ fn file(id: u64, relative: &str, bytes: Option<u64>) -> ScanEntry {
 
 fn link(id: u64, relative: &str) -> ScanEntry {
     ScanEntry {
+        owner: None,
         project_signature: None,
         id,
         path: path(relative),
@@ -827,6 +830,7 @@ fn preview_emits_incomplete_and_compatibility_state() {
     report.status = ScanStatus::Partial;
     report.issues_omitted = 2;
     report.issues.push(ScanIssue {
+        owner: None,
         path: Some(path("pkg")),
         code: ScanCode::EntryLimit,
         message: "synthetic".into(),

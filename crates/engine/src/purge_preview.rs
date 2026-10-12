@@ -345,6 +345,7 @@ pub struct PurgeArtifact {
 
 impl PurgeArtifact {
     pub fn execution_supported(&self) -> bool {
+        if crate::known_owner::managed(&self.path) { return false; }
         self.complete && self.size_complete && self.git.permits_cleanup()
             && self.project_activity.as_ref().is_some_and(|a| a.build_running == Some(false))
             && self.signature.as_ref().is_none_or(|s| s.permits_cleanup(&self.git))
@@ -1253,6 +1254,9 @@ fn selection_from_parts(
         Some(false) => {},
         Some(true) => return Err("A build is running in this project".into()),
         None => return Err("Project build activity could not be verified".into()),
+    }
+    if crate::known_owner::managed(&artifact.path) {
+        return Err("System-managed developer data must be reviewed in its owning tool".into());
     }
     if !artifact.execution_supported() {
         return Err("Cache tag alone does not authorize cleanup; Pods also requires Git ignore evidence".into());
