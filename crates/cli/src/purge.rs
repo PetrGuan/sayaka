@@ -438,6 +438,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
             "sizes": {
                 "logical": cache.logical_bytes,
                 "allocated": cache.allocated_bytes,
+                "private_bytes": cache.private_bytes,
             },
             "complete": cache.complete,
             "modified_unix_ms": cache.modified_unix_ms,
