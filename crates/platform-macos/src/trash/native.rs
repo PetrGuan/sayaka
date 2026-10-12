@@ -926,6 +926,10 @@ impl Candidate {
         }
         stage.phase = "target";
         let target = Evidence::open_observed(path, Binding::FullTarget, &mut stage.operation)?;
+        if shape == TargetShape::XcodeBuildDirectory {
+            stage.operation = "package_classification";
+            reject_package(&target)?;
+        }
         match shape {
             TargetShape::Bundle => {
                 stage.operation = "bundle_admission";
@@ -1177,6 +1181,9 @@ impl Candidate {
             reject_package(ancestor)?;
         }
         self.target.revalidate()?;
+        if self.shape == TargetShape::XcodeBuildDirectory {
+            reject_package(&self.target)?;
+        }
         match self.shape {
             TargetShape::Bundle => {
                 admissible_bundle_target(&self.target.stamp, self.uid, &self.path)?;

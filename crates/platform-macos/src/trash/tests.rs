@@ -179,6 +179,24 @@ fn native_capture_revalidation_and_cancellation_have_no_trash_effect() {
 }
 
 #[test]
+fn xcode_signature_does_not_admit_native_package_targets() {
+    let mut fixture = Fixture::new();
+    let target = fixture.directory("Synthetic.rtfd");
+    fixture.directory("Synthetic.rtfd/Build");
+    fixture.directory("Synthetic.rtfd/Build/Products");
+    fixture.directory("Synthetic.rtfd/Logs");
+    fixture.directory("Synthetic.rtfd/Logs/Build");
+    assert!(crate::xcode_build::inspect_path(&target).unwrap().is_some());
+    assert!(crate::volume::is_package(&target).unwrap());
+    let error = match Candidate::capture_xcode_build(&fixture.root, &target, &[]) {
+        Ok(_) => panic!("a package with Xcode signals must not be a Trash target"),
+        Err(error) => error,
+    };
+    assert_eq!(error.operation, "package_classification");
+    fixture.finish();
+}
+
+#[test]
 fn purge_capture_keeps_descriptors_inside_explicit_scope_only() {
     let mut fixture = Fixture::new();
     fixture.directory("webapp");
