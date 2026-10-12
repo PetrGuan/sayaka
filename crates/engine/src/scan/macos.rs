@@ -266,6 +266,32 @@ impl Cursor for MacDirectory {
         self.original.clone()
     }
 
+    fn bare_repository(&self) -> Result<bool, ScanError> {
+        let fd = self.stream.fd().map_err(native_error)?;
+        for (name, kind) in [
+            ("HEAD", ResourceKind::File),
+            ("objects", ResourceKind::Directory),
+            ("refs", ResourceKind::Directory),
+        ] {
+            let metadata = match fs::statat(fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => from_stat(&stat),
+                Err(error) if error == rustix::io::Errno::NOENT => return Ok(false),
+                Err(error) => return Err(native_error(error)),
+            };
+            if !matches!((metadata.identity, self.original.identity), (FileIdentity::Unix { device: current, .. }, FileIdentity::Unix { device: expected, .. }) if current == expected)
+            {
+                return Err(ScanError::new(
+                    ScanCode::MountBoundary,
+                    "Git metadata crosses a mount boundary",
+                ));
+            }
+            if metadata.kind != kind && metadata.kind != ResourceKind::Link {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     fn next_entry(&mut self) -> Option<Result<DirItem, ScanError>> {
         loop {
             let entry = match self.stream.read()? {

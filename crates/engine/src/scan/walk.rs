@@ -71,6 +71,13 @@ pub(super) struct DirItem {
 
 pub(super) trait Cursor: Send {
     fn metadata(&self) -> Metadata;
+    #[cfg(target_os = "macos")]
+    fn bare_repository(&self) -> Result<bool, ScanError> {
+        Err(ScanError::new(
+            ScanCode::UnsupportedPlatform,
+            "this cursor cannot observe Git metadata",
+        ))
+    }
     fn next_entry(&mut self) -> Option<Result<DirItem, ScanError>>;
     fn open_child(&self, item: &DirItem) -> Result<Self, ScanError>
     where
@@ -464,42 +471,6 @@ fn worker<B: Backend>(
             } {
                 continue;
             }
-            if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts)
-                && item
-                    .metadata
-                    .as_ref()
-                    .is_ok_and(|m| m.kind == ResourceKind::Directory && !m.dataless)
-            {
-                match crate::project_git::bare_repository(&path) {
-                    Ok(true) => {
-                        send(
-                            &sender,
-                            Event::VcsMetadata(path),
-                            shared,
-                            limits,
-                            cancellation,
-                            started,
-                        );
-                        continue;
-                    }
-                    Ok(false) => {}
-                    Err(_) => {
-                        send(
-                            &sender,
-                            issue_event(
-                                Some(path),
-                                ScanCode::Io,
-                                "Git metadata could not be checked",
-                            ),
-                            shared,
-                            limits,
-                            cancellation,
-                            started,
-                        );
-                        continue;
-                    }
-                }
-            }
             let metadata = match &item.metadata {
                 Ok(metadata) => metadata,
                 Err(error) => {
@@ -677,6 +648,37 @@ fn worker<B: Backend>(
                     started,
                 );
                 continue;
+            }
+            #[cfg(target_os = "macos")]
+            if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts) {
+                match directory.bare_repository() {
+                    Ok(true) => {
+                        send(
+                            &sender,
+                            Event::VcsMetadata(path),
+                            shared,
+                            limits,
+                            cancellation,
+                            started,
+                        );
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        send(
+                            &sender,
+                            Event::Issue {
+                                path: Some(path),
+                                error,
+                            },
+                            shared,
+                            limits,
+                            cancellation,
+                            started,
+                        );
+                        continue;
+                    }
+                }
             }
             let fresh = {
                 let mut visited = shared.visited.lock().expect("scan identity set poisoned");
@@ -990,28 +992,6 @@ pub(super) fn run_with_policy<B: Backend>(
         if shared.should_stop(cancellation, started, limits.time_budget) {
             break;
         }
-        if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts) {
-            match crate::project_git::bare_repository(&path) {
-                Ok(true) => {
-                    if let Err(error) = record_vcs_metadata(&mut report, path, limits) {
-                        add_issue(&mut report, limits, None, error);
-                        shared.stop();
-                        break;
-                    }
-                    continue;
-                }
-                Ok(false) => {}
-                Err(_) => {
-                    add_issue(
-                        &mut report,
-                        limits,
-                        Some(path),
-                        ScanError::new(ScanCode::Io, "Git metadata could not be checked"),
-                    );
-                    continue;
-                }
-            }
-        }
         let Some(permit) = reserve(&counters, limits.max_open_dirs) else {
             add_issue(
                 &mut report,
@@ -1046,6 +1026,24 @@ pub(super) fn run_with_policy<B: Backend>(
                 ),
             );
             continue;
+        }
+        #[cfg(target_os = "macos")]
+        if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts) {
+            match directory.bare_repository() {
+                Ok(true) => {
+                    if let Err(error) = record_vcs_metadata(&mut report, path, limits) {
+                        add_issue(&mut report, limits, None, error);
+                        shared.stop();
+                        break;
+                    }
+                    continue;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    add_issue(&mut report, limits, Some(path), error);
+                    continue;
+                }
+            }
         }
         if !shared
             .visited
