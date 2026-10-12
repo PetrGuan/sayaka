@@ -34,12 +34,29 @@ impl Default for SizeLimits {
     }
 }
 impl SizeLimits {
-    fn scan(&self, request: &ScanLimits, deadline: Instant) -> ScanLimits {
+    fn active_workers(&self, request: &ScanLimits, jobs: usize) -> usize {
+        self.workers
+            .min(request.workers)
+            .min(jobs)
+            .min(request.max_open_dirs / 3)
+            .min(request.max_path_bytes)
+    }
+
+    fn scan(
+        &self,
+        request: &ScanLimits,
+        deadline: Instant,
+        worker: usize,
+        workers: usize,
+    ) -> ScanLimits {
+        // Disjoint partitions sum to the caller's aggregate caps, including
+        // remainders. One active artifact can use the entire requested budget.
+        let share = |total: usize| total / workers + usize::from(worker < total % workers);
         let mut limits = request.clone();
         limits.max_entries = self.max_entries.min(1_000_000);
         limits.workers = 1;
-        limits.max_open_dirs = request.max_open_dirs.div_ceil(self.workers).max(3);
-        limits.max_path_bytes = request.max_path_bytes.div_ceil(self.workers).max(1);
+        limits.max_open_dirs = share(request.max_open_dirs);
+        limits.max_path_bytes = share(request.max_path_bytes);
         limits.time_budget = deadline.saturating_duration_since(Instant::now());
         limits
     }
@@ -116,7 +133,8 @@ pub(super) fn measure(
     std::thread::scope(|scope| {
         let (sender, receiver) = mpsc::sync_channel(16);
         let mut workers = Vec::new();
-        for _ in 0..limits.workers.min(jobs.len()) {
+        let active_workers = limits.active_workers(request, jobs.len());
+        for worker_index in 0..active_workers {
             let sender = sender.clone();
             let jobs = &jobs;
             let next = &next;
@@ -148,7 +166,7 @@ pub(super) fn measure(
                             cache::scan_project(
                                 path,
                                 *identity,
-                                &limits.scan(request, deadline),
+                                &limits.scan(request, deadline, worker_index, active_workers),
                                 budget,
                                 cancellation,
                                 |entries, files, bytes| {
@@ -302,7 +320,7 @@ pub(crate) fn verify_metadata(
         let summary = cache::scan_project(
             path,
             identity,
-            &limits.scan(&ScanLimits::default(), deadline),
+            &limits.scan(&ScanLimits::default(), deadline, 0, 1),
             &budget,
             cancellation,
             |_, _, _| {},
@@ -321,6 +339,46 @@ pub(crate) fn verify_metadata(
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    #[test]
+    fn sizing_partitions_respect_caller_caps_and_actual_concurrency() {
+        let limits = SizeLimits::default();
+        for (workers, handles, path_bytes, jobs, expected) in [
+            (1, 3, 7, 8, 1),
+            (4, 6, 17, 8, 2),
+            (4, 128, 4096, 1, 1),
+            (4, 128, 1, 8, 1),
+        ] {
+            let request = ScanLimits {
+                workers,
+                max_open_dirs: handles,
+                max_path_bytes: path_bytes,
+                ..ScanLimits::default()
+            };
+            let active = limits.active_workers(&request, jobs);
+            assert_eq!(active, expected);
+            let shares = (0..active)
+                .map(|i| {
+                    limits.scan(
+                        &request,
+                        Instant::now() + Duration::from_secs(60),
+                        i,
+                        active,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                shares.iter().map(|s| s.max_open_dirs).sum::<usize>(),
+                handles
+            );
+            assert_eq!(
+                shares.iter().map(|s| s.max_path_bytes).sum::<usize>(),
+                path_bytes
+            );
+            assert!(shares.iter().all(|s| s.validate().is_ok()));
+        }
+        assert_eq!(limits.active_workers(&ScanLimits::default(), 0), 0);
+    }
+
     #[test]
     fn streaming_sizes_deduplicate_links_and_preserve_bounded_subtotals() {
         let temporary = tempfile::tempdir().unwrap();
