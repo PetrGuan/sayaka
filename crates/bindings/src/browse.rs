@@ -101,6 +101,7 @@ fn reference(handle: u64, id: u64) -> Reference {
 
 #[derive(Serialize)]
 struct Node<'a> {
+    private_bytes: Option<u64>,
     owner: Option<&'a sayaka_engine::known_owner::KnownOwner>,
     reference: Reference,
     resource_id: String,
@@ -117,6 +118,7 @@ struct Node<'a> {
 
 fn node<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> Node<'a> {
     Node {
+        private_bytes: tree.private_size(entry.id),
         owner: entry.owner.as_deref(),
         reference: reference(handle, entry.id),
         resource_id: format!("{}/{}", tree.report().task_id, entry.id),

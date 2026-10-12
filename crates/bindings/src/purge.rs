@@ -228,6 +228,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                         "rule": artifact.signature.as_ref().map_or("marker_bound_project_artifact_v1", |s| s.rule()),
                         "markers": artifact.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
                         "sizes": {
+                            "private_bytes": artifact.private_bytes,
                             "logical": artifact.logical_bytes,
                             "allocated": artifact.allocated_bytes,
                         },
@@ -290,6 +291,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
             "unsupported_operations": preview.counts.unsupported_operations,
             "logical_bytes": sum_known(preview, true),
             "allocated_bytes": sum_known(preview, false),
+            "private_bytes": sum_private(preview),
         },
         "projects": projects,
         "developer_caches": developer_cache_items_json(preview, handle, policy),
@@ -322,7 +324,7 @@ fn finder_metadata_items_json(
                 "path": wire::NativePath(&item.path),
                 "name": ".DS_Store",
                 "kind": "file",
-                "sizes": { "logical": item.logical_bytes, "allocated": item.allocated_bytes },
+                "sizes": { "private_bytes": item.private_bytes, "logical": item.logical_bytes, "allocated": item.allocated_bytes },
                 "complete": true,
                 "reasons": ["finder_view_settings_may_be_lost"],
                 "policy_excluded": policy.is_some_and(|p| p.excludes(&item.path)),
@@ -366,6 +368,7 @@ fn developer_cache_items_json(
                 "policy_excluded": policy.is_some_and(|p| p.excludes(&cache.path)),
                 "unsupported_reason": cache.unsupported_reason,
                 "sizes": {
+                    "private_bytes": cache.private_bytes,
                     "logical": cache.logical_bytes,
                     "allocated": cache.allocated_bytes,
                 },
@@ -424,6 +427,14 @@ fn filesystem_identity_json(identity: sayaka_engine::model::FileIdentity) -> Val
             "file_id": file_id.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
         }),
     }
+}
+
+fn sum_private(preview: &PurgePreview) -> Option<u64> {
+    if !preview.complete { return None; }
+    preview.projects.iter().flat_map(|p| &p.artifacts).map(|a| a.private_bytes)
+        .chain(preview.developer_caches.iter().map(|c| c.private_bytes))
+        .chain(preview.finder_metadata.iter().map(|f| f.private_bytes))
+        .try_fold(0u64, |total, bytes| total.checked_add(bytes?))
 }
 
 fn sum_known(preview: &PurgePreview, logical: bool) -> Option<u64> {
@@ -1763,6 +1774,23 @@ mod tests {
         assert_eq!(item["path"]["raw"], "2f7265706f2f746172676574");
     }
 
+    #[test]
+    fn private_aggregate_preserves_unknown_zero_and_overflow() {
+        let mut p = purge_preview_fixture();
+        assert_eq!(sum_private(&p), None);
+        p.projects[0].artifacts[0].private_bytes = Some(0);
+        assert_eq!(sum_private(&p), Some(0));
+        p.complete = false;
+        assert_eq!(sum_private(&p), None);
+        p.complete = true;
+        p.projects[0].artifacts[0].private_bytes = Some(u64::MAX);
+        p.finder_metadata.push(purge_preview::FinderMetadataCandidate {
+            path: "/repo/.DS_Store".into(), identity: sayaka_engine::model::FileIdentity::Unix { device: 1, inode: 2 },
+            logical_bytes: Some(1), allocated_bytes: Some(1), private_bytes: Some(1),
+        });
+        assert_eq!(sum_private(&p), None);
+    }
+
     fn purge_preview_fixture() -> PurgePreview {
         PurgePreview {
             schema_version: 1,
@@ -1778,6 +1806,7 @@ mod tests {
                 root: std::path::PathBuf::from("/repo"),
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![purge_preview::PurgeArtifact {
+                    private_bytes: None,
                         project_activity: None,
                     signature: None,
                     size_complete: true,

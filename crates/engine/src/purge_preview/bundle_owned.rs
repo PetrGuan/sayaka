@@ -386,6 +386,7 @@ pub(super) fn append(
         };
         let owner_app = proof.display();
         candidates.push(DeveloperCacheCandidate {
+            private_bytes: None,
             tool:"bundle-owned", rule_id:RULE_ID, rule_version:1, ruleset_revision:DEVELOPER_CACHE_RULESET_REVISION,
             rule_kind:"bundle_owned", owner_app, owner_proof:Some(proof),
             links_not_followed:0, title:"Installed application cache", path:entry.path.clone(), location:"~/Library/Caches/<bundle-id>", location_kind:"directory", kind:"directory",

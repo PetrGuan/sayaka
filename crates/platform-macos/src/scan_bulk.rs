@@ -19,6 +19,9 @@ const COMMON: u32 = libc::ATTR_CMN_RETURNED_ATTRS
 const FILE: u32 =
     libc::ATTR_FILE_LINKCOUNT | libc::ATTR_FILE_ALLOCSIZE | libc::ATTR_FILE_DATALENGTH;
 const DIRECTORY: u32 = libc::ATTR_DIR_MOUNTSTATUS;
+// Public sys/attr.h; queried opportunistically, never inferred from allocation.
+const PRIVATE: u32 = 0x0000_0008; // ATTR_CMNEXT_PRIVATESIZE
+const EXTENDED: u64 = 0x0000_0020; // FSOPT_ATTR_CMN_EXTENDED
 const BUFFER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +42,7 @@ pub struct BulkMetadata {
     pub link_count: Option<u64>,
     pub logical_bytes: Option<u64>,
     pub allocated_bytes: Option<u64>,
+    pub private_bytes: Option<u64>,
 }
 
 pub struct BulkEntry {
@@ -109,7 +113,7 @@ impl BulkDirectory {
                 volattr: 0,
                 dirattr: DIRECTORY,
                 fileattr: FILE,
-                forkattr: 0,
+                forkattr: PRIVATE,
             };
             // SAFETY: live owned descriptor; initialized attrlist; aligned,
             // writable 64 KiB allocation alive for this synchronous call.
@@ -119,7 +123,7 @@ impl BulkDirectory {
                     (&mut attrs as *mut libc::attrlist).cast(),
                     self.buffer.as_mut_ptr().cast(),
                     BUFFER_BYTES,
-                    0,
+                    EXTENDED,
                 )
             };
             if count < 0 {
@@ -219,7 +223,7 @@ fn parse(record: &[u8]) -> io::Result<BulkEntry> {
         || volume != 0
         || directory & !DIRECTORY != 0
         || file & !FILE != 0
-        || fork != 0
+        || fork & !PRIVATE != 0
         || common & (libc::ATTR_CMN_NAME | libc::ATTR_CMN_RETURNED_ATTRS)
             != (libc::ATTR_CMN_NAME | libc::ATTR_CMN_RETURNED_ATTRS)
     {
@@ -238,6 +242,7 @@ fn parse(record: &[u8]) -> io::Result<BulkEntry> {
     let links = f.optional32(file & libc::ATTR_FILE_LINKCOUNT != 0)?;
     let allocated = f.optional64(file & libc::ATTR_FILE_ALLOCSIZE != 0)?;
     let logical = f.optional64(file & libc::ATTR_FILE_DATALENGTH != 0)?;
+    let private = f.optional64(fork & PRIVATE != 0)?;
     let start = name_reference
         .checked_add_signed(name_offset as isize)
         .ok_or_else(invalid)?;
@@ -275,6 +280,7 @@ fn parse(record: &[u8]) -> io::Result<BulkEntry> {
                 None
             } else {
                 Some(BulkMetadata {
+                    private_bytes: private.filter(|v| *v <= i64::MAX as u64 && kind == BulkKind::File && links == Some(1) && flags & 0x4000_0000 == 0),
                     device: u64::from(device),
                     inode,
                     kind,
@@ -344,6 +350,22 @@ mod tests {
     }
 
     #[test]
+    fn private_size_requires_returned_bit_and_single_link() {
+        let record = file_record(true);
+        assert_eq!(parse(&record).unwrap().metadata.unwrap().unwrap().private_bytes, None);
+        let mut fields = record[..76].to_vec();
+        fields[20..24].copy_from_slice(&PRIVATE.to_ne_bytes());
+        fields[56..60].copy_from_slice(&1u32.to_ne_bytes());
+        fields.extend_from_slice(&0u64.to_ne_bytes());
+        let shared = finish(fields.clone(), 28);
+        assert_eq!(parse(&shared).unwrap().metadata.unwrap().unwrap().private_bytes, Some(0));
+        fields[76..84].copy_from_slice(&4096u64.to_ne_bytes());
+        assert_eq!(parse(&finish(fields.clone(), 28)).unwrap().metadata.unwrap().unwrap().private_bytes, Some(4096));
+        fields[56..60].copy_from_slice(&2u32.to_ne_bytes());
+        assert_eq!(parse(&finish(fields, 28)).unwrap().metadata.unwrap().unwrap().private_bytes, None);
+    }
+
+    #[test]
     fn missing_safety_attribute_requires_stat_and_entry_error_is_preserved() {
         assert!(
             parse(&file_record(false))
@@ -384,4 +406,33 @@ mod tests {
         bad[32..36].copy_from_slice(&u32::MAX.to_ne_bytes());
         assert!(parse(&bad).is_err());
     }
+}
+
+
+/// Optional metadata-only observation relative to an admitted directory. The
+/// caller holds ReadOnlyPolicy. Does not open file contents or follow links.
+pub fn private_size_at(fd: BorrowedFd<'_>, name: &std::ffi::CStr, device: u64, inode: u64) -> Option<u64> {
+    unsafe extern "C" {
+        fn getattrlistat(fd: libc::c_int, path: *const libc::c_char, attrs: *mut libc::attrlist,
+            buffer: *mut libc::c_void, size: usize, options: libc::c_ulong) -> libc::c_int;
+    }
+    let common = libc::ATTR_CMN_RETURNED_ATTRS | libc::ATTR_CMN_DEVID | libc::ATTR_CMN_OBJTYPE
+        | libc::ATTR_CMN_FLAGS | libc::ATTR_CMN_FILEID;
+    let mut attrs = libc::attrlist { bitmapcount: 5, reserved: 0, commonattr: common,
+        volattr: 0, dirattr: 0, fileattr: libc::ATTR_FILE_LINKCOUNT, forkattr: PRIVATE };
+    let mut buffer = [0u64; 8];
+    // SAFETY: admitted live FD, NUL-terminated component, initialized attrlist,
+    // aligned writable buffer, and no-follow metadata flags. macOS 10.10+ API.
+    let code = unsafe { getattrlistat(fd.as_raw_fd(), name.as_ptr(), &mut attrs,
+        buffer.as_mut_ptr().cast(), 64, libc::FSOPT_NOFOLLOW as libc::c_ulong | EXTENDED) };
+    if code != 0 { return None; }
+    // SAFETY: fully initialized u64 storage, borrowed only during parsing.
+    let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), 64) };
+    let length = u32::from_ne_bytes(bytes[..4].try_into().ok()?) as usize;
+    let mut f = Fields { bytes: bytes.get(..length)?, offset: 4 };
+    if f.u32().ok()? != common || f.u32().ok()? != 0 || f.u32().ok()? != 0
+        || f.u32().ok()? != libc::ATTR_FILE_LINKCOUNT || f.u32().ok()? != PRIVATE { return None; }
+    if u64::from(f.u32().ok()?) != device || f.u32().ok()? != 1 { return None; }
+    if f.u32().ok()? & 0x4000_0000 != 0 || f.u64().ok()? != inode || f.u32().ok()? != 1 { return None; }
+    f.u64().ok().filter(|v| *v <= i64::MAX as u64)
 }

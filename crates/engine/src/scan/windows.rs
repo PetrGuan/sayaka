@@ -58,6 +58,7 @@ fn metadata(info: &sayaka_platform_windows::Metadata) -> Metadata {
         ResourceKind::File
     };
     Metadata {
+        private_bytes: None,
         identity: FileIdentity::Windows {
             volume_serial: info.volume_serial,
             file_id: info.file_id,

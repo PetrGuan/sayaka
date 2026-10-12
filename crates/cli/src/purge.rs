@@ -404,6 +404,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                 "markers": artifact.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
                 "logical_bytes": artifact.logical_bytes,
                 "allocated_bytes": artifact.allocated_bytes,
+                "private_bytes": artifact.private_bytes,
                 "complete": artifact.complete,
                         "size_complete": artifact.size_complete,
                 "modified_unix_ms": artifact.modified_unix_ms,
@@ -437,6 +438,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
             "sizes": {
                 "logical": cache.logical_bytes,
                 "allocated": cache.allocated_bytes,
+                "private_bytes": cache.private_bytes,
             },
             "complete": cache.complete,
             "modified_unix_ms": cache.modified_unix_ms,
@@ -604,6 +606,7 @@ mod tests {
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![
                     purge_preview::PurgeArtifact {
+                        private_bytes: None,
                         project_activity: None,
                         signature: None,
                         size_complete: true,
@@ -621,6 +624,7 @@ mod tests {
                         stale: Some(false),
                     },
                     purge_preview::PurgeArtifact {
+                        private_bytes: None,
                         project_activity: None,
                         signature: None,
                         size_complete: true,

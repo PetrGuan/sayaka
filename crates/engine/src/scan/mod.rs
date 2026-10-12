@@ -344,6 +344,7 @@ impl ScanStatus {
 
 #[derive(Clone, Debug)]
 pub struct ScanEntry {
+    pub private_bytes: Option<u64>,
     pub owner: Option<std::sync::Arc<crate::known_owner::KnownOwner>>,
     pub project_signature: Option<crate::purge_preview::ArtifactSignature>,
     /// Unique only within the associated scan task.

@@ -196,6 +196,7 @@ pub fn scan_preview(
         // Discovery coverage cannot be repaired by measuring a leaf alone.
         let discovered_complete = candidate.complete;
         candidate.complete = false;
+        candidate.private_bytes = None;
         candidate.logical_bytes = None;
         candidate.allocated_bytes = None;
         let remaining = limits.time_budget.saturating_sub(started.elapsed());
@@ -235,6 +236,7 @@ pub fn scan_preview(
                 candidate.complete = discovered_complete && summary.complete;
                 candidate.logical_bytes = summary.logical;
                 candidate.allocated_bytes = summary.allocated;
+                candidate.private_bytes = candidate.complete.then_some(summary.private).flatten();
                 candidate.links_not_followed = summary.links;
                 observed = observed.saturating_add(summary.entries);
                 files = files.saturating_add(summary.files);

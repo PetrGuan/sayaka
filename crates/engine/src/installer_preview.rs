@@ -3163,6 +3163,7 @@ mod tests {
     fn file_entry(path: &Path) -> ScanEntry {
         let bytes = std::fs::metadata(path).expect("metadata").len();
         ScanEntry {
+            private_bytes: None,
             owner: None,
             project_signature: None,
             id: 1,

@@ -45,6 +45,7 @@ fn identity(id: u64) -> FileIdentity {
 
 fn directory(id: u64, relative: &str) -> ScanEntry {
     ScanEntry {
+        private_bytes: None,
         owner: None,
         project_signature: None,
         id,
@@ -62,6 +63,7 @@ fn directory(id: u64, relative: &str) -> ScanEntry {
 
 fn file(id: u64, relative: &str, bytes: Option<u64>) -> ScanEntry {
     ScanEntry {
+        private_bytes: None,
         owner: None,
         project_signature: None,
         id,
@@ -79,6 +81,7 @@ fn file(id: u64, relative: &str, bytes: Option<u64>) -> ScanEntry {
 
 fn link(id: u64, relative: &str) -> ScanEntry {
     ScanEntry {
+        private_bytes: None,
         owner: None,
         project_signature: None,
         id,

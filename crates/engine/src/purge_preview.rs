@@ -323,6 +323,7 @@ impl ArtifactSignature {
 
 #[derive(Clone, Debug)]
 pub struct PurgeArtifact {
+    pub private_bytes: Option<u64>,
     pub project_activity: Option<crate::project_activity::ProjectActivity>,
     pub signature: Option<ArtifactSignature>,
     pub size_complete: bool,
@@ -363,6 +364,7 @@ pub struct PurgeProject {
 /// settings; the file can be recreated, but it is never preselected.
 #[derive(Clone, Debug)]
 pub struct FinderMetadataCandidate {
+    pub private_bytes: Option<u64>,
     pub path: PathBuf,
     pub identity: FileIdentity,
     pub logical_bytes: Option<u64>,
@@ -394,6 +396,7 @@ pub struct CacheOwner {
 
 #[derive(Clone, Debug)]
 pub struct DeveloperCacheCandidate {
+    pub private_bytes: Option<u64>,
     pub rule_kind: &'static str,
     pub owner_app: Vec<CacheOwner>,
     #[cfg(target_os = "macos")]
@@ -1319,6 +1322,7 @@ fn finder_metadata_preview(
                 })
         })
         .map(|entry| FinderMetadataCandidate {
+            private_bytes: entry.private_bytes,
             path: entry.path.clone(),
             identity: entry.identity,
             logical_bytes: entry.logical_bytes,
@@ -1529,6 +1533,7 @@ fn project_purge_preview(
                 crate::project_git::GitObservation::default()
             };
             out_artifacts.push(PurgeArtifact {
+                private_bytes: index.private_size(child),
                 project_activity: None,
                 signature,
                 size_complete: summary.is_some_and(|summary| summary.complete),
@@ -1733,6 +1738,7 @@ fn developer_cache_preview_with_home(
             .and_then(|duration| i64::try_from(duration.as_millis()).ok());
         let active = activity != DeveloperCacheActivity::NotDetected;
         candidates.push(DeveloperCacheCandidate {
+            private_bytes: index.private_size(entry.id),
             rule_kind: "exact",
             owner_app: Vec::new(),
             #[cfg(target_os = "macos")]
@@ -2118,6 +2124,7 @@ mod tests {
     fn project_selection_reports_build_refusal_before_signature_diagnostics() {
         let project = PurgeProject { root: "/project".into(), markers: vec![ProjectMarker::CargoToml], artifacts: vec![] };
         let mut artifact = PurgeArtifact { signature: None, size_complete: true,
+            private_bytes: None,
             project_activity: Some(crate::project_activity::ProjectActivity { build_running: Some(true), ..Default::default() }),
             git: crate::project_git::GitObservation { state: crate::project_git::GitState::Untracked, ..Default::default() },
             path: "/project/target".into(), name: "target".into(), markers: vec![ProjectMarker::CargoToml],

@@ -41,7 +41,7 @@ struct Queue<D> {
     jobs: VecDeque<Frame<D>>,
     producer_done: bool,
 }
-type Sizes = (Option<u64>, Option<u64>);
+type Sizes = (Option<u64>, Option<u64>, Option<u64>);
 struct Shared<'a, D> {
     root: &'a Path,
     expected: FileIdentity,
@@ -136,6 +136,7 @@ impl<D> Shared<'_, D> {
         totals.links = totals.links.checked_add(local.links).ok_or_else(overflow)?;
         totals.logical = sum(totals.logical, local.logical)?;
         totals.allocated = sum(totals.allocated, local.allocated)?;
+        totals.private = totals.private.and_then(|a| local.private.and_then(|b| a.checked_add(b)));
         *local = empty_totals();
         Ok(())
     }
@@ -481,7 +482,7 @@ fn walk<D: Cursor>(
         match metadata.kind {
             ResourceKind::Link => local.links = local.links.checked_add(1).ok_or_else(overflow)?,
             ResourceKind::File => {
-                let sizes = (metadata.logical_bytes, metadata.allocated_bytes);
+                let sizes = (metadata.logical_bytes, metadata.allocated_bytes, metadata.private_bytes);
                 if metadata.link_count != Some(1) {
                     let mut files = lock(&shared.linked_files);
                     if let Some(previous) = files.get(&metadata.identity) {
@@ -512,6 +513,7 @@ fn walk<D: Cursor>(
                 local.files = local.files.checked_add(1).ok_or_else(overflow)?;
                 local.logical = sum(local.logical, sizes.0)?;
                 local.allocated = sum(local.allocated, sizes.1)?;
+                local.private = local.private.and_then(|a| sizes.2.and_then(|b| a.checked_add(b)));
             }
             ResourceKind::Directory => {
                 {
@@ -617,6 +619,7 @@ fn walk<D: Cursor>(
 fn empty_totals() -> Summary {
     Summary {
         complete: true,
+        private: Some(0),
         logical: Some(0),
         allocated: Some(0),
         ..Default::default()

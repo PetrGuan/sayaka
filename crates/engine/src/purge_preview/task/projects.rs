@@ -106,6 +106,7 @@ pub(super) fn measure(
     for artifact in &mut artifacts {
         artifact.complete = false;
         artifact.size_complete = false;
+        artifact.private_bytes = None;
         artifact.logical_bytes = None;
         artifact.allocated_bytes = None;
     }
@@ -219,6 +220,7 @@ pub(super) fn measure(
                             );
                             artifact.logical_bytes = summary.logical;
                             artifact.allocated_bytes = summary.allocated;
+                            artifact.private_bytes = (discovery_complete[i] && summary.complete).then_some(summary.private).flatten();
                             artifact.size_complete = summary.complete;
                             artifact.complete = discovery_complete[i] && summary.complete;
                             if summary.vcs_metadata > 0 {

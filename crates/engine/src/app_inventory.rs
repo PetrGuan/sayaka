@@ -2908,6 +2908,7 @@ mod tests {
 
     fn synthetic_entry(path: &str, identity: FileIdentity) -> ScanEntry {
         ScanEntry {
+            private_bytes: None,
             owner: None,
             project_signature: None,
             id: 0,
@@ -2927,6 +2928,7 @@ mod tests {
     fn scan_entry(path: &Path, kind: ResourceKind, id: u64) -> ScanEntry {
         let meta = fs::symlink_metadata(path).expect("metadata");
         ScanEntry {
+            private_bytes: None,
             owner: None,
             project_signature: None,
             id,

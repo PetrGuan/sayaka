@@ -90,6 +90,7 @@ impl From<FileIdentity> for Identity {
 
 #[derive(Serialize)]
 struct Entry<'a> {
+    private_bytes: Option<u64>,
     owner: Option<&'a crate::known_owner::KnownOwner>,
     resource_id: String,
     path: NativePath<'a>,
@@ -113,6 +114,7 @@ impl Serialize for Entries<'_> {
         let mut sequence = serializer.serialize_seq(Some(self.entries.len()))?;
         for entry in self.entries {
             sequence.serialize_element(&Entry {
+                private_bytes: entry.private_bytes,
                 owner: entry.owner.as_deref(),
                 resource_id: format!("{}/{}", self.task_id, entry.id),
                 path: NativePath(&entry.path),
