@@ -35,6 +35,7 @@ pub struct SelectionRefusal {
 /// purge preview. Markers are revalidation evidence, never targets.
 #[derive(Clone, Debug)]
 pub struct PurgeSelection {
+    pub signature: Option<crate::purge_preview::ArtifactSignature>,
     pub artifact: PathBuf,
     pub project_root: PathBuf,
     pub markers: Vec<PathBuf>,

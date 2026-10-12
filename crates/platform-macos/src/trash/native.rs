@@ -645,6 +645,7 @@ enum TargetShape {
     Bundle,
     /// Sealed marker-bound project artifact directory (T8 purge).
     PurgeArtifact,
+    XcodeBuildDirectory,
     /// Sealed documented developer-cache directory.
     CacheDirectory,
     BundleOwnedCacheDirectory,
@@ -776,6 +777,10 @@ impl Candidate {
             protected,
             TargetShape::BundleOwnedCacheDirectory,
         )
+    }
+
+    pub(super) fn capture_xcode_build(scope: &Path, path: &Path, protected: &[PathBuf]) -> Result<Self, NativeCaptureFailure> {
+        Self::capture_diagnostic_mode(scope, path, &[], protected, TargetShape::XcodeBuildDirectory)
     }
 
     pub(super) fn capture_cache_diagnostic(
@@ -921,6 +926,10 @@ impl Candidate {
         }
         stage.phase = "target";
         let target = Evidence::open_observed(path, Binding::FullTarget, &mut stage.operation)?;
+        if shape == TargetShape::XcodeBuildDirectory {
+            stage.operation = "package_classification";
+            reject_package(&target)?;
+        }
         match shape {
             TargetShape::Bundle => {
                 stage.operation = "bundle_admission";
@@ -928,6 +937,7 @@ impl Candidate {
                 stage.operation = "bundle_manifest";
             }
             TargetShape::PurgeArtifact
+            | TargetShape::XcodeBuildDirectory
             | TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
             | TargetShape::RelatedDirectory | TargetShape::OrphanDirectory => {
@@ -1171,6 +1181,9 @@ impl Candidate {
             reject_package(ancestor)?;
         }
         self.target.revalidate()?;
+        if self.shape == TargetShape::XcodeBuildDirectory {
+            reject_package(&self.target)?;
+        }
         match self.shape {
             TargetShape::Bundle => {
                 admissible_bundle_target(&self.target.stamp, self.uid, &self.path)?;
@@ -1188,7 +1201,8 @@ impl Candidate {
                     admissible_purge_marker(&marker.stamp, self.uid)?;
                 }
             }
-            TargetShape::CacheDirectory
+            TargetShape::XcodeBuildDirectory
+            | TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
             | TargetShape::RelatedDirectory | TargetShape::OrphanDirectory => {
                 admissible_purge_target(&self.target.stamp, self.uid)?;
@@ -1336,6 +1350,10 @@ impl Candidate {
                 }
             }
         }
+        if self.shape == TargetShape::XcodeBuildDirectory
+            && crate::xcode_build::inspect_path(&self.path)?.is_none() {
+            return Err(refused("Xcode build signature no longer matches"));
+        }
         if self.shape == TargetShape::CacheDirectory
             && !crate::cache_locations::permitted_cache_location(&self.path)
         {
@@ -1363,6 +1381,11 @@ impl Candidate {
                 TargetShape::CacheDirectory | TargetShape::BundleOwnedCacheDirectory
             ) {
                 cache_directory_protected(checked)
+            } else if self.shape == TargetShape::XcodeBuildDirectory {
+                // Only the conventional .build component is admitted; all
+                // other hidden, cloud, package and system protections remain.
+                let spelling: PathBuf = checked.components().map(|c| if c.as_os_str() == ".build" { std::ffi::OsStr::new("build") } else { c.as_os_str() }).collect();
+                standard_protected(&spelling)
             } else if self.shape == TargetShape::Bundle && is_applications_root(checked) {
                 // A bundle directly inside /Applications (sayaka#93).
                 false
@@ -1547,6 +1570,7 @@ impl Candidate {
                 }
             }
             TargetShape::PurgeArtifact
+            | TargetShape::XcodeBuildDirectory
             | TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
             | TargetShape::RelatedDirectory | TargetShape::OrphanDirectory => {

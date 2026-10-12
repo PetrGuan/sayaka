@@ -19,6 +19,7 @@ fn path(relative: &str) -> PathBuf {
 
 fn entry(id: u64, relative: &str, kind: ResourceKind) -> ScanEntry {
     ScanEntry {
+        project_signature: None,
         id,
         path: path(relative),
         kind,

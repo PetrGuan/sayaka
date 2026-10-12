@@ -1086,6 +1086,7 @@ impl CacheSession {
 }
 
 struct PurgePlatform {
+    signatures: HashMap<PathBuf, purge_preview::ArtifactSignature>,
     markers: HashMap<PathBuf, Vec<PathBuf>>,
     candidates: HashMap<PathBuf, PurgeTrashCandidate>,
     issues: Vec<SelectionIssue>,
@@ -1099,12 +1100,18 @@ impl Probe for PurgePlatform {
                 .map_err(|error| ProbeError::Other(error.to_string()))?;
         } else {
             let markers = self.markers.get(path).cloned().unwrap_or_default();
-            match PurgeTrashCandidate::capture(
-                scope.root(),
-                path,
-                &markers,
-                scope.protected_paths(),
-            ) {
+            let captured = if let Some(expected) = self.signatures.get(path) {
+                verify_xcode_signature(path, expected).and_then(|()| {
+                    PurgeTrashCandidate::capture_xcode_build(
+                        scope.root(),
+                        path,
+                        scope.protected_paths(),
+                    )
+                })
+            } else {
+                PurgeTrashCandidate::capture(scope.root(), path, &markers, scope.protected_paths())
+            };
+            match captured {
                 Ok(candidate) => {
                     self.candidates.insert(path.to_owned(), candidate);
                 }
@@ -1215,7 +1222,14 @@ impl PurgeSession {
                     "an artifact must be a direct child of its project root",
                 ));
             }
-            if selection.markers.is_empty() || selection.markers.len() > 4 {
+            if let Some(expected) = &selection.signature {
+                if !selection.markers.is_empty() {
+                    return Err(journal::invalid(
+                        "signature artifacts cannot carry project markers",
+                    ));
+                }
+                verify_xcode_signature(&selection.artifact, expected)?;
+            } else if selection.markers.is_empty() || selection.markers.len() > 4 {
                 return Err(journal::invalid(
                     "an artifact carries between 1 and 4 binding markers",
                 ));
@@ -1258,6 +1272,10 @@ impl PurgeSession {
         .map_err(model_error)?
         .for_revalidated_purge_trash();
         let mut platform = PurgePlatform {
+            signatures: selections
+                .iter()
+                .filter_map(|s| s.signature.clone().map(|e| (s.artifact.clone(), e)))
+                .collect(),
             markers: selections
                 .iter()
                 .map(|selection| (selection.artifact.clone(), selection.markers.clone()))
@@ -1372,6 +1390,11 @@ impl PurgeSession {
         store: &Store,
         policy: Option<(&ConfigPath, &Path, &PolicySnapshot)>,
     ) -> io::Result<ExecutionReport> {
+        let signatures: HashMap<_, _> = self
+            .selections
+            .iter()
+            .filter_map(|s| s.signature.clone().map(|e| (s.artifact.clone(), e)))
+            .collect();
         let mut guard = move |point: GuardPoint, path: &Path| -> io::Result<GuardDecision> {
             if let Some((config, root, snapshot)) = policy {
                 match clean_policy::guard_snapshot(config, root, snapshot)? {
@@ -1386,6 +1409,11 @@ impl PurgeSession {
                     crate::project_git::require_cleanup(&[path.to_path_buf()], cancellation)
                 {
                     return Ok(GuardDecision::Refused(reason));
+                }
+            }
+            if let Some(expected) = signatures.get(path) {
+                if let Err(error) = verify_xcode_signature(path, expected) {
+                    return Ok(GuardDecision::Refused(error.to_string()));
                 }
             }
             // Last native guard per item: re-evaluate nesting immediately
@@ -1423,6 +1451,10 @@ fn purge_nesting_observed(artifact: &Path) -> bool {
         let Some(parent) = ancestor.parent() else {
             continue;
         };
+        match sayaka_platform_macos::xcode_build::inspect_path(ancestor) {
+            Ok(Some(_)) | Err(_) => return true,
+            Ok(None) => {}
+        }
         for marker in ProjectMarker::ALL {
             if !marker.artifacts().contains(&name) {
                 continue;
@@ -1437,6 +1469,18 @@ fn purge_nesting_observed(artifact: &Path) -> bool {
         }
     }
     false
+}
+
+fn verify_xcode_signature(
+    path: &Path,
+    expected: &purge_preview::ArtifactSignature,
+) -> io::Result<()> {
+    let current = sayaka_platform_macos::xcode_build::inspect_path(path)?
+        .map(purge_preview::ArtifactSignature::from_native);
+    if current.as_ref() != Some(expected) {
+        return Err(journal::invalid("Xcode build evidence changed; scan again"));
+    }
+    Ok(())
 }
 
 /// Deepest common ancestor of the given absolute paths.

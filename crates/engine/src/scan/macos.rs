@@ -290,6 +290,15 @@ pub(super) fn bare_repository_at(
 }
 
 impl Cursor for MacDirectory {
+    fn project_signature(
+        &self,
+        path: &Path,
+    ) -> Result<Option<crate::purge_preview::ArtifactSignature>, ScanError> {
+        sayaka_platform_macos::xcode_build::inspect(self.stream.fd().map_err(native_error)?, path)
+            .map(|e| e.map(crate::purge_preview::ArtifactSignature::from_native))
+            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))
+    }
+
     fn metadata(&self) -> Metadata {
         self.original.clone()
     }

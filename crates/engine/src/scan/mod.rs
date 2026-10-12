@@ -343,6 +343,7 @@ impl ScanStatus {
 
 #[derive(Clone, Debug)]
 pub struct ScanEntry {
+    pub project_signature: Option<crate::purge_preview::ArtifactSignature>,
     /// Unique only within the associated scan task.
     pub id: u64,
     pub path: PathBuf,
