@@ -149,6 +149,7 @@ fn from_bulk(value: BulkMetadata) -> Result<Metadata, ScanError> {
     };
     let regular = kind == ResourceKind::File;
     Ok(Metadata {
+        private_bytes: value.private_bytes,
         identity: FileIdentity::Unix {
             device: value.device,
             inode: value.inode,

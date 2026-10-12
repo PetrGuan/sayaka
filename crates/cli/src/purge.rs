@@ -604,6 +604,7 @@ mod tests {
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![
                     purge_preview::PurgeArtifact {
+                        private_bytes: None,
                         project_activity: None,
                         signature: None,
                         size_complete: true,
@@ -621,6 +622,7 @@ mod tests {
                         stale: Some(false),
                     },
                     purge_preview::PurgeArtifact {
+                        private_bytes: None,
                         project_activity: None,
                         signature: None,
                         size_complete: true,

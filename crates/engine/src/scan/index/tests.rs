@@ -23,6 +23,7 @@ fn identity(inode: u64) -> FileIdentity {
 
 fn entry(id: u64, relative: &str, kind: ResourceKind) -> ScanEntry {
     ScanEntry {
+        private_bytes: None,
         owner: None,
         project_signature: None,
         id,
@@ -50,6 +51,7 @@ fn file(
     allocated: Option<u64>,
 ) -> ScanEntry {
     ScanEntry {
+        private_bytes: None,
         owner: None,
         identity: identity(inode),
         logical_bytes: logical,
@@ -89,6 +91,7 @@ fn issue(code: ScanCode) -> ScanIssue {
 
 fn summary(unique: u64, logical: u64, allocated: u64) -> DirectorySummary {
     DirectorySummary {
+                        private_bytes: None,
         unique_files: unique,
         logical_bytes_known: logical,
         allocated_bytes_known: allocated,
@@ -161,6 +164,7 @@ fn identity_measurements_normalize_independently_in_every_input_order() {
                     }
                     let tree = tree(shuffled);
                     let expected = DirectorySummary {
+                        private_bytes: None,
                         unique_files: 1,
                         logical_bytes_known: expected_logical.unwrap_or(0),
                         logical_bytes_unknown_files: u64::from(expected_logical.is_none()),
@@ -195,6 +199,7 @@ fn normalization_crosses_forest_roots() {
         assert_eq!(
             tree.summary(id),
             Some(&DirectorySummary {
+                        private_bytes: None,
                 unique_files: 1,
                 logical_bytes_unknown_files: 1,
                 allocated_bytes_unknown_files: 1,
@@ -229,6 +234,7 @@ fn sparse_zero_unknown_and_non_file_payloads_stay_distinct() {
     assert_eq!(
         tree.summary(1),
         Some(&DirectorySummary {
+                        private_bytes: None,
             unique_files: 4,
             logical_bytes_known: (1 << 30) + 7,
             logical_bytes_unknown_files: 1,
@@ -782,4 +788,19 @@ fn native_non_utf8_path_order_is_preserved() {
     }
     let tree = tree(entries);
     assert_eq!(tree.children(1), Some([4, 3, 2].as_slice()));
+}
+
+#[test]
+fn private_totals_require_every_measurement_and_complete_coverage() {
+    let mut a = file(2, "a", 2, Some(100), Some(100)); a.private_bytes = Some(0);
+    let mut b = file(3, "b", 3, Some(100), Some(100)); b.private_bytes = Some(0);
+    assert_eq!(tree(vec![directory(1, ""), a.clone(), b.clone()]).private_size(1), Some(0));
+    b.private_bytes = None;
+    assert_eq!(tree(vec![directory(1, ""), a.clone(), b.clone()]).private_size(1), None);
+    a.private_bytes = Some(u64::MAX); b.private_bytes = Some(1);
+    assert_eq!(tree(vec![directory(1, ""), a.clone(), b.clone()]).private_size(1), None);
+    let mut input = report(vec![directory(1, ""), a]);
+    input.status = ScanStatus::Partial; input.complete = false;
+    input.issues.push(issue(ScanCode::EntryLimit));
+    assert_eq!(ScanTree::build(input, &Cancellation::default()).unwrap().private_size(1), None);
 }

@@ -228,6 +228,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                         "rule": artifact.signature.as_ref().map_or("marker_bound_project_artifact_v1", |s| s.rule()),
                         "markers": artifact.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
                         "sizes": {
+                            "private_bytes": artifact.private_bytes,
                             "logical": artifact.logical_bytes,
                             "allocated": artifact.allocated_bytes,
                         },
@@ -322,7 +323,7 @@ fn finder_metadata_items_json(
                 "path": wire::NativePath(&item.path),
                 "name": ".DS_Store",
                 "kind": "file",
-                "sizes": { "logical": item.logical_bytes, "allocated": item.allocated_bytes },
+                "sizes": { "private_bytes": item.private_bytes, "logical": item.logical_bytes, "allocated": item.allocated_bytes },
                 "complete": true,
                 "reasons": ["finder_view_settings_may_be_lost"],
                 "policy_excluded": policy.is_some_and(|p| p.excludes(&item.path)),
@@ -366,6 +367,7 @@ fn developer_cache_items_json(
                 "policy_excluded": policy.is_some_and(|p| p.excludes(&cache.path)),
                 "unsupported_reason": cache.unsupported_reason,
                 "sizes": {
+                    "private_bytes": cache.private_bytes,
                     "logical": cache.logical_bytes,
                     "allocated": cache.allocated_bytes,
                 },
@@ -1778,6 +1780,7 @@ mod tests {
                 root: std::path::PathBuf::from("/repo"),
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![purge_preview::PurgeArtifact {
+                    private_bytes: None,
                         project_activity: None,
                     signature: None,
                     size_complete: true,

@@ -207,6 +207,7 @@ fn root() -> PathBuf {
 
 fn metadata(inode: u64, kind: ResourceKind, bytes: Option<u64>) -> Metadata {
     Metadata {
+        private_bytes: None,
         identity: FileIdentity::Unix { device: 1, inode },
         kind,
         link_count: Some(1),

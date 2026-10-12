@@ -24,6 +24,7 @@ pub enum Metric {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct DirectorySummary {
+    pub private_bytes: Option<u64>,
     pub unique_files: u64,
     pub logical_bytes_known: u64,
     pub logical_bytes_unknown_files: u64,
@@ -102,6 +103,7 @@ impl ScanTree {
             }
             if entry.kind == ResourceKind::File {
                 let observation = Measurements {
+                    private: entry.private_bytes,
                     logical: entry.logical_bytes,
                     allocated: entry.allocated_bytes,
                 };
@@ -206,6 +208,7 @@ impl ScanTree {
                     let mut summary = bag.summary.clone();
                     summary.complete =
                         complete || (localized && !incomplete_paths.contains(entry.path.as_path()));
+                    if !summary.complete { summary.private_bytes = None; }
                     nodes[position].summary = Some(summary);
                     if let Some(parent) = parent {
                         bags[parent]
@@ -274,6 +277,17 @@ impl ScanTree {
 
     pub fn summary(&self, id: u64) -> Option<&DirectorySummary> {
         self.nodes[*self.positions.get(&id)?].summary.as_ref()
+    }
+
+    /// Sum of per-file exclusive bytes, not selection reclaimable capacity.
+    /// Shared clone extents are not counted even when both clones are selected.
+    pub fn private_size(&self, id: u64) -> Option<u64> {
+        let entry = self.entry(id)?;
+        match entry.kind {
+            ResourceKind::File if !entry.dataless => entry.private_bytes,
+            ResourceKind::Directory => self.summary(id).filter(|s| s.complete).and_then(|s| s.private_bytes),
+            _ => None,
+        }
     }
 
     /// Known subtotal, not necessarily a complete measurement. Consult summary
@@ -358,12 +372,14 @@ fn ordered<'a>(
 
 #[derive(Clone, Copy)]
 struct Measurements {
+    private: Option<u64>,
     logical: Option<u64>,
     allocated: Option<u64>,
 }
 
 impl Measurements {
     fn observe(&mut self, other: Self) {
+        if self.private != other.private { self.private = None; }
         if self.logical != other.logical {
             self.logical = None;
         }
@@ -389,6 +405,8 @@ impl IdentityBag {
         check_cancelled(cancellation)?;
         if self.identities.insert(identity) {
             let measurement = measurements[&identity];
+            let prior = if self.summary.unique_files == 0 { Some(0u64) } else { self.summary.private_bytes };
+            self.summary.private_bytes = prior.and_then(|a| measurement.private.and_then(|b| a.checked_add(b)));
             checked_add(&mut self.summary.unique_files, 1)?;
             match measurement.logical {
                 Some(bytes) => checked_add(&mut self.summary.logical_bytes_known, bytes)?,

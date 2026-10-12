@@ -10,6 +10,7 @@ use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Metadata {
+    pub private_bytes: Option<u64>,
     pub identity: FileIdentity,
     pub kind: ResourceKind,
     pub logical_bytes: Option<u64>,
@@ -1006,6 +1007,7 @@ fn record_entry(
     report.totals = totals;
     report.metrics.retained_path_bytes = path_bytes;
     report.entries.push(ScanEntry {
+        private_bytes: metadata.private_bytes,
         owner: None,
         project_signature: None,
         id: report.entries.len() as u64 + 1,

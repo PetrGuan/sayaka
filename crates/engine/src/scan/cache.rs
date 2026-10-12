@@ -9,6 +9,7 @@ pub(super) use parallel::{summarize, summarize_with_project_budget};
 
 #[derive(Default)]
 pub(crate) struct Summary {
+    pub private: Option<u64>,
     pub entries: usize,
     pub vcs_metadata: usize,
     pub files: u64,

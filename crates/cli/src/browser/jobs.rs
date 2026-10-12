@@ -389,6 +389,7 @@ mod tests {
     #[test]
     fn viewer_arguments_are_fixed_native_arguments_not_shell_text() {
         let mut entry = ScanEntry {
+            private_bytes: None,
             owner: None,
             project_signature: None,
             id: 1,

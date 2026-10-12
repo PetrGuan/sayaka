@@ -339,7 +339,16 @@ impl Cursor for MacDirectory {
                 .stream
                 .fd()
                 .and_then(|fd| fs::statat(fd, name, AtFlags::SYMLINK_NOFOLLOW))
-                .map(|stat| from_stat(&stat))
+                .map(|stat| {
+                    let mut m = from_stat(&stat);
+                    if m.kind == ResourceKind::File && !m.dataless {
+                        if let Ok(fd) = self.stream.fd() {
+                            m.private_bytes = sayaka_platform_macos::scan_bulk::private_size_at(fd, name,
+                                u64::from(stat.st_dev.cast_unsigned()), stat.st_ino);
+                        }
+                    }
+                    m
+                })
                 .map_err(native_error);
             return Some(Ok(DirItem {
                 name: OsString::from_vec(name.to_bytes().to_vec()),
@@ -388,6 +397,7 @@ fn from_stat(stat: &Stat) -> Metadata {
     };
     let regular = kind == ResourceKind::File;
     Metadata {
+        private_bytes: None,
         identity: FileIdentity::Unix {
             device: u64::from(stat.st_dev.cast_unsigned()),
             inode: stat.st_ino,
