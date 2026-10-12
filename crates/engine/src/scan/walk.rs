@@ -376,7 +376,7 @@ fn worker<B: Backend>(
                 && !frame.signature_checked
             {
                 frame.signature_checked = true;
-                // The fixed native probes can hold Build/Logs plus one child.
+                // Fixed native probes hold at most a root plus one marker or directory stream.
                 // Charge those transient descriptors to the same aggregate cap.
                 let probe_permits = (
                     reserve(&shared.counters, limits.max_open_dirs),
@@ -388,7 +388,7 @@ fn worker<B: Backend>(
                         issue_event(
                             Some(frame.path.clone()),
                             ScanCode::OpenHandleLimit,
-                            "Xcode signature probe handle budget reached",
+                            "Project signature probe handle budget reached",
                         ),
                         shared,
                         limits,

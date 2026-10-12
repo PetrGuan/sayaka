@@ -646,6 +646,7 @@ enum TargetShape {
     /// Sealed marker-bound project artifact directory (T8 purge).
     PurgeArtifact,
     XcodeBuildDirectory,
+    RuleArtifact,
     /// Sealed documented developer-cache directory.
     CacheDirectory,
     BundleOwnedCacheDirectory,
@@ -777,6 +778,17 @@ impl Candidate {
             protected,
             TargetShape::BundleOwnedCacheDirectory,
         )
+    }
+
+    pub(super) fn capture_rule_artifact(scope: &Path, path: &Path, protected: &[PathBuf]) -> Result<Self, NativeCaptureFailure> {
+        // Shape capture below obtains the same proof again and seals every marker.
+        let proof = crate::project_artifacts::inspect_path(path)
+            .map_err(|e| NativeCaptureFailure { phase: "project_rule", operation: "inspect", error: e, restoration_error: None })?;
+        let proof = proof.filter(|e| e.rule_id.is_some())
+            .ok_or_else(|| NativeCaptureFailure { phase: "project_rule", operation: "inspect", error: refused("no project rule"), restoration_error: None })?;
+        let mut markers = proof.markers;
+        if proof.cache_tag { markers.push(path.join("CACHEDIR.TAG")); }
+        Self::capture_diagnostic_mode(scope, path, &markers, protected, TargetShape::RuleArtifact)
     }
 
     pub(super) fn capture_xcode_build(scope: &Path, path: &Path, protected: &[PathBuf]) -> Result<Self, NativeCaptureFailure> {
@@ -926,7 +938,7 @@ impl Candidate {
         }
         stage.phase = "target";
         let target = Evidence::open_observed(path, Binding::FullTarget, &mut stage.operation)?;
-        if shape == TargetShape::XcodeBuildDirectory {
+        if matches!(shape, TargetShape::XcodeBuildDirectory | TargetShape::RuleArtifact) {
             stage.operation = "package_classification";
             reject_package(&target)?;
         }
@@ -937,6 +949,7 @@ impl Candidate {
                 stage.operation = "bundle_manifest";
             }
             TargetShape::PurgeArtifact
+            | TargetShape::RuleArtifact
             | TargetShape::XcodeBuildDirectory
             | TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
@@ -1076,7 +1089,7 @@ impl Candidate {
         uid: u32,
         operation: &mut &'static str,
     ) -> io::Result<Vec<Evidence>> {
-        if shape != TargetShape::PurgeArtifact {
+        if !matches!(shape, TargetShape::PurgeArtifact | TargetShape::RuleArtifact) {
             if !purge_markers.is_empty() {
                 return Err(refused("purge markers require a purge artifact target"));
             }
@@ -1097,7 +1110,8 @@ impl Candidate {
             *operation = "purge_marker_capture";
             let marker = Evidence::open_observed(marker_path, Binding::Safety, operation)?;
             *operation = "purge_marker_admission";
-            admissible_purge_marker(&marker.stamp, uid)?;
+            if shape == TargetShape::RuleArtifact { admissible_rule_marker(&marker.stamp, uid)?; }
+            else { admissible_purge_marker(&marker.stamp, uid)?; }
             if evidence
                 .iter()
                 .any(|m: &Evidence| m.stamp.identity() == marker.stamp.identity())
@@ -1181,7 +1195,7 @@ impl Candidate {
             reject_package(ancestor)?;
         }
         self.target.revalidate()?;
-        if self.shape == TargetShape::XcodeBuildDirectory {
+        if matches!(self.shape, TargetShape::XcodeBuildDirectory | TargetShape::RuleArtifact) {
             reject_package(&self.target)?;
         }
         match self.shape {
@@ -1194,11 +1208,12 @@ impl Candidate {
                     return Err(refused("Contents/Info.plist identity changed"));
                 }
             }
-            TargetShape::PurgeArtifact => {
+            TargetShape::PurgeArtifact | TargetShape::RuleArtifact => {
                 admissible_purge_target(&self.target.stamp, self.uid)?;
                 for marker in &self.purge_markers {
                     marker.revalidate()?;
-                    admissible_purge_marker(&marker.stamp, self.uid)?;
+                    if self.shape == TargetShape::RuleArtifact { admissible_rule_marker(&marker.stamp, self.uid)?; }
+                    else { admissible_purge_marker(&marker.stamp, self.uid)?; }
                 }
             }
             TargetShape::XcodeBuildDirectory
@@ -1350,6 +1365,16 @@ impl Candidate {
                 }
             }
         }
+        let rule_proof = if self.shape == TargetShape::RuleArtifact {
+            let proof = crate::project_artifacts::inspect_path(&self.path)?
+                .filter(|e| e.rule_id.is_some()).ok_or_else(|| refused("project rule no longer matches"))?;
+            let mut paths = proof.markers.clone();
+            if proof.cache_tag { paths.push(self.path.join("CACHEDIR.TAG")); }
+            if paths != self.purge_markers.iter().map(|m| m.path.clone()).collect::<Vec<_>>() {
+                return Err(refused("project marker evidence changed"));
+            }
+            Some(proof)
+        } else { None };
         if self.shape == TargetShape::XcodeBuildDirectory
             && crate::xcode_build::inspect_path(&self.path)?.is_none() {
             return Err(refused("Xcode build signature no longer matches"));
@@ -1381,6 +1406,8 @@ impl Candidate {
                 TargetShape::CacheDirectory | TargetShape::BundleOwnedCacheDirectory
             ) {
                 cache_directory_protected(checked)
+            } else if let Some(proof) = &rule_proof {
+                standard_protected(&crate::project_artifacts::protected_spelling(checked, proof))
             } else if self.shape == TargetShape::XcodeBuildDirectory {
                 // Only the conventional .build component is admitted; all
                 // other hidden, cloud, package and system protections remain.
@@ -1570,6 +1597,7 @@ impl Candidate {
                 }
             }
             TargetShape::PurgeArtifact
+            | TargetShape::RuleArtifact
             | TargetShape::XcodeBuildDirectory
             | TargetShape::CacheDirectory
             | TargetShape::BundleOwnedCacheDirectory
@@ -1945,6 +1973,12 @@ fn admissible_purge_target(stamp: &Stamp, uid: u32) -> io::Result<()> {
 
 /// A purge marker is an ordinary user-owned regular file; it is evidence,
 /// never a target, and its identity is sealed at capture.
+fn admissible_rule_marker(stamp: &Stamp, uid: u32) -> io::Result<()> {
+    if stamp.mode & u32::from(libc::S_IFMT) == u32::from(libc::S_IFDIR) {
+        admissible_purge_target(stamp, uid)
+    } else { admissible_purge_marker(stamp, uid) }
+}
+
 fn admissible_purge_marker(stamp: &Stamp, uid: u32) -> io::Result<()> {
     if stamp.mode & u32::from(libc::S_IFMT) != u32::from(libc::S_IFREG)
         || stamp.uid != uid

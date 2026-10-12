@@ -22,7 +22,7 @@ pub fn managed(path: &Path) -> io::Result<bool> {
 
 // One fixed child at a time; do not follow aliases, mount points, or dataless
 // objects. No directory enumeration is needed to classify a candidate.
-fn child(fd: BorrowedFd<'_>, name: &str, directory: bool, device: u64) -> io::Result<Option<File>> {
+pub(crate) fn child(fd: BorrowedFd<'_>, name: &str, directory: bool, device: u64) -> io::Result<Option<File>> {
     let name = CString::new(name).expect("fixed signature name");
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     // SAFETY: fd is borrowed/live, name and stat storage are valid.

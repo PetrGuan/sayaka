@@ -187,11 +187,24 @@ fn ensure_preview(job: &mut PurgePreviewJob) -> Result<Arc<PurgePreview>, i32> {
 
 fn signature_json(signature: Option<&purge_preview::ArtifactSignature>) -> Value {
     match signature {
-        Some(purge_preview::ArtifactSignature::XcodeDerivedData { signals, workspace, workspace_state }) => json!({
-            "kind": "xcode_derived_data", "signals": signals,
+        Some(purge_preview::ArtifactSignature::XcodeDerivedData { signals, workspace, workspace_state, cache_tag }) => json!({
+            "kind": "xcode_derived_data", "signals": signals, "cache_tag": cache_tag,
             "workspace": workspace.as_ref().map(|p| wire::NativePath(p)), "workspace_state": workspace_state,
             "source": "Fresh Xcode build observed 2026-10-12: custom derivedDataPath and standard per-project DerivedData; build product/intermediate directory plus an independent Xcode signal."
         }),
+        Some(purge_preview::ArtifactSignature::ProjectArtifact { rule_id, project_root, markers, cache_tag }) => {
+            #[cfg(target_os = "macos")]
+            let rule = rule_id.as_deref().and_then(purge_preview::project_rules::rule);
+            #[cfg(target_os = "macos")]
+            let (title, note, source) = rule.map_or(("Tool-declared cache", "Review the contents; no known project marker authorizes cleanup", "Cache Directory Tagging Specification: https://bford.info/cachedir/"), |r| (r.display_name, r.rebuildability_note, r.evidence));
+            #[cfg(not(target_os = "macos"))]
+            let (title, note, source) = ("Project artifact", "Review required", "Unsupported platform");
+            json!({ "kind": "project_artifact", "rule_id": rule_id,
+                "project_root": wire::NativePath(project_root),
+                "markers": markers.iter().map(|p| wire::NativePath(p)).collect::<Vec<_>>(),
+                "cache_tag": cache_tag, "display_name": title, "rebuildability_note": note,
+                "source": source, "signals": [], "workspace_state": "unknown" })
+        },
         None => Value::Null,
     }
 }
@@ -222,7 +235,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                         "size_complete": artifact.size_complete,
                         "modified_unix_ms": artifact.modified_unix_ms,
                         "stale": artifact.stale,
-                        "execution_supported": artifact.complete && artifact.size_complete && artifact.git.permits_cleanup(),
+                        "execution_supported": artifact.execution_supported(),
                         "git": {
                             "state": artifact.git.state.as_str(),
                             "reason": artifact.git.state.reason(),
@@ -449,7 +462,13 @@ fn reasons(
     artifact: &purge_preview::PurgeArtifact,
     policy: Option<&PurgePolicy>,
 ) -> Vec<&'static str> {
-    let mut reasons = vec![if artifact.signature.is_some() { "xcode_build_signature" } else { "project_marker_bound" }];
+    let mut reasons = vec![artifact.signature.as_ref().map_or("project_marker_bound", |s| s.rule())];
+    if let Some(purge_preview::ArtifactSignature::ProjectArtifact { rule_id, cache_tag, .. }) = &artifact.signature {
+        if *cache_tag { reasons.push("valid_cache_directory_tag"); }
+        if rule_id.is_none() { reasons.push("cache_tag_requires_review"); }
+        if rule_id.as_deref() == Some("pods") && artifact.git.ignored != Some(true) { reasons.push("pods_not_git_ignored"); }
+    }
+    if artifact.git.ignored == Some(true) { reasons.push("git_ignored"); }
     reasons.push(match artifact.stale {
         Some(true) => "stale",
         Some(false) => "not_stale",
