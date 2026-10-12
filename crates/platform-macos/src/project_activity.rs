@@ -82,6 +82,28 @@ pub fn builds(cancel: &dyn Fn() -> bool) -> Builds {
         // SAFETY: capacity-sized writable buffer for executable path.
         let n = unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
         if n <= 0 || n as usize >= path.len() {
+            // An app update may unlink a still-running helper's executable.
+            // Only ENOENT permits the complete kernel executable-name fallback;
+            // a matching build name or denied/ambiguous metadata stays unknown.
+            if io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
+                let mut name = [0u8; 64];
+                let len =
+                    unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+                if len > 0
+                    && len < 31
+                    && crate::related::process_identity(pid).ok() == Some(before)
+                    && !build_tool(Path::new(std::ffi::OsStr::from_bytes(
+                        &name[..len as usize],
+                    )))
+                {
+                    continue;
+                }
+            }
+            if crate::related::process_identity(pid)
+                .is_err_and(|e| e.raw_os_error() == Some(libc::ESRCH))
+            {
+                continue;
+            }
             result.complete = false;
             continue;
         }

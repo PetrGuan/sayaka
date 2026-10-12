@@ -1249,6 +1249,11 @@ fn selection_from_parts(
     if !artifact.git.permits_cleanup() {
         return Err(artifact.git.state.reason().into());
     }
+    match artifact.project_activity.as_ref().and_then(|a| a.build_running) {
+        Some(false) => {},
+        Some(true) => return Err("A build is running in this project".into()),
+        None => return Err("Project build activity could not be verified".into()),
+    }
     if !artifact.execution_supported() {
         return Err("Cache tag alone does not authorize cleanup; Pods also requires Git ignore evidence".into());
     }
@@ -2104,6 +2109,21 @@ mod tests {
     use crate::model::Cancellation;
     use crate::scan::{ScanLimits, index::ScanTree, scan};
     use std::fs;
+
+    #[test]
+    fn project_selection_reports_build_refusal_before_signature_diagnostics() {
+        let project = PurgeProject { root: "/project".into(), markers: vec![ProjectMarker::CargoToml], artifacts: vec![] };
+        let mut artifact = PurgeArtifact { signature: None, size_complete: true,
+            project_activity: Some(crate::project_activity::ProjectActivity { build_running: Some(true), ..Default::default() }),
+            git: crate::project_git::GitObservation { state: crate::project_git::GitState::Untracked, ..Default::default() },
+            path: "/project/target".into(), name: "target".into(), markers: vec![ProjectMarker::CargoToml],
+            logical_bytes: Some(1), allocated_bytes: Some(1), complete: true, modified_unix_ms: None, stale: None };
+        assert_eq!(selection_from_parts(&project, &artifact).unwrap_err(), "A build is running in this project");
+        artifact.project_activity.as_mut().unwrap().build_running = None;
+        assert_eq!(selection_from_parts(&project, &artifact).unwrap_err(), "Project build activity could not be verified");
+        artifact.project_activity.as_mut().unwrap().build_running = Some(false);
+        assert!(selection_from_parts(&project, &artifact).is_ok());
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

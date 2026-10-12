@@ -40,7 +40,7 @@ pub fn command() -> Command {
                 .long("stale-days")
                 .value_name("DAYS")
                 .help(format!(
-                    "Artifact mtime staleness cutoff in days [default: {DEFAULT_STALE_DAYS}, max: {MAX_STALE_DAYS}]"
+                    "Project inactivity cutoff in days [default: {DEFAULT_STALE_DAYS}, max: {MAX_STALE_DAYS}]"
                 ))
                 .value_parser(value_parser!(u32)),
         )
@@ -330,7 +330,7 @@ fn run_execution(
     )?;
     writeln!(
         io::stdout().lock(),
-        "Displayed bytes were observations, not reclaimed space; a running build tool was not detected."
+        "Displayed bytes were observations, not reclaimed space. Build activity was checked before removal; tools can start again after that check."
     )?;
     Ok(report.exit_code())
 }

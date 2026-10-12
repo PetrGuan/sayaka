@@ -191,8 +191,8 @@ explicit `--only` selections from the same invocation's preview, and a typed
 exact confirmation (`purge N artifacts`, 120-second approval). Each artifact
 moves as one container with per-item journaled outcomes; the binding marker
 (rebuild evidence) is revalidated and never touched. Displayed byte totals
-are observations, not reclaimed space, and a running build tool is not
-detected — see [PURGE_EXECUTION.md](PURGE_EXECUTION.md) for the full
+are observations, not reclaimed space. Project build activity is rechecked
+before removal — see [PURGE_EXECUTION.md](PURGE_EXECUTION.md) for the full
 contract and its disclosures.
 
 ## Custom Xcode build data (signature v1)
