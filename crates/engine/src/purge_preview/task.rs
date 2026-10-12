@@ -6,11 +6,18 @@ use crate::readonly_task::ReadOnlyTask;
 use crate::scan::task::{ScanTaskSnapshot, ScanTaskState, validate_roots};
 use crate::scan::{self, ScanCode, ScanError, ScanLimits, ScanProgress};
 use std::time::Instant;
+mod projects;
+#[cfg(target_os = "macos")]
+pub(crate) use projects::verify_metadata;
+pub use projects::{ClassifyLimits, SizeLimits};
 
 /// Cache accounting may visit millions of files without retaining their paths.
 /// The UI remains cancellable; other profiles keep the generic 30-second budget.
 pub fn preview_limits(profile: PurgeProfile) -> ScanLimits {
     let mut limits = ScanLimits::default();
+    if profile == PurgeProfile::Projects {
+        limits.time_budget = Duration::from_secs(90);
+    }
     if profile == PurgeProfile::DeveloperCaches {
         limits.time_budget = Duration::from_secs(300);
         // This caps each numeric identity table during cache measurement, not
@@ -118,10 +125,14 @@ pub fn scan_preview(
         }
         PurgeProfile::Projects => scan::scan_with_policy(
             roots,
-            limits,
+            &ClassifyLimits::from_request(limits).scan,
             cancellation,
-            scan::TraversalPolicy::ProjectArtifacts,
-            &mut progress,
+            scan::TraversalPolicy::ProjectDiscovery,
+            |update| {
+                let mut discovery = update.clone();
+                discovery.logical_bytes_known = 0;
+                progress(&discovery);
+            },
         )?,
     };
     let task_id = report.task_id;
@@ -135,6 +146,23 @@ pub fn scan_preview(
             .iter()
             .flat_map(|p| p.artifacts.iter().map(|a| a.path.clone()))
             .collect::<Vec<_>>();
+        preview.scan_metrics = Some(ProjectScanMetrics {
+            classification_entries: index.report().entries.len(),
+            artifact_descendant_entries: index
+                .report()
+                .entries
+                .iter()
+                .filter(|e| paths.iter().any(|p| e.path != *p && e.path.starts_with(p)))
+                .count(),
+            vcs_descendant_entries: index
+                .report()
+                .entries
+                .iter()
+                .filter(|e| crate::project_git::is_metadata_path(&e.path))
+                .count(),
+            classification_ms: index.report().metrics.elapsed_ms,
+            ..Default::default()
+        });
         let observations =
             crate::project_git::inspect_before(&paths, cancellation, started + limits.time_budget);
         for artifact in preview.projects.iter_mut().flat_map(|p| &mut p.artifacts) {
@@ -145,6 +173,16 @@ pub fn scan_preview(
                     .unwrap_or_default();
             }
         }
+    }
+    if options.profile == PurgeProfile::Projects {
+        projects::measure(
+            &mut preview,
+            &index,
+            limits,
+            started,
+            cancellation,
+            &mut progress,
+        );
     }
     if options.profile != PurgeProfile::DeveloperCaches {
         return Ok(preview);
@@ -179,6 +217,8 @@ pub fn scan_preview(
                 cancellation,
                 |entries, unique, bytes| {
                     progress(&ScanProgress {
+                        total_artifacts: 0,
+                        sized_artifacts: 0,
                         task_id,
                         entries: observed.saturating_add(entries),
                         unique_files: files.saturating_add(unique),

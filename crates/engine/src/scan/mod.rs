@@ -36,7 +36,7 @@ static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TraversalPolicy {
     Default,
-    ProjectArtifacts,
+    ProjectDiscovery,
     PruneAppBundles,
     PruneNativePackages,
     /// Internal profile scope; never used for general disk-size scans.
@@ -46,6 +46,12 @@ pub(crate) enum TraversalPolicy {
         scopes: std::sync::Arc<[PathBuf]>,
         leaves: std::sync::Arc<[PathBuf]>,
     },
+}
+
+impl TraversalPolicy {
+    fn project_metadata(&self) -> bool {
+        matches!(self, Self::ProjectDiscovery)
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -380,6 +386,8 @@ pub struct ScanMetrics {
 
 #[derive(Clone, Debug)]
 pub struct ScanProgress {
+    pub total_artifacts: usize,
+    pub sized_artifacts: usize,
     pub task_id: ScanTaskId,
     pub entries: usize,
     pub unique_files: u64,
@@ -591,3 +599,6 @@ fn scan_internal(
         ))
     }
 }
+
+#[cfg(target_os = "macos")]
+pub(crate) use macos::project_root_identity;

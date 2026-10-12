@@ -41,7 +41,8 @@ fn should_descend_directory(policy: &TraversalPolicy, path: &Path) -> bool {
         TraversalPolicy::RestrictedTo(paths) => paths
             .iter()
             .any(|scope| path.starts_with(scope) || scope.starts_with(path)),
-        TraversalPolicy::Default | TraversalPolicy::ProjectArtifacts => true,
+        TraversalPolicy::Default
+        | TraversalPolicy::ProjectDiscovery => true,
         TraversalPolicy::PruneAppBundles => !app_candidate_directory(path),
         TraversalPolicy::PruneNativePackages => {
             #[cfg(target_os = "macos")]
@@ -71,6 +72,9 @@ pub(super) struct DirItem {
 
 pub(super) trait Cursor: Send {
     fn metadata(&self) -> Metadata;
+    fn binds_project_artifact(&self, _name: &std::ffi::OsStr) -> Result<bool, ScanError> {
+        Ok(false)
+    }
     #[cfg(target_os = "macos")]
     fn bare_repository(&self) -> Result<bool, ScanError> {
         Err(ScanError::new(
@@ -421,9 +425,7 @@ fn worker<B: Backend>(
                 continue;
             }
             let path = frame.path.join(&item.name);
-            if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts)
-                && crate::project_git::is_metadata_path(&path)
-            {
+            if traversal_policy.project_metadata() && crate::project_git::is_metadata_path(&path) {
                 send(
                     &sender,
                     Event::VcsMetadata(path),
@@ -540,6 +542,26 @@ fn worker<B: Backend>(
             if metadata.kind != ResourceKind::Directory {
                 continue;
             }
+            if matches!(traversal_policy, TraversalPolicy::ProjectDiscovery) {
+                match frame.directory.binds_project_artifact(&item.name) {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(error) => {
+                        send(
+                            &sender,
+                            Event::Issue {
+                                path: Some(path),
+                                error,
+                            },
+                            shared,
+                            limits,
+                            cancellation,
+                            started,
+                        );
+                        continue;
+                    }
+                }
+            }
             if !should_descend_directory(&traversal_policy, &path) {
                 continue;
             }
@@ -650,7 +672,7 @@ fn worker<B: Backend>(
                 continue;
             }
             #[cfg(target_os = "macos")]
-            if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts) {
+            if traversal_policy.project_metadata() {
                 match directory.bare_repository() {
                     Ok(true) => {
                         send(
@@ -979,9 +1001,7 @@ pub(super) fn run_with_policy<B: Backend>(
     };
     let mut identities = SeenEntries::default();
     for path in report.roots.clone() {
-        if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts)
-            && crate::project_git::is_metadata_path(&path)
-        {
+        if traversal_policy.project_metadata() && crate::project_git::is_metadata_path(&path) {
             if let Err(error) = record_vcs_metadata(&mut report, path, limits) {
                 add_issue(&mut report, limits, None, error);
                 shared.stop();
@@ -1028,7 +1048,7 @@ pub(super) fn run_with_policy<B: Backend>(
             continue;
         }
         #[cfg(target_os = "macos")]
-        if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts) {
+        if traversal_policy.project_metadata() {
             match directory.bare_repository() {
                 Ok(true) => {
                     if let Err(error) = record_vcs_metadata(&mut report, path, limits) {
@@ -1274,6 +1294,8 @@ pub(super) fn run_with_policy<B: Backend>(
 
 fn progress_state(report: &ScanReport, started: Instant) -> ScanProgress {
     ScanProgress {
+        total_artifacts: 0,
+        sized_artifacts: 0,
         task_id: report.task_id,
         entries: report.entries.len(),
         unique_files: report.totals.unique_files,

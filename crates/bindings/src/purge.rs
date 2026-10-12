@@ -188,38 +188,7 @@ fn ensure_preview(job: &mut PurgePreviewJob) -> Result<Arc<PurgePreview>, i32> {
 fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy>) -> Value {
     let digest = preview.plan_digest();
     let mut next_id = 1u64;
-    json!({
-        "schema_version": preview.schema_version,
-        "kind": "purge_preview",
-        "task_handle": handle.to_string(),
-        "status": preview.status.as_str(),
-        "complete": preview.complete,
-        "effects_performed": false,
-        "execution_authority": false,
-        "policy_needs_attention": policy.is_some_and(PurgePolicy::needs_attention),
-        "contract": match preview.profile {
-            PurgeProfile::Projects => "revalidated_purge_trash_v1",
-            PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
-            PurgeProfile::FinderMetadata => "revalidated_trash_v1",
-        },
-        "profile": preview.profile.as_str(),
-        "plan_identifier": digest,
-        "plan_digest": digest,
-        "roots": preview.roots.iter().map(|path| wire::NativePath(path)).collect::<Vec<_>>(),
-        "stale_days": preview.stale_days,
-        "totals": {
-            "projects": preview.counts.projects,
-            "items": preview.counts.artifacts,
-            "stale_items": preview.counts.stale_artifacts,
-            "excluded": preview.counts.excluded,
-            "exclusion_reasons": { "vcs_metadata": preview.counts.vcs_metadata },
-            "developer_caches": preview.counts.developer_caches,
-            "finder_metadata": preview.counts.finder_metadata,
-            "unsupported_operations": preview.counts.unsupported_operations,
-            "logical_bytes": sum_known(preview, true),
-            "allocated_bytes": sum_known(preview, false),
-        },
-        "projects": preview.projects.iter().map(|project| {
+    let projects = preview.projects.iter().map(|project| {
             let value = json!({
                 "root": wire::NativePath(&project.root),
                 "markers": project.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
@@ -239,9 +208,10 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                             "allocated": artifact.allocated_bytes,
                         },
                         "complete": artifact.complete,
+                        "size_complete": artifact.size_complete,
                         "modified_unix_ms": artifact.modified_unix_ms,
                         "stale": artifact.stale,
-                        "execution_supported": artifact.git.permits_cleanup(),
+                        "execution_supported": artifact.complete && artifact.size_complete && artifact.git.permits_cleanup(),
                         "git": {
                             "state": artifact.git.state.as_str(),
                             "reason": artifact.git.state.reason(),
@@ -262,7 +232,40 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                 }).collect::<Vec<_>>(),
             });
             value
-        }).collect::<Vec<_>>(),
+        }).collect::<Vec<_>>();
+    json!({
+        "schema_version": preview.schema_version,
+        "kind": "purge_preview",
+        "task_handle": handle.to_string(),
+        "status": preview.status.as_str(),
+        "complete": preview.complete,
+        "effects_performed": false,
+        "execution_authority": false,
+        "policy_needs_attention": policy.is_some_and(PurgePolicy::needs_attention),
+        "contract": match preview.profile {
+            PurgeProfile::Projects => "revalidated_purge_trash_v1",
+            PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
+            PurgeProfile::FinderMetadata => "revalidated_trash_v1",
+        },
+        "profile": preview.profile.as_str(),
+        "plan_identifier": digest,
+        "plan_digest": digest,
+        "roots": preview.roots.iter().map(|path| wire::NativePath(path)).collect::<Vec<_>>(),
+        "stale_days": preview.stale_days,
+        "scan_metrics": preview.scan_metrics,
+        "totals": {
+            "projects": preview.counts.projects,
+            "items": preview.counts.artifacts,
+            "stale_items": preview.counts.stale_artifacts,
+            "excluded": preview.counts.excluded,
+            "exclusion_reasons": { "vcs_metadata": preview.counts.vcs_metadata },
+            "developer_caches": preview.counts.developer_caches,
+            "finder_metadata": preview.counts.finder_metadata,
+            "unsupported_operations": preview.counts.unsupported_operations,
+            "logical_bytes": sum_known(preview, true),
+            "allocated_bytes": sum_known(preview, false),
+        },
+        "projects": projects,
         "developer_caches": developer_cache_items_json(preview, handle, policy),
         "finder_metadata": finder_metadata_items_json(preview, handle, policy),
         "unsupported_operations": unsupported_operations_json(preview.unsupported_operations),
@@ -1282,6 +1285,8 @@ pub unsafe extern "C" fn sayaka_purge_poll_v1(
                 out.progress_sequence = snapshot.progress_sequence;
                 if let Some(progress) = snapshot.progress {
                     out.has_progress = 1;
+                    out.total_items = progress.total_artifacts as u64;
+                    out.completed_items = progress.sized_artifacts as u64;
                     out.observed_entries = progress.entries as u64;
                     out.unique_files = progress.unique_files;
                     out.logical_bytes_known = progress.logical_bytes_known;
@@ -1741,6 +1746,7 @@ mod tests {
                 root: std::path::PathBuf::from("/repo"),
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![purge_preview::PurgeArtifact {
+                    size_complete: true,
                     git: Default::default(),
                     path: std::path::PathBuf::from("/repo/target"),
                     name: "target".into(),
@@ -1768,6 +1774,7 @@ mod tests {
                 purge_preview::PurgeProfile::Projects,
             ),
             scan_issues: Vec::new(),
+            scan_metrics: None,
             scan_issues_omitted: 0,
         }
     }

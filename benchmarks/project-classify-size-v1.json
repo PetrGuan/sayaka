@@ -1,0 +1,94 @@
+{
+  "case": "real-three-rust-and-one-node-project",
+  "method": "copy-free read-only CLI purge preview, existing owner projects, no test execution or cleanup",
+  "baseline": "d557d62 with additive diagnostic counters only",
+  "cache_state": "not controlled; local warm-cache observation, not a general speed guarantee",
+  "before": {
+    "wall_s": 4.04,
+    "status": "partial",
+    "counts": {
+      "artifacts": 5,
+      "developer_caches": 0,
+      "excluded": 86,
+      "exclusion_reasons": {
+        "vcs_metadata": 2
+      },
+      "projects": 5,
+      "stale_artifacts": 2,
+      "unsupported_operations": 0
+    },
+    "metrics": {
+      "artifact_descendant_entries": 95823,
+      "classification_entries": 99998,
+      "classification_ms": 1233,
+      "sizing_entries": 0,
+      "sizing_ms": 0,
+      "vcs_descendant_entries": 0
+    },
+    "issues": [
+      "entry_limit",
+      "link_skipped"
+    ]
+  },
+  "after": {
+    "wall_s": 13.558,
+    "status": "complete",
+    "counts": {
+      "artifacts": 5,
+      "developer_caches": 0,
+      "excluded": 2,
+      "exclusion_reasons": {
+        "vcs_metadata": 2
+      },
+      "projects": 5,
+      "stale_artifacts": 2,
+      "unsupported_operations": 0
+    },
+    "metrics": {
+      "artifact_descendant_entries": 0,
+      "classification_entries": 4261,
+      "classification_ms": 74,
+      "sizing_entries": 641798,
+      "sizing_ms": 12170,
+      "vcs_descendant_entries": 0
+    },
+    "issues": [],
+    "artifacts": [
+      {
+        "name": "node_modules",
+        "complete": true,
+        "size_complete": true,
+        "logical": 568640712,
+        "git": "untracked"
+      },
+      {
+        "name": "target",
+        "complete": true,
+        "size_complete": true,
+        "logical": 3462297910,
+        "git": "untracked"
+      },
+      {
+        "name": "target",
+        "complete": true,
+        "size_complete": true,
+        "logical": 14789923399,
+        "git": "untracked"
+      },
+      {
+        "name": "target",
+        "complete": true,
+        "size_complete": true,
+        "logical": 17335693637,
+        "git": "untracked"
+      },
+      {
+        "name": "target",
+        "complete": true,
+        "size_complete": true,
+        "logical": 0,
+        "git": "untracked"
+      }
+    ]
+  }
+}

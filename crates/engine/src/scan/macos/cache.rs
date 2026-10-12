@@ -75,6 +75,9 @@ impl CacheDirectory {
     }
 }
 impl Cursor for CacheDirectory {
+    fn bare_repository(&self) -> Result<bool, ScanError> {
+        bare_repository_at(self.fd()?, &self.original)
+    }
     fn metadata(&self) -> Metadata {
         self.original.clone()
     }

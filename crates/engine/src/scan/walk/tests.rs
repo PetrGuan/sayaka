@@ -149,6 +149,24 @@ impl Cursor for FakeCursor {
         }))
     }
 
+    fn binds_project_artifact(&self, name: &std::ffi::OsStr) -> Result<bool, ScanError> {
+        Ok(crate::purge_preview::ProjectMarker::ALL
+            .iter()
+            .any(|marker| {
+                marker
+                    .artifacts()
+                    .iter()
+                    .any(|candidate| name == *candidate)
+                    && self.tree.directories[&self.path].items.iter().any(|item| {
+                        item.name == marker.file_name()
+                            && item
+                                .metadata
+                                .as_ref()
+                                .is_ok_and(|m| m.kind == ResourceKind::File && !m.dataless)
+                    })
+            }))
+    }
+
     fn next_entry(&mut self) -> Option<Result<DirItem, ScanError>> {
         assert!(!self.tree.panic_on_read, "injected worker panic");
         if let Some(hook) = &self.tree.hook {
@@ -1047,7 +1065,7 @@ fn project_scan_excludes_git_metadata_without_a_coverage_gap() {
             limits: &limits,
             cancellation: &Cancellation::default(),
             task_id: ScanTaskId::new().unwrap(),
-            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            traversal_policy: TraversalPolicy::ProjectDiscovery,
             started: Instant::now(),
         },
         |_| {},
@@ -1078,7 +1096,7 @@ fn explicit_git_root_is_excluded_before_any_open() {
             limits: &limits,
             cancellation: &Cancellation::default(),
             task_id: ScanTaskId::new().unwrap(),
-            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            traversal_policy: TraversalPolicy::ProjectDiscovery,
             started: Instant::now(),
         },
         |_| {},
@@ -1111,7 +1129,7 @@ fn project_git_probes_do_not_open_foreign_mounts() {
             limits: &limits,
             cancellation: &Cancellation::default(),
             task_id: ScanTaskId::new().unwrap(),
-            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            traversal_policy: TraversalPolicy::ProjectDiscovery,
             started: Instant::now(),
         },
         |_| {},
@@ -1125,4 +1143,41 @@ fn project_git_probes_do_not_open_foreign_mounts() {
             .any(|i| i.code == ScanCode::MountBoundary)
     );
     assert!(!backend.0.opened.lock().unwrap().contains(&foreign));
+}
+
+#[test]
+fn project_discovery_prunes_artifacts_even_when_marker_is_listed_later() {
+    let mut tree = tree();
+    let target = add_directory(&mut tree, &root(), "target", 2);
+    for i in 0..200 {
+        add_file(&mut tree, &target, &format!("object-{i}"), 100 + i, Some(8));
+    }
+    add_file(&mut tree, &root(), "Cargo.toml", 3, Some(20));
+    let later = add_directory(&mut tree, &root(), "later", 4);
+    let modules = add_directory(&mut tree, &later, "node_modules", 5);
+    add_file(&mut tree, &later, "package.json", 6, Some(20));
+    let backend = FakeBackend(Arc::new(tree));
+    let limits = ScanLimits {
+        max_entries: 8,
+        ..Default::default()
+    };
+    let report = run_with_policy(
+        &backend,
+        vec![root()],
+        RunOptions {
+            limits: &limits,
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::ProjectDiscovery,
+            started: Instant::now(),
+        },
+        |_| {},
+    )
+    .unwrap();
+    assert!(report.complete);
+    assert_eq!(report.entries.len(), 6);
+    let opened = backend.0.opened.lock().unwrap();
+    assert!(!opened.contains(&target));
+    assert!(!opened.contains(&modules));
+    assert!(report.entries.iter().any(|e| e.path == modules));
 }
