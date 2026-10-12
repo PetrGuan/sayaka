@@ -59,6 +59,23 @@ pub fn is_metadata_path(path: &Path) -> bool {
         .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
 }
 
+/// Metadata-only bare repository signature. Fail closed on observation errors;
+/// no repository or AI-tool file contents are read. Links at signature paths
+/// count conservatively as metadata rather than being followed.
+pub(crate) fn bare_repository(path: &Path) -> Result<bool, std::io::Error> {
+    for (name, directory) in [("HEAD", false), ("objects", true), ("refs", true)] {
+        match std::fs::symlink_metadata(path.join(name)) {
+            Ok(m)
+                if m.file_type().is_symlink()
+                    || (if directory { m.is_dir() } else { m.is_file() }) => {}
+            Ok(_) => return Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(true)
+}
+
 fn repository(path: &Path) -> Result<Option<PathBuf>, ()> {
     for (depth, ancestor) in path.ancestors().enumerate() {
         if depth >= 64 {
@@ -75,10 +92,7 @@ fn repository(path: &Path) -> Result<Option<PathBuf>, ()> {
             Err(_) => return Err(()),
         }
         // Bare repositories are never treated as generated project output.
-        if ancestor.join("HEAD").exists()
-            && ancestor.join("objects").is_dir()
-            && ancestor.join("refs").is_dir()
-        {
+        if bare_repository(ancestor).map_err(|_| ())? {
             return Err(());
         }
     }
@@ -209,6 +223,25 @@ mod tests {
                 ..Default::default()
             }
             .permits_cleanup()
+        );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod admission_tests {
+    use super::*;
+    #[test]
+    fn nested_bare_repository_refuses_cleanup_admission() {
+        let temporary = tempfile::tempdir().unwrap();
+        let artifact = temporary.path().canonicalize().unwrap().join("target");
+        let bare = artifact.join("saved-history");
+        std::fs::create_dir_all(bare.join("objects")).unwrap();
+        std::fs::create_dir_all(bare.join("refs")).unwrap();
+        std::fs::write(bare.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+        assert!(bare_repository(&bare).unwrap());
+        assert_eq!(
+            require_cleanup(&[artifact], &Cancellation::default()).unwrap_err(),
+            "Contains Git metadata"
         );
     }
 }

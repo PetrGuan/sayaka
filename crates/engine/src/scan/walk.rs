@@ -464,6 +464,42 @@ fn worker<B: Backend>(
             } {
                 continue;
             }
+            if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts)
+                && item
+                    .metadata
+                    .as_ref()
+                    .is_ok_and(|m| m.kind == ResourceKind::Directory && !m.dataless)
+            {
+                match crate::project_git::bare_repository(&path) {
+                    Ok(true) => {
+                        send(
+                            &sender,
+                            Event::VcsMetadata(path),
+                            shared,
+                            limits,
+                            cancellation,
+                            started,
+                        );
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(_) => {
+                        send(
+                            &sender,
+                            issue_event(
+                                Some(path),
+                                ScanCode::Io,
+                                "Git metadata could not be checked",
+                            ),
+                            shared,
+                            limits,
+                            cancellation,
+                            started,
+                        );
+                        continue;
+                    }
+                }
+            }
             let metadata = match &item.metadata {
                 Ok(metadata) => metadata,
                 Err(error) => {
@@ -953,6 +989,28 @@ pub(super) fn run_with_policy<B: Backend>(
         }
         if shared.should_stop(cancellation, started, limits.time_budget) {
             break;
+        }
+        if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts) {
+            match crate::project_git::bare_repository(&path) {
+                Ok(true) => {
+                    if let Err(error) = record_vcs_metadata(&mut report, path, limits) {
+                        add_issue(&mut report, limits, None, error);
+                        shared.stop();
+                        break;
+                    }
+                    continue;
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    add_issue(
+                        &mut report,
+                        limits,
+                        Some(path),
+                        ScanError::new(ScanCode::Io, "Git metadata could not be checked"),
+                    );
+                    continue;
+                }
+            }
         }
         let Some(permit) = reserve(&counters, limits.max_open_dirs) else {
             add_issue(
