@@ -639,14 +639,14 @@ mod tests {
     fn git_refusal_changes_fingerprint_and_blocks_both_resolvers() {
         use sayaka_engine::project_git::GitState;
         let mut preview = preview_with_artifacts(std::path::Path::new("/fixture"));
-        let digest = preview.fingerprint();
+        let digest = preview.plan_digest();
         for state in [
             GitState::Tracked,
             GitState::Unknown,
             GitState::ContainsMetadata,
         ] {
             preview.projects[0].artifacts[0].git.state = state;
-            assert_ne!(preview.fingerprint(), digest);
+            assert_ne!(preview.plan_digest(), digest);
             let error = purge_preview::resolve_selections_by_paths(
                 &preview,
                 &["/fixture/app/target".into()],
