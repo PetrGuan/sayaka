@@ -323,3 +323,6 @@ pub mod installer_size;
 pub mod diagnostic_reads;
 #[cfg(target_os = "macos")]
 pub mod diagnostic_tools;
+
+#[cfg(target_os = "macos")]
+pub mod project_git;

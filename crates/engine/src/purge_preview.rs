@@ -251,6 +251,7 @@ impl PurgeOptions {
 
 #[derive(Clone, Debug)]
 pub struct PurgeArtifact {
+    pub git: crate::project_git::GitObservation,
     pub path: PathBuf,
     pub name: String,
     /// Markers whose tables bind this directory name.
@@ -836,6 +837,7 @@ pub struct PurgeCounts {
     /// Projects or artifacts excluded because they nest inside another
     /// project's artifact, or because the artifact is a dataless placeholder.
     pub excluded: usize,
+    pub vcs_metadata: usize,
     pub developer_caches: usize,
     pub finder_metadata: usize,
     pub unsupported_operations: usize,
@@ -946,6 +948,19 @@ impl PurgePreview {
             }
             for artifact in &project.artifacts {
                 hash_path(&mut hasher, &artifact.path);
+                hasher.update(artifact.git.state.as_str().as_bytes());
+                hasher.update([match artifact.git.ignored {
+                    None => 0,
+                    Some(false) => 1,
+                    Some(true) => 2,
+                }]);
+                if let Some(repo) = &artifact.git.repository {
+                    hash_path(&mut hasher, repo);
+                }
+                if let Some(tool) = &artifact.git.tool {
+                    hasher.update(tool.as_bytes());
+                }
+                hasher.update([0]);
                 hasher.update(artifact.name.as_bytes());
                 hasher.update([0]);
                 for marker in &artifact.markers {
@@ -967,6 +982,7 @@ impl PurgePreview {
         hasher.update((self.counts.artifacts as u64).to_le_bytes());
         hasher.update((self.counts.stale_artifacts as u64).to_le_bytes());
         hasher.update((self.counts.excluded as u64).to_le_bytes());
+        hasher.update((self.counts.vcs_metadata as u64).to_le_bytes());
         hasher.update((self.counts.developer_caches as u64).to_le_bytes());
         hasher.update((self.counts.finder_metadata as u64).to_le_bytes());
         let digest = hasher.finalize();
@@ -1066,7 +1082,7 @@ pub fn resolve_selections_by_paths(
                 "selection names no artifact of this preview: {}",
                 requested.display()
             )
-        })?);
+        })??);
     }
     Ok(selections)
 }
@@ -1086,13 +1102,16 @@ pub fn resolve_selections_by_ids(
         }
         selections.push(
             selection_for_id(preview, *id)
-                .ok_or_else(|| format!("purge item id {} is not in this preview", id.0))?,
+                .ok_or_else(|| format!("purge item id {} is not in this preview", id.0))??,
         );
     }
     Ok(selections)
 }
 
-fn selection_for_id(preview: &PurgePreview, id: PurgeItemId) -> Option<PurgeSelection> {
+fn selection_for_id(
+    preview: &PurgePreview,
+    id: PurgeItemId,
+) -> Option<Result<PurgeSelection, String>> {
     let mut current = 1u64;
     for project in &preview.projects {
         for artifact in &project.artifacts {
@@ -1105,7 +1124,10 @@ fn selection_for_id(preview: &PurgePreview, id: PurgeItemId) -> Option<PurgeSele
     None
 }
 
-fn selection_for_path(preview: &PurgePreview, path: &std::path::Path) -> Option<PurgeSelection> {
+fn selection_for_path(
+    preview: &PurgePreview,
+    path: &std::path::Path,
+) -> Option<Result<PurgeSelection, String>> {
     for project in &preview.projects {
         for artifact in &project.artifacts {
             if artifact.path == path {
@@ -1116,8 +1138,14 @@ fn selection_for_path(preview: &PurgePreview, path: &std::path::Path) -> Option<
     None
 }
 
-fn selection_from_parts(project: &PurgeProject, artifact: &PurgeArtifact) -> PurgeSelection {
-    PurgeSelection {
+fn selection_from_parts(
+    project: &PurgeProject,
+    artifact: &PurgeArtifact,
+) -> Result<PurgeSelection, String> {
+    if !artifact.git.permits_cleanup() {
+        return Err(artifact.git.state.reason().into());
+    }
+    Ok(PurgeSelection {
         artifact: artifact.path.clone(),
         project_root: project.root.clone(),
         markers: artifact
@@ -1125,7 +1153,7 @@ fn selection_from_parts(project: &PurgeProject, artifact: &PurgeArtifact) -> Pur
             .iter()
             .map(|marker| project.root.join(marker.file_name()))
             .collect(),
-    }
+    })
 }
 
 /// Builds the read-only purge preview from one finished scan index.
@@ -1225,7 +1253,9 @@ fn project_purge_preview(
         let Some(entry) = index.entry(id) else {
             continue;
         };
-        if entry.kind != ResourceKind::Directory {
+        if entry.kind != ResourceKind::Directory
+            || crate::project_git::is_metadata_path(&entry.path)
+        {
             continue;
         }
         directories.push(id);
@@ -1287,7 +1317,11 @@ fn project_purge_preview(
     // artifact; their evidence belongs to the outer project alone.
     artifact_paths.sort();
     let mut output = Vec::new();
-    let mut counts = PurgeCounts::default();
+    let mut counts = PurgeCounts {
+        vcs_metadata: index.report().vcs_metadata.len(),
+        excluded: index.report().vcs_metadata.len(),
+        ..PurgeCounts::default()
+    };
     for (root, markers, artifacts) in projects {
         if artifact_paths
             .iter()
@@ -1330,7 +1364,21 @@ fn project_purge_preview(
             if stale == Some(true) {
                 counts.stale_artifacts += 1;
             }
+            let git = if crate::project_git::is_metadata_path(&path)
+                || index
+                    .report()
+                    .vcs_metadata
+                    .iter()
+                    .any(|p| p.starts_with(&path))
+                || index.report().entries.iter().any(|e| {
+                    e.path.starts_with(&path) && crate::project_git::is_metadata_path(&e.path)
+                }) {
+                crate::project_git::GitObservation::contains_metadata()
+            } else {
+                crate::project_git::GitObservation::default()
+            };
             out_artifacts.push(PurgeArtifact {
+                git,
                 path,
                 name,
                 markers: bound,

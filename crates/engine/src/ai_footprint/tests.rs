@@ -41,6 +41,7 @@ fn footprint(children: &[(&str, ResourceKind)]) -> Footprint {
             complete: true,
             entries,
             issues: vec![],
+            vcs_metadata: Vec::new(),
             issues_omitted: 0,
             totals: ScanTotals::default(),
             metrics: ScanMetrics::default(),

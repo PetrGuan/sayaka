@@ -36,6 +36,7 @@ static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TraversalPolicy {
     Default,
+    ProjectArtifacts,
     PruneAppBundles,
     PruneNativePackages,
     /// Internal profile scope; never used for general disk-size scans.
@@ -395,6 +396,8 @@ pub struct ScanReport {
     /// Complete traversal within the declared no-links policy, not a snapshot.
     pub complete: bool,
     pub entries: Vec<ScanEntry>,
+    /// Intentionally excluded Git metadata; shares the entry/path retention budgets.
+    pub vcs_metadata: Vec<PathBuf>,
     pub issues: Vec<ScanIssue>,
     pub issues_omitted: usize,
     pub totals: ScanTotals,

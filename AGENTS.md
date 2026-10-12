@@ -54,7 +54,10 @@ or permanent deletion after a failed trash operation. Process launch is limited
 to the signed `/usr/bin/xcrun` boundary in `sayaka-platform-macos::devtools`
 and the fixed read-only `/usr/bin/tmutil` three-verb boundary in
 `sayaka-platform-macos::system_storage`, approved in
-[docs/SYSTEM_STORAGE.md](docs/SYSTEM_STORAGE.md). No caller command arguments. The owner-approved read-only diagnostic table in
+[docs/SYSTEM_STORAGE.md](docs/SYSTEM_STORAGE.md). The owner-approved project Git boundary in `sayaka-platform-macos::project_git`
+also permits only fixed read-only `ls-files` and `check-ignore` queries through
+`/usr/bin/git`, as documented in [docs/PURGE.md](docs/PURGE.md).
+No caller command arguments. The owner-approved read-only diagnostic table in
 [docs/MAINTENANCE.md](docs/MAINTENANCE.md) additionally permits its fixed tools
 and native observation APIs, with no helper or maintenance effects.
 

@@ -1230,6 +1230,14 @@ impl PurgeSession {
                 }
             }
         }
+        crate::project_git::require_cleanup(
+            &selections
+                .iter()
+                .map(|s| s.artifact.clone())
+                .collect::<Vec<_>>(),
+            cancellation,
+        )
+        .map_err(|reason| journal::invalid(&reason))?;
         // Scope over the project roots: every artifact is a strict child of
         // its project root, so even a single-item selection keeps the
         // target strictly beneath the scope (the native admission rule).
@@ -1318,6 +1326,17 @@ impl PurgeSession {
     /// and re-evaluates the nesting exclusion against the live filesystem;
     /// any change refuses approval, never substitutes the new state.
     pub fn approve(&mut self, preview: &Plan) -> Result<Approval, Error> {
+        let paths = self
+            .selections
+            .iter()
+            .map(|s| s.artifact.clone())
+            .collect::<Vec<_>>();
+        if crate::project_git::inspect(&paths, &Cancellation::default())
+            .values()
+            .any(|g| !g.permits_cleanup())
+        {
+            return Err(Error::new(ReasonCode::ResourceChanged));
+        }
         for selection in &self.selections {
             if purge_nesting_observed(&selection.artifact) {
                 return Err(Error::new(ReasonCode::ResourceChanged));
@@ -1360,6 +1379,13 @@ impl PurgeSession {
                     PolicyGuardStatus::Refused(reason) => {
                         return Ok(GuardDecision::Refused(reason));
                     }
+                }
+            }
+            if matches!(point, GuardPoint::LastNative) {
+                if let Err(reason) =
+                    crate::project_git::require_cleanup(&[path.to_path_buf()], cancellation)
+                {
+                    return Ok(GuardDecision::Refused(reason));
                 }
             }
             // Last native guard per item: re-evaluate nesting immediately

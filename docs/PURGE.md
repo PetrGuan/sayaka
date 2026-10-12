@@ -39,6 +39,39 @@ and a "fresh" one may be disposable. Sizes are deduplicated within each
 artifact subtree; sibling totals can overlap through hard links and are not
 additive, and no displayed byte count is guaranteed reclaimable.
 
+## Git safety for project artifacts
+
+Project scans omit `.git` directories and worktree link files before admitting
+entries or following links. Exclusions share the entry/path retention budgets and
+are counted under `exclusion_reasons.vcs_metadata`; they are not scan errors.
+Explicit roots inside `.git` are excluded too. The repository root itself stays
+in scope. An artifact containing nested Git metadata is refused as a whole.
+
+Each artifact carries additive `git` evidence (`state`, `reason`, `repository`,
+`ignored`, `tool`) and `execution_supported`. The fixed Apple-signed
+`/usr/bin/git` executable is resolved and recorded once per observation pass.
+Queries are grouped by repository and share a two-second deadline. `ls-files`
+uses literal case-insensitive pathspecs, NUL records, bounded output and native
+paths. `check-ignore` records positive ignore evidence; ignore status alone
+never authorizes cleanup. Missing/failing Git produces `unknown`, not an empty
+index. Tracked files produce `tracked` and refuse the complete artifact.
+
+The process environment is cleared and allow-listed, with `GIT_OPTIONAL_LOCKS=0`,
+system/global Git configuration disabled, no prompt, and fsmonitor/hooks disabled.
+No shell or caller-supplied commands are accepted. Linked worktree Git state is
+read through Git's own link handling; worktree inventory and removal are outside
+this contract. No AI-tool contents are read.
+
+Unknown Git state stays Review and is not selectable until a successful refresh.
+Artifacts outside a repository retain the existing marker/activity rules. Git
+observations participate in preview fingerprints and are refreshed at session
+preparation, approval and the final native guard. Preparation and the final guard
+also demand a complete bounded metadata walk of selected artifacts to refuse
+nested repositories, including public engine selections not created by a preview.
+These checks can refuse very large/inaccessible selected trees; they never turn
+partial coverage into permission. The documented last-check/path-replacement
+race remains; Git observations are not filesystem locks.
+
 ## Developer cache profile
 
 `--profile developer-caches` previews known developer-tool cache locations under

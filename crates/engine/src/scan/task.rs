@@ -144,6 +144,7 @@ mod tests {
             complete: status == ScanStatus::Complete,
             entries: vec![],
             issues: vec![],
+            vcs_metadata: Vec::new(),
             issues_omitted: 0,
             totals: ScanTotals::default(),
             metrics: ScanMetrics::default(),

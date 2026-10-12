@@ -129,6 +129,26 @@ impl Cursor for FakeCursor {
     fn metadata(&self) -> Metadata {
         self.tree.directories[&self.path].metadata.clone()
     }
+    #[cfg(target_os = "macos")]
+    fn bare_repository(&self) -> Result<bool, ScanError> {
+        assert!(
+            self.tree.opened.lock().unwrap().contains(&self.path),
+            "Git probes require an admitted handle"
+        );
+        let dir = &self.tree.directories[&self.path];
+        Ok([
+            ("HEAD", ResourceKind::File),
+            ("objects", ResourceKind::Directory),
+            ("refs", ResourceKind::Directory),
+        ]
+        .iter()
+        .all(|(name, kind)| {
+            dir.items.iter().any(|item| {
+                item.name == *name && item.metadata.as_ref().is_ok_and(|m| m.kind == *kind)
+            })
+        }))
+    }
+
     fn next_entry(&mut self) -> Option<Result<DirItem, ScanError>> {
         assert!(!self.tree.panic_on_read, "injected worker panic");
         if let Some(hook) = &self.tree.hook {
@@ -1008,4 +1028,101 @@ fn cache_worker_start_failure_and_child_panic_return_without_stranding_queue() {
             );
         }
     }
+}
+
+#[test]
+fn project_scan_excludes_git_metadata_without_a_coverage_gap() {
+    let mut tree = tree();
+    let git = add_directory(&mut tree, &root(), ".git", 2);
+    add_directory(&mut tree, &git, "objects", 3);
+    let linked = add_directory(&mut tree, &root(), "linked", 4);
+    add_file(&mut tree, &linked, ".git", 5, Some(40));
+    add_file(&mut tree, &root(), "Cargo.toml", 6, Some(20));
+    let backend = FakeBackend(Arc::new(tree));
+    let limits = ScanLimits::default();
+    let report = run_with_policy(
+        &backend,
+        vec![root()],
+        RunOptions {
+            limits: &limits,
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            started: Instant::now(),
+        },
+        |_| {},
+    )
+    .unwrap();
+    assert!(report.complete);
+    assert!(report.issues.is_empty());
+    assert_eq!(report.vcs_metadata.len(), 2);
+    assert!(!backend.0.opened.lock().unwrap().contains(&git));
+    assert!(
+        report
+            .entries
+            .iter()
+            .all(|e| !crate::project_git::is_metadata_path(&e.path))
+    );
+    assert!(report.entries.iter().any(|e| e.path == root()));
+}
+
+#[test]
+fn explicit_git_root_is_excluded_before_any_open() {
+    let backend = FakeBackend(Arc::new(tree()));
+    let limits = ScanLimits::default();
+    let path = root().join(".git/objects");
+    let report = run_with_policy(
+        &backend,
+        vec![path.clone()],
+        RunOptions {
+            limits: &limits,
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            started: Instant::now(),
+        },
+        |_| {},
+    )
+    .unwrap();
+    assert!(report.complete);
+    assert!(report.issues.is_empty());
+    assert_eq!(report.vcs_metadata, vec![path]);
+    assert!(backend.0.opened.lock().unwrap().is_empty());
+}
+
+#[test]
+fn project_git_probes_do_not_open_foreign_mounts() {
+    let mut tree = tree();
+    let foreign = add_directory(&mut tree, &root(), "foreign", 2);
+    let metadata = tree.directories.get_mut(&root()).unwrap().items[0]
+        .metadata
+        .as_mut()
+        .unwrap();
+    metadata.identity = FileIdentity::Unix {
+        device: 2,
+        inode: 2,
+    };
+    let backend = FakeBackend(Arc::new(tree));
+    let limits = ScanLimits::default();
+    let report = run_with_policy(
+        &backend,
+        vec![root()],
+        RunOptions {
+            limits: &limits,
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            started: Instant::now(),
+        },
+        |_| {},
+    )
+    .unwrap();
+    assert!(!report.complete);
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.code == ScanCode::MountBoundary)
+    );
+    assert!(!backend.0.opened.lock().unwrap().contains(&foreign));
 }

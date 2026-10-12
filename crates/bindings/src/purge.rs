@@ -212,6 +212,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
             "items": preview.counts.artifacts,
             "stale_items": preview.counts.stale_artifacts,
             "excluded": preview.counts.excluded,
+            "exclusion_reasons": { "vcs_metadata": preview.counts.vcs_metadata },
             "developer_caches": preview.counts.developer_caches,
             "finder_metadata": preview.counts.finder_metadata,
             "unsupported_operations": preview.counts.unsupported_operations,
@@ -240,6 +241,14 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                         "complete": artifact.complete,
                         "modified_unix_ms": artifact.modified_unix_ms,
                         "stale": artifact.stale,
+                        "execution_supported": artifact.git.permits_cleanup(),
+                        "git": {
+                            "state": artifact.git.state.as_str(),
+                            "reason": artifact.git.state.reason(),
+                            "ignored": artifact.git.ignored,
+                            "repository": artifact.git.repository.as_ref().map(|p| wire::NativePath(p)),
+                            "tool": artifact.git.tool,
+                        },
                         "reasons": reasons(artifact, policy),
                         "policy_excluded": policy.is_some_and(|p| p.excludes(&artifact.path)),
                         "evidence": {
@@ -1732,6 +1741,7 @@ mod tests {
                 root: std::path::PathBuf::from("/repo"),
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![purge_preview::PurgeArtifact {
+                    git: Default::default(),
                     path: std::path::PathBuf::from("/repo/target"),
                     name: "target".into(),
                     markers: vec![purge_preview::ProjectMarker::CargoToml],
@@ -1747,6 +1757,7 @@ mod tests {
                 artifacts: 1,
                 stale_artifacts: 1,
                 excluded: 0,
+                vcs_metadata: 0,
                 developer_caches: 0,
                 finder_metadata: 0,
                 unsupported_operations: 0,
