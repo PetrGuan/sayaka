@@ -175,6 +175,7 @@ pub fn scan_preview(
         }
     }
     if options.profile == PurgeProfile::Projects {
+        crate::project_activity::observe(&mut preview, cancellation, started + limits.time_budget);
         projects::measure(
             &mut preview,
             &index,

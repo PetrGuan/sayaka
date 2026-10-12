@@ -235,6 +235,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                         "size_complete": artifact.size_complete,
                         "modified_unix_ms": artifact.modified_unix_ms,
                         "stale": artifact.stale,
+                        "project_activity": artifact.project_activity,
                         "execution_supported": artifact.execution_supported(),
                         "git": {
                             "state": artifact.git.state.as_str(),
@@ -1777,6 +1778,7 @@ mod tests {
                 root: std::path::PathBuf::from("/repo"),
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![purge_preview::PurgeArtifact {
+                        project_activity: None,
                     signature: None,
                     size_complete: true,
                     git: Default::default(),

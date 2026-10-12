@@ -116,14 +116,13 @@ the user had dragged the folder in Finder at that moment. The execution
 output discloses this: displayed byte totals are observations, not a
 promise of what moved, and never "reclaimed space".
 
-## Running-build limitation (disclosed, not detected)
+## Running-build observations
 
-A project build tool running against an artifact directory is **not**
-detected by this contract. Moving `target/` while `cargo` writes to it can
-break that build; the artifact moves as user-visible data under ordinary
-authority, exactly as Finder would move it. This limitation is printed in
-the execution output. Process working-directory or file-handle inspection
-is explicitly out of scope for this slice.
+Native same-user process executable/cwd observations and bounded known lock
+checks refuse running or unverified project activity at preview, admission and
+the final native guard. See [PURGE.md](PURGE.md#project-activity) for budgets and
+coverage. These are observations, not an atomic lock against every build tool;
+a new build may start after the final check, and unlisted tools are not covered.
 
 ## Approval, confirmation and journal
 
@@ -347,3 +346,5 @@ available for existing clients but do not opt into a policy directory.
 Optimize currently has no effectful operation, so there is no optimize
 execution set to filter. Any future optimize effect must take the same
 policy snapshot and guard before it can be enabled in the App Store client.
+
+Project build activity is also checked at admission and the final native guard; see [PURGE.md](PURGE.md#project-activity). Running or unverified activity refuses removal.

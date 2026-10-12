@@ -26,6 +26,7 @@ pub mod maintenance_catalog;
 pub mod model;
 pub mod plan;
 pub mod project_git;
+pub mod project_activity;
 pub mod purge_preview;
 mod readonly_task;
 pub mod receipt;

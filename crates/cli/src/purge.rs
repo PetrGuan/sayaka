@@ -40,7 +40,7 @@ pub fn command() -> Command {
                 .long("stale-days")
                 .value_name("DAYS")
                 .help(format!(
-                    "Artifact mtime staleness cutoff in days [default: {DEFAULT_STALE_DAYS}, max: {MAX_STALE_DAYS}]"
+                    "Project inactivity cutoff in days [default: {DEFAULT_STALE_DAYS}, max: {MAX_STALE_DAYS}]"
                 ))
                 .value_parser(value_parser!(u32)),
         )
@@ -78,7 +78,7 @@ pub fn command() -> Command {
                 .help("Private M3 journal directory for the durable intent/outcome record"),
         )
         .after_help(
-            "Default is a read-only preview. --execute requires an interactive terminal and explicit\n--only selections from this invocation's preview (no select-all, no staleness rule); each\nartifact moves to Trash as one container (recovery: Finder 'Put Back' plus rebuild from the\nretained marker; markers are never targets). A running build tool is not detected; displayed\nbytes are observations, not reclaimed space.",
+            "Default is a read-only preview. --execute requires an interactive terminal and explicit\n--only selections from this invocation's preview (no select-all, no staleness rule); each\nartifact moves to Trash as one container (recovery: Finder 'Put Back' plus rebuild from the\nretained marker; markers are never targets). Project build activity is rechecked before removal; displayed\nbytes are observations, not reclaimed space.",
         )
 }
 
@@ -330,7 +330,7 @@ fn run_execution(
     )?;
     writeln!(
         io::stdout().lock(),
-        "Displayed bytes were observations, not reclaimed space; a running build tool was not detected."
+        "Displayed bytes were observations, not reclaimed space. Build activity was checked before removal; tools can start again after that check."
     )?;
     Ok(report.exit_code())
 }
@@ -408,6 +408,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                         "size_complete": artifact.size_complete,
                 "modified_unix_ms": artifact.modified_unix_ms,
                 "stale": artifact.stale,
+                "project_activity": artifact.project_activity,
                         "execution_supported": artifact.execution_supported(),
                         "git": {
                             "state": artifact.git.state.as_str(),
@@ -603,6 +604,7 @@ mod tests {
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![
                     purge_preview::PurgeArtifact {
+                        project_activity: None,
                         signature: None,
                         size_complete: true,
                         git: sayaka_engine::project_git::GitObservation {
@@ -619,6 +621,7 @@ mod tests {
                         stale: Some(false),
                     },
                     purge_preview::PurgeArtifact {
+                        project_activity: None,
                         signature: None,
                         size_complete: true,
                         git: sayaka_engine::project_git::GitObservation {

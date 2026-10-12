@@ -161,6 +161,24 @@ impl GitReader {
         Ok(states)
     }
 
+    /// Commit date and porcelain status, bounded to two seconds and no index refresh.
+    pub fn activity(&self, repo: &Path, remaining: Duration, cancel: &dyn Fn() -> bool)
+        -> (Option<i64>, Option<bool>) {
+        let deadline = Instant::now() + remaining.min(Duration::from_secs(2));
+        let prefix = || vec![OsString::from("-c"), "core.fsmonitor=false".into(),
+            "-c".into(), "core.hooksPath=/dev/null".into(), "-C".into(), repo.as_os_str().to_owned()];
+        let mut args = prefix();
+        args.extend(["log".into(), "-1".into(), "--format=%ct".into(), "--no-show-signature".into()]);
+        let commit = self.run(&args, deadline, cancel, None).ok().filter(|o| o.success)
+            .and_then(|o| std::str::from_utf8(&o.stdout).ok()?.trim().parse::<i64>().ok())
+            .filter(|n| *n >= 0).and_then(|n| n.checked_mul(1000));
+        let mut args = prefix();
+        args.extend(["status".into(), "--porcelain=v1".into(), "-z".into(), "--untracked-files=normal".into(), "--ignore-submodules=all".into()]);
+        let dirty = self.run(&args, deadline, cancel, None).ok().filter(|o| o.success)
+            .map(|o| !o.stdout.is_empty());
+        (commit, dirty)
+    }
+
     fn run(
         &self,
         args: &[OsString],
