@@ -12,7 +12,7 @@ These are conventional generated-directory heuristics, not proof that a project 
 | `python_dist` | `pyproject.toml` | `dist` | Python distributions. Rebuilt by the Python build tool. | Marker is a regular file |
 | `python_build` | `pyproject.toml` | `build` | Python build output. Rebuilt by the Python build tool. | Marker is a regular file |
 | `swift_build` | `Package.swift` | `.build` | Swift build output. Rebuilt by swift build; dependencies may download again. | Marker is a regular file |
-| `xcode_build` | `*.xcodeproj|*.xcworkspace` | `build` | Xcode build output. Rebuilt by the next Xcode build. | Marker is a directory |
+| `xcode_build` | `*.xcodeproj` or `*.xcworkspace` | `build` | Xcode build output. Rebuilt by the next Xcode build. | Marker is a directory |
 | `next_build` | `package.json` | `.next` | Next.js build output. Rebuilt by next build. | Marker is a regular file |
 | `nuxt_build` | `package.json` | `.nuxt` | Nuxt build output. Rebuilt by nuxt build. | Marker is a regular file |
 | `svelte_build` | `package.json` | `.svelte-kit` | SvelteKit build output. Rebuilt by the SvelteKit build command. | Marker is a regular file |
@@ -20,17 +20,17 @@ These are conventional generated-directory heuristics, not proof that a project 
 | `parcel_cache` | `package.json` | `.parcel-cache` | Parcel cache. Recreated by the next Parcel build. | Marker is a regular file |
 | `angular_cache` | `package.json` | `.angular/cache` | Angular cache. Recreated by the next Angular build. | Marker is a regular file |
 | `next_export` | `package.json` | `out` | Next.js static export. Rebuilt by next build with static export enabled. | Regular `next.config.*` file required |
-| `gradle_build` | `build.gradle|build.gradle.kts|settings.gradle*` | `build` | Gradle build output. Rebuilt by the next Gradle build. | Marker is a regular file |
-| `gradle_cache` | `build.gradle|build.gradle.kts|settings.gradle*` | `.gradle` | Gradle project cache. Recreated by Gradle; the next build may take longer. | Marker is a regular file |
+| `gradle_build` | `build.gradle`, `build.gradle.kts` or `settings.gradle*` | `build` | Gradle build output. Rebuilt by the next Gradle build. | Marker is a regular file |
+| `gradle_cache` | `build.gradle`, `build.gradle.kts` or `settings.gradle*` | `.gradle` | Gradle project cache. Recreated by Gradle; the next build may take longer. | Marker is a regular file |
 | `pods` | `Podfile` | `Pods` | CocoaPods dependencies. Restored by pod install; downloads may be needed. | Regular `Podfile.lock` and Git ignored=true required |
 | `flutter_tool` | `pubspec.yaml` | `.dart_tool` | Dart tooling data. Recreated by flutter pub get and the next build. | Marker is a regular file |
 | `flutter_build` | `pubspec.yaml` | `build` | Flutter build output. Rebuilt by the next Flutter build. | Marker is a regular file |
 | `ruby_bundle` | `Gemfile` | `vendor/bundle` | Bundler dependencies. Restored by bundle install; downloads may be needed. | Marker is a regular file |
-| `python_venv` | `pyproject.toml|requirements.txt|setup.py` | `.venv` | Python virtual environment. Recreate the environment and reinstall dependencies. | Marker is a regular file |
-| `python_tox` | `pyproject.toml|requirements.txt|setup.py` | `.tox` | Tox environments. Recreated by the next tox run. | Marker is a regular file |
-| `python_mypy` | `pyproject.toml|requirements.txt|setup.py` | `.mypy_cache` | Mypy cache. Recreated by the next mypy run. | Marker is a regular file |
-| `python_pytest` | `pyproject.toml|requirements.txt|setup.py` | `.pytest_cache` | Pytest cache. Recreated by the next pytest run. | Marker is a regular file |
-| `python_ruff` | `pyproject.toml|requirements.txt|setup.py` | `.ruff_cache` | Ruff cache. Recreated by the next Ruff run. | Marker is a regular file |
+| `python_venv` | `pyproject.toml`, `requirements.txt` or `setup.py` | `.venv` | Python virtual environment. Recreate the environment and reinstall dependencies. | Marker is a regular file |
+| `python_tox` | `pyproject.toml`, `requirements.txt` or `setup.py` | `.tox` | Tox environments. Recreated by the next tox run. | Marker is a regular file |
+| `python_mypy` | `pyproject.toml`, `requirements.txt` or `setup.py` | `.mypy_cache` | Mypy cache. Recreated by the next mypy run. | Marker is a regular file |
+| `python_pytest` | `pyproject.toml`, `requirements.txt` or `setup.py` | `.pytest_cache` | Pytest cache. Recreated by the next pytest run. | Marker is a regular file |
+| `python_ruff` | `pyproject.toml`, `requirements.txt` or `setup.py` | `.ruff_cache` | Ruff cache. Recreated by the next Ruff run. | Marker is a regular file |
 | `cmake_build` | `CMakeLists.txt` | `build` | CMake build output. Reconfigure and rebuild with CMake. | Marker is a regular file |
 | `cmake_named` | `CMakeLists.txt` | `cmake-build-*` | CMake build output. Reconfigure and rebuild with CMake. | Marker is a regular file |
 

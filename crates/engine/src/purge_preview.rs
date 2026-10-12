@@ -262,6 +262,7 @@ pub enum ArtifactSignature {
         cache_tag: bool,
     },
     XcodeDerivedData {
+        cache_tag: bool,
         signals: Vec<String>,
         workspace: Option<PathBuf>,
         workspace_state: String,
@@ -284,6 +285,7 @@ impl ArtifactSignature {
                 workspace,
                 signals,
                 workspace_state,
+                ..
             } => {
                 workspace.as_ref().map_or(0, |p| p.as_os_str().len())
                     + signals.iter().map(String::len).sum::<usize>()
@@ -311,6 +313,7 @@ impl ArtifactSignature {
     #[cfg(target_os = "macos")]
     pub(crate) fn from_native(e: sayaka_platform_macos::xcode_build::Evidence) -> Self {
         Self::XcodeDerivedData {
+            cache_tag: false,
             signals: e.signals.into_iter().map(str::to_owned).collect(),
             workspace: e.workspace,
             workspace_state: e.workspace_state.into(),
@@ -1536,8 +1539,18 @@ fn project_purge_preview(
             });
         }
     }
+    let mut grouped: std::collections::BTreeMap<PathBuf, PurgeProject> = std::collections::BTreeMap::new();
+    for mut project in output {
+        if let Some(existing) = grouped.get_mut(&project.root) {
+            for marker in project.markers {
+                if !existing.markers.contains(&marker) { existing.markers.push(marker); }
+            }
+            existing.artifacts.append(&mut project.artifacts);
+        } else { grouped.insert(project.root.clone(), project); }
+    }
+    let mut output: Vec<_> = grouped.into_values().collect();
+    for project in &mut output { project.artifacts.sort_by(|a, b| a.path.cmp(&b.path)); }
     counts.projects = output.len();
-    output.sort_by(|left, right| left.root.cmp(&right.root));
     let report = index.report();
     let status = preview_status(report);
     Ok(PurgePreview {
@@ -2096,6 +2109,7 @@ mod tests {
         let data = root.join("Artifacts/CustomData");
         fs::create_dir_all(data.join("Build/Products/nested")).unwrap();
         fs::create_dir_all(data.join("Logs/Build")).unwrap();
+        fs::write(data.join("CACHEDIR.TAG"), b"Signature: 8a477f597d28d172789f06886806bc55").unwrap();
         fs::write(
             data.join("Build/Products/nested/large"),
             b"size me separately",
@@ -2127,6 +2141,25 @@ mod tests {
             "xcode_build_signature_v1"
         );
         assert!(artifact.markers.is_empty());
+        assert!(matches!(&artifact.signature, Some(ArtifactSignature::XcodeDerivedData { cache_tag: true, .. })));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_signatures_group_multiple_artifacts_under_one_project_root() {
+        let fixture = fixture_tree();
+        let root = fixture.path().canonicalize().unwrap();
+        let cancel = Cancellation::default();
+        let report = crate::scan::scan_with_policy(&[root.clone()], &ScanLimits::default(), &cancel,
+            crate::scan::TraversalPolicy::ProjectDiscovery, |_| {}).unwrap();
+        let index = ScanTree::build(report, &cancel).unwrap();
+        let preview = purge_preview(&index, &PurgeOptions::default(), SystemTime::now()).unwrap();
+        assert_eq!(preview.counts.projects, 2);
+        assert_eq!(preview.counts.artifacts, 3);
+        let web = preview.projects.iter().filter(|p| p.root == root.join("web")).collect::<Vec<_>>();
+        assert_eq!(web.len(), 1);
+        assert_eq!(web[0].artifacts.len(), 2);
+        assert!(web[0].artifacts.iter().all(|a| a.signature.is_some()));
     }
 
     fn fixture_tree() -> tempfile::TempDir {

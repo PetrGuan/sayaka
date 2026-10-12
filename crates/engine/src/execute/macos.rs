@@ -1499,7 +1499,14 @@ fn verify_artifact_signature(
             }
             sayaka_platform_macos::project_artifacts::inspect_path(path)?.map(purge_preview::ArtifactSignature::from_project)
         },
-        _ => sayaka_platform_macos::xcode_build::inspect_path(path)?.map(purge_preview::ArtifactSignature::from_native),
+        _ => {
+            let tag = sayaka_platform_macos::project_artifacts::inspect_path(path)?.is_some_and(|e| e.cache_tag);
+            sayaka_platform_macos::xcode_build::inspect_path(path)?.map(|e| {
+                let mut signature = purge_preview::ArtifactSignature::from_native(e);
+                if let purge_preview::ArtifactSignature::XcodeDerivedData { cache_tag, .. } = &mut signature { *cache_tag = tag; }
+                signature
+            })
+        },
     };
     if current.as_ref() != Some(expected) {
         return Err(journal::invalid("Project artifact evidence changed; scan again"));

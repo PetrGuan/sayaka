@@ -187,8 +187,8 @@ fn ensure_preview(job: &mut PurgePreviewJob) -> Result<Arc<PurgePreview>, i32> {
 
 fn signature_json(signature: Option<&purge_preview::ArtifactSignature>) -> Value {
     match signature {
-        Some(purge_preview::ArtifactSignature::XcodeDerivedData { signals, workspace, workspace_state }) => json!({
-            "kind": "xcode_derived_data", "signals": signals,
+        Some(purge_preview::ArtifactSignature::XcodeDerivedData { signals, workspace, workspace_state, cache_tag }) => json!({
+            "kind": "xcode_derived_data", "signals": signals, "cache_tag": cache_tag,
             "workspace": workspace.as_ref().map(|p| wire::NativePath(p)), "workspace_state": workspace_state,
             "source": "Fresh Xcode build observed 2026-10-12: custom derivedDataPath and standard per-project DerivedData; build product/intermediate directory plus an independent Xcode signal."
         }),

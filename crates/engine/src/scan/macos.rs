@@ -295,13 +295,23 @@ impl Cursor for MacDirectory {
         path: &Path,
     ) -> Result<Option<crate::purge_preview::ArtifactSignature>, ScanError> {
         let fd = self.stream.fd().map_err(native_error)?;
-        if let Some(e) = sayaka_platform_macos::project_artifacts::inspect(fd, path)
-            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))? {
-            return Ok(Some(crate::purge_preview::ArtifactSignature::from_project(e)));
+        use crate::purge_preview::ArtifactSignature;
+        let table = sayaka_platform_macos::project_artifacts::inspect(fd, path)
+            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))?;
+        if table.as_ref().is_some_and(|e| e.rule_id.is_some()) {
+            return Ok(table.map(ArtifactSignature::from_project));
         }
-        sayaka_platform_macos::xcode_build::inspect(self.stream.fd().map_err(native_error)?, path)
-            .map(|e| e.map(crate::purge_preview::ArtifactSignature::from_native))
-            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))
+        // Tags supplement a recognized layout; they must not hide a stronger
+        // content signature or turn existing Xcode cleanup into tag-only Review.
+        if let Some(e) = sayaka_platform_macos::xcode_build::inspect(fd, path)
+            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))? {
+            let mut signature = ArtifactSignature::from_native(e);
+            if let ArtifactSignature::XcodeDerivedData { cache_tag, .. } = &mut signature {
+                *cache_tag = table.as_ref().is_some_and(|e| e.cache_tag);
+            }
+            return Ok(Some(signature));
+        }
+        Ok(table.map(ArtifactSignature::from_project))
     }
 
     fn metadata(&self) -> Metadata {
