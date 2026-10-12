@@ -261,35 +261,67 @@ impl MacDirectory {
     }
 }
 
+pub(super) fn bare_repository_at(
+    fd: std::os::fd::BorrowedFd<'_>,
+    original: &Metadata,
+) -> Result<bool, ScanError> {
+    for (name, kind) in [
+        ("HEAD", ResourceKind::File),
+        ("objects", ResourceKind::Directory),
+        ("refs", ResourceKind::Directory),
+    ] {
+        let metadata = match fs::statat(fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => from_stat(&stat),
+            Err(error) if error == rustix::io::Errno::NOENT => return Ok(false),
+            Err(error) => return Err(native_error(error)),
+        };
+        if !matches!((metadata.identity, original.identity), (FileIdentity::Unix { device: current, .. }, FileIdentity::Unix { device: expected, .. }) if current == expected)
+        {
+            return Err(ScanError::new(
+                ScanCode::MountBoundary,
+                "Git metadata crosses a mount boundary",
+            ));
+        }
+        if metadata.kind != kind && metadata.kind != ResourceKind::Link {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 impl Cursor for MacDirectory {
     fn metadata(&self) -> Metadata {
         self.original.clone()
     }
 
-    fn bare_repository(&self) -> Result<bool, ScanError> {
+    fn binds_project_artifact(&self, name: &OsStr) -> Result<bool, ScanError> {
+        let Some(name) = name.to_str() else {
+            return Ok(false);
+        };
         let fd = self.stream.fd().map_err(native_error)?;
-        for (name, kind) in [
-            ("HEAD", ResourceKind::File),
-            ("objects", ResourceKind::Directory),
-            ("refs", ResourceKind::Directory),
-        ] {
-            let metadata = match fs::statat(fd, name, AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(stat) => from_stat(&stat),
-                Err(error) if error == rustix::io::Errno::NOENT => return Ok(false),
-                Err(error) => return Err(native_error(error)),
-            };
-            if !matches!((metadata.identity, self.original.identity), (FileIdentity::Unix { device: current, .. }, FileIdentity::Unix { device: expected, .. }) if current == expected)
-            {
-                return Err(ScanError::new(
-                    ScanCode::MountBoundary,
-                    "Git metadata crosses a mount boundary",
-                ));
+        for marker in crate::purge_preview::ProjectMarker::ALL {
+            if !marker.artifacts().contains(&name) {
+                continue;
             }
-            if metadata.kind != kind && metadata.kind != ResourceKind::Link {
-                return Ok(false);
+            match fs::statat(fd, marker.file_name(), AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => {
+                    let observed = from_stat(&stat);
+                    if observed.kind == ResourceKind::File
+                        && !observed.dataless
+                        && matches!((observed.identity, self.original.identity), (FileIdentity::Unix { device: a, .. }, FileIdentity::Unix { device: b, .. }) if a == b)
+                    {
+                        return Ok(true);
+                    }
+                }
+                Err(error) if error == rustix::io::Errno::NOENT => {}
+                Err(error) => return Err(native_error(error)),
             }
         }
-        Ok(true)
+        Ok(false)
+    }
+
+    fn bare_repository(&self) -> Result<bool, ScanError> {
+        bare_repository_at(self.stream.fd().map_err(native_error)?, &self.original)
     }
 
     fn next_entry(&mut self) -> Option<Result<DirItem, ScanError>> {
@@ -497,4 +529,33 @@ pub(super) fn summarize_cache(
         cancellation,
         progress,
     )
+}
+
+/// Bulk project measurement uses the same admitted native cursor as caches,
+/// with Git metadata protection and one shared outer sizing budget.
+pub(super) fn summarize_project(
+    path: &Path,
+    expected: FileIdentity,
+    limits: &ScanLimits,
+    budget: &super::cache::ProjectSizeBudget,
+    cancellation: &Cancellation,
+    progress: impl FnMut(usize, u64, u64),
+) -> Result<super::cache::Summary, ScanError> {
+    super::cache::summarize_with_project_budget(
+        &cache::CacheBackend,
+        path,
+        expected,
+        limits,
+        Some(budget),
+        cancellation,
+        progress,
+    )
+}
+
+pub(crate) fn project_root_identity(path: &Path) -> Result<FileIdentity, ScanError> {
+    let policy = MacBackend.enter_thread()?;
+    let result = MacBackend
+        .open_root(path)
+        .map(|directory| directory.metadata().identity);
+    policy.restore().and(result)
 }

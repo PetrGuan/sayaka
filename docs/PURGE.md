@@ -66,11 +66,50 @@ Unknown Git state stays Review and is not selectable until a successful refresh.
 Artifacts outside a repository retain the existing marker/activity rules. Git
 observations participate in preview fingerprints and are refreshed at session
 preparation, approval and the final native guard. Preparation and the final guard
-also demand a complete bounded metadata walk of selected artifacts to refuse
+also demand a complete bounded streaming metadata walk of selected artifacts to refuse
 nested repositories, including public engine selections not created by a preview.
 These checks can refuse very large/inaccessible selected trees; they never turn
 partial coverage into permission. The documented last-check/path-replacement
 race remains; Git observations are not filesystem locks.
+
+## Project discovery and sizing budgets
+
+macOS project previews classify before sizing. `ClassifyLimits` retains the
+100,000-record / 32 MiB / 30-second discovery bounds. A marker-bound artifact
+is recorded but never descended into for classification, even when directory
+ordering lists its marker later. Marker lookups use the admitted parent fd and
+no-follow metadata. Unknown layouts remain ordinary discovery; this does not
+add Xcode signatures or new artifact rules.
+
+`SizeLimits` separately allows 2,000,000 visited entries and 60 seconds across
+all discovered artifacts, with at most four artifact workers. Each runs a
+streaming `getattrlistbulk` DFS (with the existing safe native fallback), without
+retaining regular-file paths. Hard-link identities deduplicate sizes within an
+artifact; sibling totals can still overlap. The per-worker directory/hard-link
+identity tables retain at most one million entries, and descriptor/path budgets
+are divided between workers. The default project request has a 90-second total
+wall-clock budget; Stop remains cancellable throughout Git inspection and sizing.
+
+Every discovered artifact survives a sizing limit. `size_complete=false` marks
+unknown or lower-bound totals, not zero and not permission to clean. Such items
+remain unselected Review. `complete` also includes discovery coverage; global
+partial-preview execution guards are unchanged. Git metadata found during bulk
+sizing is not traversed and refuses the enclosing artifact. Native cleanup
+admission uses this bounded streaming metadata path too, avoiding the old
+100,000-record execution ceiling while preserving all native Trash guards.
+
+JSON includes additive `scan_metrics` (discovery records, artifact/Git-descendant
+records, sizing visits and phase times). These diagnostics do not participate in
+plan identity. CLI progress includes `total_artifacts` and `sized_artifacts`;
+existing ABI preview `total_items` / `completed_items` fields carry the same
+counts without changing struct size. Candidate discovery is published before
+sizing starts; the existing App scanning screen shows the number of folders
+found and fills in measured bytes while Developer stays active. Classification
+file bytes are not presented as cleanable artifact bytes.
+
+See `benchmarks/project-classify-size-v1.json` for the real, copy-free mixed
+project measurement. No unit/UI tests, fixture test runners or cleanup effects
+were executed for that measurement.
 
 ## Developer cache profile
 

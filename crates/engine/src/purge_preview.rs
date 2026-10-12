@@ -251,6 +251,7 @@ impl PurgeOptions {
 
 #[derive(Clone, Debug)]
 pub struct PurgeArtifact {
+    pub size_complete: bool,
     pub git: crate::project_git::GitObservation,
     pub path: PathBuf,
     pub name: String,
@@ -862,8 +863,19 @@ impl PurgeStatus {
     }
 }
 
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ProjectScanMetrics {
+    pub classification_entries: usize,
+    pub artifact_descendant_entries: usize,
+    pub vcs_descendant_entries: usize,
+    pub classification_ms: u64,
+    pub sizing_entries: usize,
+    pub sizing_ms: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct PurgePreview {
+    pub scan_metrics: Option<ProjectScanMetrics>,
     pub schema_version: u32,
     pub kind: &'static str,
     pub platform: &'static str,
@@ -969,7 +981,10 @@ impl PurgePreview {
                 }
                 hash_option_u64(&mut hasher, artifact.logical_bytes);
                 hash_option_u64(&mut hasher, artifact.allocated_bytes);
-                hasher.update([u8::from(artifact.complete)]);
+                hasher.update([
+                    u8::from(artifact.complete),
+                    u8::from(artifact.size_complete),
+                ]);
                 hash_option_i64(&mut hasher, artifact.modified_unix_ms);
                 hasher.update(match artifact.stale {
                     Some(true) => [1],
@@ -1142,6 +1157,9 @@ fn selection_from_parts(
     project: &PurgeProject,
     artifact: &PurgeArtifact,
 ) -> Result<PurgeSelection, String> {
+    if !artifact.complete || !artifact.size_complete {
+        return Err("Project artifact sizing or discovery is incomplete".into());
+    }
     if !artifact.git.permits_cleanup() {
         return Err(artifact.git.state.reason().into());
     }
@@ -1233,6 +1251,7 @@ fn finder_metadata_preview(
         unsupported_operations: &[],
         counts,
         scan_issues: report.issues.clone(),
+        scan_metrics: None,
         scan_issues_omitted: report.issues_omitted,
     })
 }
@@ -1378,6 +1397,7 @@ fn project_purge_preview(
                 crate::project_git::GitObservation::default()
             };
             out_artifacts.push(PurgeArtifact {
+                size_complete: summary.is_some_and(|summary| summary.complete),
                 git,
                 path,
                 name,
@@ -1422,6 +1442,7 @@ fn project_purge_preview(
         unsupported_operations: profile_unsupported_operations(PurgeProfile::Projects),
         counts,
         scan_issues: report.issues.clone(),
+        scan_metrics: None,
         scan_issues_omitted: report.issues_omitted,
     })
 }
@@ -1645,6 +1666,7 @@ fn developer_cache_preview_with_home(
         unsupported_operations,
         counts,
         scan_issues: report.issues.iter().cloned().chain(owner_issues).collect(),
+        scan_metrics: None,
         scan_issues_omitted: report.issues_omitted,
     })
 }

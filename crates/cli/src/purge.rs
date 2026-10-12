@@ -393,6 +393,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
         "profile": preview.profile.as_str(),
         "roots": preview.roots.iter().map(|path| crate::apps::write_native_path(path)).collect::<Vec<_>>(),
         "stale_days": preview.stale_days,
+        "scan_metrics": preview.scan_metrics,
         "projects": preview.projects.iter().map(|project| serde_json::json!({
             "root": crate::apps::write_native_path(&project.root),
             "markers": project.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
@@ -403,9 +404,10 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                 "logical_bytes": artifact.logical_bytes,
                 "allocated_bytes": artifact.allocated_bytes,
                 "complete": artifact.complete,
+                        "size_complete": artifact.size_complete,
                 "modified_unix_ms": artifact.modified_unix_ms,
                 "stale": artifact.stale,
-                        "execution_supported": artifact.git.permits_cleanup(),
+                        "execution_supported": artifact.complete && artifact.size_complete && artifact.git.permits_cleanup(),
                         "git": {
                             "state": artifact.git.state.as_str(),
                             "reason": artifact.git.state.reason(),
@@ -541,6 +543,11 @@ fn write_human(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                 .logical_bytes
                 .map(crate::human::size)
                 .unwrap_or_else(|| "unknown".into());
+            let size = if !artifact.size_complete && artifact.logical_bytes.is_some() {
+                format!("at least {size}")
+            } else {
+                size
+            };
             let stale = match artifact.stale {
                 Some(true) => "stale",
                 Some(false) => "fresh",
@@ -595,6 +602,7 @@ mod tests {
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![
                     purge_preview::PurgeArtifact {
+                        size_complete: true,
                         git: sayaka_engine::project_git::GitObservation {
                             state: sayaka_engine::project_git::GitState::Untracked,
                             ..Default::default()
@@ -609,6 +617,7 @@ mod tests {
                         stale: Some(false),
                     },
                     purge_preview::PurgeArtifact {
+                        size_complete: true,
                         git: sayaka_engine::project_git::GitObservation {
                             state: sayaka_engine::project_git::GitState::Untracked,
                             ..Default::default()
@@ -631,6 +640,7 @@ mod tests {
             ),
             counts: purge_preview::PurgeCounts::default(),
             scan_issues: vec![],
+            scan_metrics: None,
             scan_issues_omitted: 0,
         }
     }

@@ -183,21 +183,7 @@ pub(crate) fn require_cleanup(
             return Err(observation.state.reason().into());
         }
     }
-    let limits = crate::scan::ScanLimits::default();
-    let report = crate::scan::scan_with_policy(
-        paths,
-        &limits,
-        cancellation,
-        crate::scan::TraversalPolicy::ProjectArtifacts,
-        |_| {},
-    )
-    .map_err(|_| "Git metadata coverage unknown")?;
-    if !report.vcs_metadata.is_empty() {
-        return Err("Contains Git metadata".into());
-    }
-    if !report.complete {
-        return Err("Git metadata coverage unknown".into());
-    }
+    crate::purge_preview::task::verify_metadata(paths, cancellation)?;
     Ok(())
 }
 

@@ -373,7 +373,9 @@ typedef struct SayakaPurgeSnapshotV1 {
     uint64_t observed_entries;
     uint64_t unique_files;
     uint64_t logical_bytes_known;
+    /* Preview: discovered project artifacts; execution: requested items. */
     uint64_t total_items;
+    /* Preview: artifacts with a finished sizing attempt (may be bounded). */
     uint64_t completed_items;
     uint64_t elapsed_ms;
 } SayakaPurgeSnapshotV1;

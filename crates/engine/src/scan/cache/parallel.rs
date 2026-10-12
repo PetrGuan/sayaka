@@ -48,6 +48,7 @@ struct Shared<'a, D> {
     limits: &'a ScanLimits,
     cancellation: &'a Cancellation,
     started: Instant,
+    project_budget: Option<&'a ProjectSizeBudget>,
     stopped: AtomicBool,
     queue: Mutex<Queue<D>>,
     wake: Condvar,
@@ -71,7 +72,12 @@ impl<D> Shared<'_, D> {
             return true;
         }
         let cancelled = self.cancellation.is_cancelled();
-        if cancelled || self.started.elapsed() >= self.limits.time_budget {
+        if cancelled
+            || self.started.elapsed() >= self.limits.time_budget
+            || self
+                .project_budget
+                .is_some_and(|b| Instant::now() >= b.deadline)
+        {
             let _queue = lock(&self.queue);
             if !self.stopped.swap(true, Ordering::AcqRel) {
                 let mut totals = lock(&self.totals);
@@ -199,6 +205,26 @@ pub(in crate::scan) fn summarize<B: Backend>(
     expected: FileIdentity,
     limits: &ScanLimits,
     cancellation: &Cancellation,
+    progress: impl FnMut(usize, u64, u64),
+) -> Result<Summary, ScanError> {
+    summarize_with_project_budget(
+        backend,
+        root,
+        expected,
+        limits,
+        None,
+        cancellation,
+        progress,
+    )
+}
+
+pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
+    backend: &B,
+    root: &Path,
+    expected: FileIdentity,
+    limits: &ScanLimits,
+    project_budget: Option<&ProjectSizeBudget>,
+    cancellation: &Cancellation,
     mut progress: impl FnMut(usize, u64, u64),
 ) -> Result<Summary, ScanError> {
     limits.validate()?;
@@ -210,6 +236,7 @@ pub(in crate::scan) fn summarize<B: Backend>(
             limits,
             cancellation,
             started: Instant::now(),
+            project_budget,
             stopped: AtomicBool::new(false),
             queue: Mutex::new(Queue {
                 jobs: VecDeque::new(),
@@ -233,88 +260,102 @@ pub(in crate::scan) fn summarize<B: Backend>(
                 "cache root changed or is dataless",
             ));
         }
+        if project_budget.is_some()
+            && (crate::project_git::is_metadata_path(root) || directory.bare_repository()?)
+        {
+            let mut totals = empty_totals();
+            totals.complete = false;
+            totals.vcs_metadata = 1;
+            return Ok(totals);
+        }
         let frame = Frame {
             directory,
             _permit: permit,
             path: root.to_owned(),
             depth: 1,
         };
-        std::thread::scope(|scope| -> Result<(), ScanError> {
-            let mut producer_guard = StopOnFailure {
-                shared: &shared,
-                success: false,
-            };
-            let mut workers = Vec::new();
-            let mut failure = None;
-            for index in 0..limits.workers.min(4) {
-                let shared = &shared;
-                match backend.spawn_worker(scope, index, move || {
-                    let mut guard = StopOnFailure {
-                        shared,
-                        success: false,
-                    };
-                    let policy = backend.enter_thread()?;
-                    let result = (|| {
-                        while let Some(frame) = shared.take() {
-                            walk(shared, frame, false, &mut |_, _, _| {})?;
+        if project_budget.is_some() {
+            // Project-level scheduling already supplies bounded parallelism.
+            // A single streaming DFS per artifact avoids nested worker pools.
+            walk(&shared, frame, false, &mut progress)?;
+        } else {
+            std::thread::scope(|scope| -> Result<(), ScanError> {
+                let mut producer_guard = StopOnFailure {
+                    shared: &shared,
+                    success: false,
+                };
+                let mut workers = Vec::new();
+                let mut failure = None;
+                for index in 0..limits.workers.min(4) {
+                    let shared = &shared;
+                    match backend.spawn_worker(scope, index, move || {
+                        let mut guard = StopOnFailure {
+                            shared,
+                            success: false,
+                        };
+                        let policy = backend.enter_thread()?;
+                        let result = (|| {
+                            while let Some(frame) = shared.take() {
+                                walk(shared, frame, false, &mut |_, _, _| {})?;
+                            }
+                            Ok(())
+                        })();
+                        let restored = policy.restore();
+                        let result = restored.and(result);
+                        guard.success = result.is_ok();
+                        result
+                    }) {
+                        Ok(worker) => workers.push(worker),
+                        Err(error) => {
+                            failure = Some(ScanError::new(
+                                ScanCode::WorkerStartFailed,
+                                error.to_string(),
+                            ));
+                            shared.stop();
+                            break;
                         }
-                        Ok(())
-                    })();
-                    let restored = policy.restore();
-                    let result = restored.and(result);
-                    guard.success = result.is_ok();
-                    result
-                }) {
-                    Ok(worker) => workers.push(worker),
-                    Err(error) => {
-                        failure = Some(ScanError::new(
-                            ScanCode::WorkerStartFailed,
-                            error.to_string(),
-                        ));
-                        shared.stop();
-                        break;
                     }
                 }
-            }
-            let retained_root = if failure.is_none() {
-                match walk(&shared, frame, true, &mut progress) {
-                    Ok(root) => root,
-                    Err(error) => {
-                        failure = Some(error);
-                        shared.stop();
-                        None
+                let retained_root = if failure.is_none() {
+                    match walk(&shared, frame, true, &mut progress) {
+                        Ok(root) => root,
+                        Err(error) => {
+                            failure = Some(error);
+                            shared.stop();
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                {
+                    let mut queue = lock(&shared.queue);
+                    queue.producer_done = true;
+                    shared.wake.notify_all();
+                }
+                while workers.iter().any(|worker| !worker.is_finished()) {
+                    shared.interrupted();
+                    shared.report(&mut progress);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                for worker in workers {
+                    let result = worker.join().unwrap_or_else(|_| {
+                        Err(ScanError::new(
+                            ScanCode::WorkerPanic,
+                            "cache worker panicked",
+                        ))
+                    });
+                    if let Err(error) = result {
+                        failure.get_or_insert(error);
                     }
                 }
-            } else {
-                None
-            };
-            {
-                let mut queue = lock(&shared.queue);
-                queue.producer_done = true;
-                shared.wake.notify_all();
-            }
-            while workers.iter().any(|worker| !worker.is_finished()) {
-                shared.interrupted();
-                shared.report(&mut progress);
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            for worker in workers {
-                let result = worker.join().unwrap_or_else(|_| {
-                    Err(ScanError::new(
-                        ScanCode::WorkerPanic,
-                        "cache worker panicked",
-                    ))
-                });
-                if let Err(error) = result {
-                    failure.get_or_insert(error);
+                if let Some(frame) = retained_root {
+                    check_unchanged(&shared, &frame);
                 }
-            }
-            if let Some(frame) = retained_root {
-                check_unchanged(&shared, &frame);
-            }
-            producer_guard.success = true;
-            failure.map_or(Ok(()), Err)
-        })?;
+                producer_guard.success = true;
+                failure.map_or(Ok(()), Err)
+            })?;
+        }
         shared.interrupted();
         shared.report(&mut progress);
         Ok(shared
@@ -386,10 +427,27 @@ fn walk<D: Cursor>(
             );
             continue;
         }
+        if shared.project_budget.is_some_and(|budget| !budget.admit()) {
+            shared.issue(
+                &path,
+                ScanError::new(
+                    ScanCode::EntryLimit,
+                    "shared project sizing entry budget reached",
+                ),
+            );
+            shared.stop();
+            break;
+        }
+        if shared.project_budget.is_some() && crate::project_git::is_metadata_path(&path) {
+            let mut totals = lock(&shared.totals);
+            totals.vcs_metadata += 1;
+            totals.complete = false;
+            continue;
+        }
         local.entries = local.entries.checked_add(1).ok_or_else(overflow)?;
         if local.entries >= shared.limits.progress_every {
             shared.flush(&mut local)?;
-            if producer {
+            if producer || shared.project_budget.is_some() {
                 shared.report(progress);
             }
         }
@@ -518,6 +576,21 @@ fn walk<D: Cursor>(
                         ),
                     );
                     continue;
+                }
+                if shared.project_budget.is_some() {
+                    match directory.bare_repository() {
+                        Ok(true) => {
+                            let mut totals = lock(&shared.totals);
+                            totals.vcs_metadata += 1;
+                            totals.complete = false;
+                            continue;
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            shared.issue(&path, error);
+                            continue;
+                        }
+                    }
                 }
                 let child = Frame {
                     directory,
