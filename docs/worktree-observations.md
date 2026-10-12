@@ -1,0 +1,11 @@
+# Worktree observations
+
+`purge --profile worktrees ROOT --json` and purge FFI profile 4 provide read-only Git worktree observations for saved project roots. The app presents them separately from cleanup items. This profile has no executable selections and approval is rejected by the native boundary.
+
+Discovery uses the existing bounded metadata-only project walk, including `.git` markers in repositories without generated artifacts. It never traverses Git object directories. Discovery is capped at five seconds; Git observation is capped at twelve seconds and two seconds per repository/list or worktree detail set. Limits are 64 repository candidates, 256 output rows, and the existing 1 MiB subprocess stdout cap. All phases share the request's deadline/cancellation. Native fixed `/usr/bin/git`, signed tool identity, explicit argv, sanitized environment, disabled hooks/fsmonitor/index writes, terminal prompts and lazy fetch apply. No shell, remote fetch, remove or prune is invoked.
+
+NUL-delimited porcelain preserves paths with whitespace, newlines and non-UTF-8 bytes. Rename/copy status records count once. Untracked files are expanded; conflicts and submodule status remain visible. Local-only commits mean `HEAD --not --remotes` against locally recorded refs, which may be stale. Shallow, unborn, unreadable, timed-out or unsupported states remain unknown. These observations never prove removal safe.
+
+Sizes are metadata-only lower bounds excluding Git metadata, never reclaimed/freeable space. Only directories already observed within the requested root are sized. Linked paths outside it remain unknown. Sizing has a separate three-second, 100,000-entry budget and 500 ms per directory, using the existing no-follow native streaming walker. It reads no source, AI transcript or configuration file contents; Git itself reads its repository state for requested status. Failed/partial sizes remain unknown or explicitly partial.
+
+Validation: compile/build only under the owner's policy. Parser regression sources are compiled, not executed. Owner GUI acceptance covers light/dark, no-artifact repositories, locked/prunable and dirty/local-only worktrees, Finder reveal and cancellation.

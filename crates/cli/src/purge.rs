@@ -24,7 +24,7 @@ pub fn command() -> Command {
                 .long("profile")
                 .value_name("PROFILE")
                 .default_value("projects")
-                .value_parser(["projects", "developer-caches"])
+                .value_parser(["projects", "developer-caches", "worktrees"])
                 .help("Preview profile: marker-bound project artifacts or known developer cache locations"),
         )
         .arg(
@@ -156,6 +156,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     {
         "projects" => PurgeProfile::Projects,
         "developer-caches" => PurgeProfile::DeveloperCaches,
+        "worktrees" => PurgeProfile::Worktrees,
         _ => unreachable!("clap value_parser enforces profile values"),
     };
     let result: Result<PurgePreview, ScanError> = (|| {
@@ -167,7 +168,7 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
         if execute && profile != PurgeProfile::Projects {
             return Err(ScanError::new(
                 ScanCode::InvalidLimits,
-                "--execute is unsupported for --profile developer-caches; this profile is preview-only until a non-project cache revalidation contract exists",
+                "--execute is only supported for --profile projects; the requested CLI profile is read-only",
             ));
         }
         let options = PurgeOptions {
@@ -394,6 +395,18 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
         "roots": preview.roots.iter().map(|path| crate::apps::write_native_path(path)).collect::<Vec<_>>(),
         "stale_days": preview.stale_days,
         "scan_metrics": preview.scan_metrics,
+        "worktrees": {
+            "complete": preview.worktrees.complete,
+            "unavailable_repositories": preview.worktrees.unavailable_repositories,
+            "items": preview.worktrees.items.iter().map(|item| serde_json::json!({
+                "repository": crate::apps::write_native_path(&item.repository), "path": crate::apps::write_native_path(&item.path),
+                "branch": item.branch, "detached": item.detached, "bare": item.bare,
+                "locked": item.locked, "prunable": item.prunable, "changed_files": item.changed_files,
+                "local_only_commits": item.local_only_commits, "last_commit_ms": item.last_commit_ms,
+                "logical_bytes": item.logical_bytes, "size_complete": item.size_complete,
+            })).collect::<Vec<_>>(),
+        },
+
         "projects": preview.projects.iter().map(|project| serde_json::json!({
             "root": crate::apps::write_native_path(&project.root),
             "markers": project.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
@@ -500,6 +513,16 @@ fn write_human(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
     writeln!(out, "effects_performed: false")?;
     writeln!(out, "profile: {}", preview.profile.as_str())?;
     writeln!(out, "stale_days: {}", preview.stale_days)?;
+    if preview.profile == PurgeProfile::Worktrees {
+        writeln!(out, "worktree observations complete: {}", preview.worktrees.complete)?;
+        writeln!(out, "Read-only. Remote comparisons use local refs; sizes exclude Git metadata and may be partial.")?;
+        for item in &preview.worktrees.items {
+            writeln!(out, "  - {} branch={:?} changed={:?} local-only={:?} locked={} prunable={} bytes={:?} size-complete={} last-commit-ms={:?}",
+                sayaka_engine::scan::display_path(&item.path), item.branch, item.changed_files,
+                item.local_only_commits, item.locked, item.prunable, item.logical_bytes, item.size_complete, item.last_commit_ms)?;
+        }
+        return out.flush();
+    }
     if preview.profile == PurgeProfile::DeveloperCaches {
         writeln!(out, "developer caches:")?;
         for cache in &preview.developer_caches {
@@ -592,6 +615,7 @@ mod tests {
     fn preview_with_artifacts(root: &std::path::Path) -> PurgePreview {
         let project = root.join("app");
         PurgePreview {
+            worktrees: Default::default(),
             schema_version: 1,
             kind: purge_preview::PURGE_KIND,
             platform: "macos",
