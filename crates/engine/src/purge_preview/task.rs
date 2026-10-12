@@ -191,6 +191,16 @@ pub fn scan_preview(
     }
     if options.profile == PurgeProfile::Worktrees {
         preview.worktrees = crate::worktrees::observe(&index, cancellation, started + limits.time_budget);
+        // Discovery is only the first phase. Stop during Git or sizing must
+        // remain cancelled at the task/FFI/CLI boundary too.
+        if cancellation.is_cancelled() {
+            preview.status = PurgeStatus::Cancelled;
+            preview.complete = false;
+            preview.worktrees.complete = false;
+        } else if !preview.worktrees.complete && preview.status == PurgeStatus::Complete {
+            preview.status = PurgeStatus::Partial;
+            preview.complete = false;
+        }
     }
     if options.profile != PurgeProfile::DeveloperCaches {
         return Ok(preview);

@@ -328,7 +328,7 @@ fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>, ()> {
             current = Some(Worktree { path, branch: None, detached: false, bare: false, locked: false, prunable: false });
         } else {
             let item = current.as_mut().ok_or(())?;
-            if let Some(branch) = record.strip_prefix(b"branch ") { item.branch = Some(String::from_utf8_lossy(branch).into_owned()); }
+            if let Some(branch) = record.strip_prefix(b"branch ") { item.branch = std::str::from_utf8(branch).ok().map(str::to_owned); }
             else if record == b"detached" { item.detached = true; }
             else if record == b"bare" { item.bare = true; }
             else if record == b"locked" || record.starts_with(b"locked ") { item.locked = true; }
@@ -363,6 +363,7 @@ mod worktree_tests {
         assert_eq!(items[0].path.as_os_str().as_bytes(), b"/repo\nname");
         assert!(items[1].locked && items[1].prunable && items[1].detached);
         assert_eq!(items[1].path.as_os_str().as_bytes(), b"/other/\xff");
+        assert!(parse_worktrees(b"worktree /repo\0branch refs/heads/\xff\0\0").unwrap()[0].branch.is_none());
         assert!(parse_worktrees(b"worktree relative\0\0").is_err());
         assert!(parse_worktrees(b"worktree /repo\0").is_err());
     }

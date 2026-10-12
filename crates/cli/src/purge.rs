@@ -25,7 +25,7 @@ pub fn command() -> Command {
                 .value_name("PROFILE")
                 .default_value("projects")
                 .value_parser(["projects", "developer-caches", "worktrees"])
-                .help("Preview profile: marker-bound project artifacts or known developer cache locations"),
+                .help("Preview profile: project artifacts, developer caches, or read-only Git worktrees"),
         )
         .arg(
             Arg::new("roots")
