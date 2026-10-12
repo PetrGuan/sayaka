@@ -23,6 +23,7 @@ fn identity(inode: u64) -> FileIdentity {
 
 fn entry(id: u64, relative: &str, kind: ResourceKind) -> ScanEntry {
     ScanEntry {
+        owner: None,
         project_signature: None,
         id,
         path: path(relative),
@@ -49,6 +50,7 @@ fn file(
     allocated: Option<u64>,
 ) -> ScanEntry {
     ScanEntry {
+        owner: None,
         identity: identity(inode),
         logical_bytes: logical,
         allocated_bytes: allocated,

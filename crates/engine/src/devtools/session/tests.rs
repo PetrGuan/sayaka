@@ -508,6 +508,7 @@ fn pairs_are_deleted_together_in_one_call() {
 #[test]
 fn pair_batches_never_split_a_pair() {
     let candidate = |udid: &str, partner: Option<&str>| Candidate {
+        device_files: None,
         device: parse_devices(devices(&[device(udid, "x", "Shutdown", 1)]).as_bytes())
             .unwrap()
             .remove(0),

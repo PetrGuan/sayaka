@@ -138,6 +138,11 @@ impl TrashSession {
         excluded: &[PathBuf],
         cancellation: &Cancellation,
     ) -> io::Result<Self> {
+        if paths.iter().any(|p| crate::known_owner::managed(p)) {
+            return Err(journal::invalid(
+                "System-managed developer data is not a filesystem Trash target; use its owner tool",
+            ));
+        }
         if paths.is_empty()
             || paths.len() > journal::MAX_ITEMS
             || excluded.len() > journal::MAX_ITEMS
@@ -1207,6 +1212,14 @@ impl PurgeSession {
     /// artifacts. The scope is the selections' deepest common ancestor; the
     /// per-item candidates carry the full ancestry protection chain.
     pub fn prepare(selections: &[PurgeSelection], cancellation: &Cancellation) -> io::Result<Self> {
+        if selections
+            .iter()
+            .any(|s| crate::known_owner::managed(&s.artifact))
+        {
+            return Err(journal::invalid(
+                "System-managed developer data is not a filesystem Trash target",
+            ));
+        }
         if selections.is_empty() || selections.len() > journal::MAX_ITEMS {
             return Err(journal::invalid(
                 "select between 1 and 32 explicit artifact directories",

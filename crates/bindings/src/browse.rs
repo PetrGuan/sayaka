@@ -101,6 +101,7 @@ fn reference(handle: u64, id: u64) -> Reference {
 
 #[derive(Serialize)]
 struct Node<'a> {
+    owner: Option<&'a sayaka_engine::known_owner::KnownOwner>,
     reference: Reference,
     resource_id: String,
     parent: Option<Reference>,
@@ -116,6 +117,7 @@ struct Node<'a> {
 
 fn node<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> Node<'a> {
     Node {
+        owner: entry.owner.as_deref(),
         reference: reference(handle, entry.id),
         resource_id: format!("{}/{}", tree.report().task_id, entry.id),
         parent: tree.parent(entry.id).map(|id| reference(handle, id)),
@@ -127,11 +129,24 @@ fn node<'a>(tree: &'a ScanTree, handle: u64, entry: &'a ScanEntry) -> Node<'a> {
             ResourceKind::Other => "other",
         },
         modified_unix_ms: entry.modified_unix_ms,
-        logical_bytes: tree.size(entry.id, Metric::Logical),
-        allocated_bytes: tree.size(entry.id, Metric::Allocated),
+        logical_bytes: visible_size(tree, entry, Metric::Logical),
+        allocated_bytes: visible_size(tree, entry, Metric::Allocated),
         directory_summary: tree.summary(entry.id),
         child_count: tree.children(entry.id).map(<[u64]>::len),
         dataless: entry.dataless,
+    }
+}
+
+// An unread system-managed directory is not an empty directory.
+fn visible_size(tree: &ScanTree, entry: &ScanEntry, metric: Metric) -> Option<u64> {
+    let size = tree.size(entry.id, metric);
+    if entry.owner.is_some()
+        && size == Some(0)
+        && tree.summary(entry.id).is_some_and(|s| !s.complete)
+    {
+        None
+    } else {
+        size
     }
 }
 

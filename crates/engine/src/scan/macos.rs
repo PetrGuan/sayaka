@@ -304,7 +304,8 @@ impl Cursor for MacDirectory {
         // Tags supplement a recognized layout; they must not hide a stronger
         // content signature or turn existing Xcode cleanup into tag-only Review.
         if let Some(e) = sayaka_platform_macos::xcode_build::inspect(fd, path)
-            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))? {
+            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))?
+        {
             let mut signature = ArtifactSignature::from_native(e);
             if let ArtifactSignature::XcodeDerivedData { cache_tag, .. } = &mut signature {
                 *cache_tag = table.as_ref().is_some_and(|e| e.cache_tag);

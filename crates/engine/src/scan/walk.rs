@@ -1005,6 +1005,7 @@ fn record_entry(
     report.totals = totals;
     report.metrics.retained_path_bytes = path_bytes;
     report.entries.push(ScanEntry {
+        owner: None,
         project_signature: None,
         id: report.entries.len() as u64 + 1,
         path,

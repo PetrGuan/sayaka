@@ -534,6 +534,7 @@ mod native {
         report.complete = true;
         for (id, logical) in [(root_id + 1, Some(11)), (root_id + 2, None)] {
             report.entries.push(ScanEntry {
+                owner: None,
                 project_signature: None,
                 id,
                 path: root.path.join(format!("alias-{id}")),
@@ -567,6 +568,7 @@ mod native {
             ("alias", root_id + 4, Some(99), Some(99)),
         ] {
             report.entries.push(ScanEntry {
+                owner: None,
                 project_signature: None,
                 id,
                 path: root.path.join(name),
@@ -610,6 +612,7 @@ mod native {
         report.entries.truncate(1);
         for index in 1..=MAX_PAGE_NODES {
             report.entries.push(ScanEntry {
+                owner: None,
                 project_signature: None,
                 id: root_id + u64::from(index),
                 path: root.path.join(format!("{}-{index}", "x".repeat(2048))),
@@ -634,6 +637,7 @@ mod native {
         let selected_id = root_id + 1;
         for index in (0..20).rev() {
             report.entries.push(ScanEntry {
+                owner: None,
                 project_signature: None,
                 id: root_id + 1 + index,
                 path: root.path.join(format!("{index:02}-alias")),
@@ -709,6 +713,7 @@ fn node_wire_distinguishes_unknown_modification_time_from_epoch() {
     let path = std::path::Path::new("/synthetic-observation");
     for observed in [None, Some(0), Some(-500), Some(1_700_000_000_123)] {
         let value = serde_json::to_value(Node {
+            owner: None,
             reference: reference(7, 1),
             resource_id: "synthetic/1".into(),
             parent: None,

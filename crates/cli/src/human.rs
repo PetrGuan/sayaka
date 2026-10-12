@@ -616,6 +616,7 @@ mod tests {
         use sayaka_engine::model::FileIdentity;
         let mut entries: Vec<_> = (0..20)
             .map(|id| ScanEntry {
+                owner: None,
                 project_signature: None,
                 id,
                 path: format!("file-{id:02}").into(),

@@ -222,6 +222,7 @@ pub enum CandidateRefusal {
 /// One device as offered for an operation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Candidate {
+    pub device_files: Option<crate::known_owner::DeviceFiles>,
     pub device: Device,
     /// The other member of a watch/phone pair, if any.
     pub paired_with: Option<String>,
@@ -281,6 +282,7 @@ pub fn candidates(
                 }
             }
             Candidate {
+                device_files: None,
                 device: device.clone(),
                 paired_with,
                 refusals,
@@ -835,6 +837,7 @@ mod tests {
                 .contains(&CandidateRefusal::MultiplePairs)
         );
         let single = Candidate {
+            device_files: None,
             paired_with: Some(watch_a.into()),
             refusals: vec![],
             ..phone_candidate.clone()

@@ -343,6 +343,7 @@ impl ScanStatus {
 
 #[derive(Clone, Debug)]
 pub struct ScanEntry {
+    pub owner: Option<std::sync::Arc<crate::known_owner::KnownOwner>>,
     pub project_signature: Option<crate::purge_preview::ArtifactSignature>,
     /// Unique only within the associated scan task.
     pub id: u64,
@@ -561,7 +562,8 @@ fn scan_internal(
     #[cfg(target_os = "macos")]
     {
         let roots = walk::normalize_roots(roots, limits)?;
-        macos::scan_native(
+        let annotate_owners = matches!(traversal_policy, TraversalPolicy::Default);
+        let mut report = macos::scan_native(
             roots,
             limits,
             cancellation,
@@ -569,7 +571,11 @@ fn scan_internal(
             traversal_policy,
             progress,
             diagnostics,
-        )
+        )?;
+        if annotate_owners {
+            crate::known_owner::annotate(&mut report, cancellation);
+        }
+        Ok(report)
     }
     #[cfg(windows)]
     {
