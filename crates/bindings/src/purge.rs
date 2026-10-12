@@ -32,7 +32,7 @@ pub struct SayakaPurgePreviewProfileRequestV1 {
     pub struct_size: u32,
     pub root: SayakaPathV1,
     pub stale_days: u32,
-    /// 1 = projects, 2 = developer_caches, 3 = finder_metadata. 0 is accepted as projects for
+    /// 1 = projects, 2 = developer_caches, 3 = finder_metadata, 4 = worktrees (read-only). 0 is accepted as projects for
     /// callers that zero-initialize optional fields.
     pub profile: u32,
     pub reserved: u32,
@@ -273,6 +273,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
             PurgeProfile::Projects => "revalidated_purge_trash_v1",
             PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
             PurgeProfile::FinderMetadata => "revalidated_trash_v1",
+            PurgeProfile::Worktrees => "worktree_observation_v1",
         },
         "profile": preview.profile.as_str(),
         "plan_identifier": digest,
@@ -292,6 +293,17 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
             "logical_bytes": sum_known(preview, true),
             "allocated_bytes": sum_known(preview, false),
             "private_bytes": sum_private(preview),
+        },
+        "worktrees": {
+            "complete": preview.worktrees.complete,
+            "unavailable_repositories": preview.worktrees.unavailable_repositories,
+            "items": preview.worktrees.items.iter().map(|item| json!({
+                "repository": wire::NativePath(&item.repository), "path": wire::NativePath(&item.path),
+                "branch": item.branch, "detached": item.detached, "bare": item.bare,
+                "locked": item.locked, "prunable": item.prunable, "changed_files": item.changed_files,
+                "local_only_commits": item.local_only_commits, "last_commit_ms": item.last_commit_ms,
+                "logical_bytes": item.logical_bytes, "size_complete": item.size_complete,
+            })).collect::<Vec<_>>(),
         },
         "projects": projects,
         "developer_caches": developer_cache_items_json(preview, handle, policy),
@@ -633,6 +645,7 @@ fn refusal_json(
             PurgeProfile::Projects => "revalidated_purge_trash_v1",
             PurgeProfile::DeveloperCaches => "revalidated_cache_trash_v1",
             PurgeProfile::FinderMetadata => "revalidated_trash_v1",
+            PurgeProfile::Worktrees => "worktree_observation_v1",
         },
         "plan_identifier": preview.plan_digest(),
         "plan_digest": preview.plan_digest(),
@@ -770,6 +783,7 @@ fn execution_worker(
     }
     if let Some(policy) = &policy {
         let excluded = match preview.profile {
+            PurgeProfile::Worktrees => Err("Worktrees are observation only".into()),
             PurgeProfile::Projects => purge_preview::resolve_selections_by_ids(&preview, &item_ids)
                 .map(|selections| {
                     selections
@@ -897,6 +911,7 @@ impl PreparedExecutionSession {
         cancellation: &Cancellation,
     ) -> Result<Self, String> {
         match preview.profile {
+            PurgeProfile::Worktrees => Err("Worktrees are observation only".into()),
             PurgeProfile::Projects => {
                 let selections = purge_preview::resolve_selections_by_ids(preview, item_ids)?;
                 PurgeSession::prepare(&selections, cancellation)
@@ -1068,6 +1083,7 @@ unsafe fn validate_approval(
         return Err(INVALID_ARGUMENT);
     }
     let expected = match profile {
+        PurgeProfile::Worktrees => return Err(INVALID_ARGUMENT),
         PurgeProfile::Projects => format!("purge {} artifacts", request.item_count),
         PurgeProfile::DeveloperCaches => format!("trash {} caches", request.item_count),
         PurgeProfile::FinderMetadata => format!("trash {} Finder files", request.item_count),
@@ -1793,6 +1809,7 @@ mod tests {
 
     fn purge_preview_fixture() -> PurgePreview {
         PurgePreview {
+            worktrees: Default::default(),
             schema_version: 1,
             kind: purge_preview::PURGE_KIND,
             platform: "macos",

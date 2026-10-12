@@ -27,6 +27,7 @@ pub mod model;
 pub mod plan;
 pub mod project_activity;
 pub mod project_git;
+pub mod worktrees;
 pub mod purge_preview;
 mod readonly_task;
 pub mod receipt;

@@ -51,6 +51,7 @@ impl GitReader {
             ("GIT_CONFIG_NOSYSTEM", "1"),
             ("GIT_CONFIG_GLOBAL", "/dev/null"),
             ("GIT_TERMINAL_PROMPT", "0"),
+            ("GIT_NO_LAZY_FETCH", "1"),
         ] {
             env.push((k.into(), v.into()));
         }
@@ -179,6 +180,36 @@ impl GitReader {
         (commit, dirty)
     }
 
+    /// NUL-delimited records preserve native paths, including newlines.
+    pub fn worktrees(&self, repo: &Path, remaining: Duration, cancel: &dyn Fn() -> bool) -> Result<Vec<Worktree>, ()> {
+        let deadline = Instant::now() + remaining.min(Duration::from_secs(2));
+        let output = self.worktree_command(repo, &["worktree", "list", "--porcelain", "-z"], deadline, cancel)?;
+        parse_worktrees(&output)
+    }
+
+    pub fn worktree_details(&self, path: &Path, remaining: Duration, cancel: &dyn Fn() -> bool) -> WorktreeDetails {
+        let deadline = Instant::now() + remaining.min(Duration::from_secs(2));
+        let command = |args: &[&str]| self.worktree_command(path, args, deadline, cancel);
+        let changed_files = command(&["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"])
+            .ok().and_then(|bytes| status_count(&bytes).ok());
+        let last_commit_ms = command(&["log", "-1", "--format=%ct", "--no-show-signature"]).ok()
+            .and_then(|b| parse_number(&b)).and_then(|n| i64::try_from(n).ok()).and_then(|n| n.checked_mul(1000));
+        // Shallow history cannot establish whether all commits occur on remote refs.
+        let complete_history = command(&["rev-parse", "--is-shallow-repository"]).ok().is_some_and(|b| b == b"false\n");
+        let local_only_commits = if complete_history {
+            command(&["rev-list", "--count", "HEAD", "--not", "--remotes"]).ok().and_then(|b| parse_number(&b))
+        } else { None };
+        WorktreeDetails { changed_files, last_commit_ms, local_only_commits }
+    }
+
+    fn worktree_command(&self, repo: &Path, command: &[&str], deadline: Instant, cancel: &dyn Fn() -> bool) -> Result<Vec<u8>, ()> {
+        if !repo.is_absolute() { return Err(()); }
+        let mut args = vec!["-c".into(), "core.fsmonitor=false".into(), "-c".into(), "core.hooksPath=/dev/null".into(), "--no-replace-objects".into(), "-C".into(), repo.as_os_str().to_owned()];
+        args.extend(command.iter().map(OsString::from));
+        let result = self.run(&args, deadline, cancel, None)?;
+        if result.success { Ok(result.stdout) } else { Err(()) }
+    }
+
     fn run(
         &self,
         args: &[OsString],
@@ -258,5 +289,91 @@ mod tests {
         ));
         assert!(nul_paths(b"../outside\0").is_err());
         assert!(nul_paths(b"build/a").is_err());
+    }
+}
+
+/// Observations only: never cleanup authority.
+#[derive(Clone, Debug)]
+pub struct Worktree {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub detached: bool,
+    pub bare: bool,
+    pub locked: bool,
+    pub prunable: bool,
+}
+#[derive(Clone, Debug, Default)]
+pub struct WorktreeDetails {
+    pub changed_files: Option<u64>,
+    pub last_commit_ms: Option<i64>,
+    pub local_only_commits: Option<u64>,
+}
+fn parse_number(bytes: &[u8]) -> Option<u64> {
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) { return None; }
+    text.parse().ok()
+}
+fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>, ()> {
+    if bytes.is_empty() || !bytes.ends_with(b"\0\0") { return Err(()); }
+    let mut result = Vec::new();
+    let mut current: Option<Worktree> = None;
+    for record in bytes[..bytes.len()-1].split(|b| *b == 0) {
+        if record.is_empty() {
+            result.push(current.take().ok_or(())?);
+            if result.len() > 256 { return Err(()); }
+        } else if let Some(path) = record.strip_prefix(b"worktree ") {
+            if current.is_some() { return Err(()); }
+            let path = PathBuf::from(OsString::from_vec(path.to_vec()));
+            if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) { return Err(()); }
+            current = Some(Worktree { path, branch: None, detached: false, bare: false, locked: false, prunable: false });
+        } else {
+            let item = current.as_mut().ok_or(())?;
+            if let Some(branch) = record.strip_prefix(b"branch ") { item.branch = std::str::from_utf8(branch).ok().map(str::to_owned); }
+            else if record == b"detached" { item.detached = true; }
+            else if record == b"bare" { item.bare = true; }
+            else if record == b"locked" || record.starts_with(b"locked ") { item.locked = true; }
+            else if record == b"prunable" || record.starts_with(b"prunable ") { item.prunable = true; }
+            else if !record.starts_with(b"HEAD ") { return Err(()); }
+        }
+    }
+    if current.is_some() { return Err(()); }
+    Ok(result)
+}
+fn status_count(bytes: &[u8]) -> Result<u64, ()> {
+    if bytes.is_empty() { return Ok(0); }
+    if bytes.last() != Some(&0) { return Err(()); }
+    let mut records = bytes[..bytes.len()-1].split(|b| *b == 0);
+    let mut count = 0;
+    while let Some(record) = records.next() {
+        if record.len() < 4 || record[2] != b' ' { return Err(()); }
+        if record[..2].iter().any(|b| !b" MTADRCU?!".contains(b)) { return Err(()); }
+        if record[..2].iter().any(|b| *b == b'R' || *b == b'C') && records.next().is_none_or(|r| r.is_empty()) { return Err(()); }
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[cfg(test)]
+mod worktree_tests {
+    use super::*;
+    #[test]
+    fn nul_records_keep_native_paths_and_flags() {
+        let items = parse_worktrees(b"worktree /repo\nname\0HEAD abc\0branch refs/heads/main\0\0worktree /other/\xff\0HEAD def\0detached\0locked reason\nnext\0prunable missing\0\0").unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].path.as_os_str().as_bytes(), b"/repo\nname");
+        assert!(items[1].locked && items[1].prunable && items[1].detached);
+        assert_eq!(items[1].path.as_os_str().as_bytes(), b"/other/\xff");
+        assert!(parse_worktrees(b"worktree /repo\0branch refs/heads/\xff\0\0").unwrap()[0].branch.is_none());
+        assert!(parse_worktrees(b"worktree relative\0\0").is_err());
+        assert!(parse_worktrees(b"worktree /repo\0").is_err());
+    }
+    #[test]
+    fn rename_counts_once_and_untracked_files_are_counted() {
+        assert_eq!(status_count(b"R  new\0old\0?? new file\0 M tracked\0"), Ok(3));
+        assert_eq!(status_count(b""), Ok(0));
+        assert!(status_count(b"R  new\0").is_err());
+        assert!(status_count(b"?? path").is_err());
+        assert_eq!(parse_number(b"12\n"), Some(12));
+        assert_eq!(parse_number(b"-1\n"), None);
     }
 }

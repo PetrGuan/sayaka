@@ -93,6 +93,10 @@ pub fn scan_preview(
     let started = Instant::now();
     let mut options = options.clone();
     options.cache_discovery_deadline = Some(started + Duration::from_secs(30));
+    let mut discovery_limits = ClassifyLimits::from_request(limits).scan;
+    if options.profile == PurgeProfile::Worktrees {
+        discovery_limits.time_budget = discovery_limits.time_budget.min(Duration::from_secs(5));
+    }
     let report = match options.profile {
         PurgeProfile::DeveloperCaches => {
             let home =
@@ -123,9 +127,9 @@ pub fn scan_preview(
         PurgeProfile::FinderMetadata => {
             scan::scan_prune_native_packages(roots, limits, cancellation, &mut progress)?
         }
-        PurgeProfile::Projects => scan::scan_with_policy(
+        PurgeProfile::Projects | PurgeProfile::Worktrees => scan::scan_with_policy(
             roots,
-            &ClassifyLimits::from_request(limits).scan,
+            &discovery_limits,
             cancellation,
             scan::TraversalPolicy::ProjectDiscovery,
             |update| {
@@ -184,6 +188,19 @@ pub fn scan_preview(
             cancellation,
             &mut progress,
         );
+    }
+    if options.profile == PurgeProfile::Worktrees {
+        preview.worktrees = crate::worktrees::observe(&index, cancellation, started + limits.time_budget);
+        // Discovery is only the first phase. Stop during Git or sizing must
+        // remain cancelled at the task/FFI/CLI boundary too.
+        if cancellation.is_cancelled() {
+            preview.status = PurgeStatus::Cancelled;
+            preview.complete = false;
+            preview.worktrees.complete = false;
+        } else if !preview.worktrees.complete && preview.status == PurgeStatus::Complete {
+            preview.status = PurgeStatus::Partial;
+            preview.complete = false;
+        }
     }
     if options.profile != PurgeProfile::DeveloperCaches {
         return Ok(preview);

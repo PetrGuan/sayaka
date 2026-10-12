@@ -321,7 +321,7 @@ typedef struct SayakaPurgePreviewProfileRequestV1 {
     uint32_t struct_size;
     SayakaPathV1 root; /* One explicit native absolute root; input copied. */
     uint32_t stale_days; /* 0 means CLI default; otherwise 1..3650. */
-    uint32_t profile; /* 1/0 = projects, 2 = developer_caches, 3 = finder_metadata. */
+    uint32_t profile; /* 1/0 = projects, 2 = developer_caches, 3 = finder_metadata, 4 = worktrees (read-only). */
     uint32_t reserved; /* Must be zero. */
 } SayakaPurgePreviewProfileRequestV1;
 
@@ -330,7 +330,7 @@ typedef struct SayakaPurgePreviewPolicyRequestV1 {
     uint32_t struct_size;
     SayakaPathV1 root; /* One explicitly authorized native absolute root. */
     uint32_t stale_days;
-    uint32_t profile; /* 1/0 = projects, 2 = developer_caches, 3 = finder_metadata. */
+    uint32_t profile; /* 1/0 = projects, 2 = developer_caches, 3 = finder_metadata, 4 = worktrees (read-only). */
     uint32_t reserved; /* Must be zero. */
     SayakaPathV1 config_dir; /* App-private exclusion policy directory. */
 } SayakaPurgePreviewPolicyRequestV1;

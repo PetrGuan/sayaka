@@ -39,6 +39,7 @@ pub enum PurgeProfile {
     Projects,
     DeveloperCaches,
     FinderMetadata,
+    Worktrees,
 }
 
 pub fn resolve_cache_selections_by_ids(
@@ -119,6 +120,7 @@ impl PurgeProfile {
             Self::Projects => "projects",
             Self::DeveloperCaches => "developer_caches",
             Self::FinderMetadata => "finder_metadata",
+            Self::Worktrees => "worktrees",
         }
     }
 
@@ -127,6 +129,7 @@ impl PurgeProfile {
             0 | 1 => Some(Self::Projects),
             2 => Some(Self::DeveloperCaches),
             3 => Some(Self::FinderMetadata),
+            4 => Some(Self::Worktrees),
             _ => None,
         }
     }
@@ -136,6 +139,7 @@ impl PurgeProfile {
             Self::Projects => 1,
             Self::DeveloperCaches => 2,
             Self::FinderMetadata => 3,
+            Self::Worktrees => 4,
         }
     }
 }
@@ -961,6 +965,7 @@ pub struct ProjectScanMetrics {
 
 #[derive(Clone, Debug)]
 pub struct PurgePreview {
+    pub worktrees: crate::worktrees::WorktreeReport,
     pub scan_metrics: Option<ProjectScanMetrics>,
     pub schema_version: u32,
     pub kind: &'static str,
@@ -1103,6 +1108,7 @@ impl PurgePreview {
         match self.profile {
             PurgeProfile::DeveloperCaches => return self.developer_caches.len(),
             PurgeProfile::FinderMetadata => return self.finder_metadata.len(),
+            PurgeProfile::Worktrees => return 0,
             PurgeProfile::Projects => {}
         }
         self.projects
@@ -1285,6 +1291,18 @@ pub fn purge_preview(
 ) -> Result<PurgePreview, String> {
     options.validate()?;
     match options.profile {
+        PurgeProfile::Worktrees => {
+            let report = index.report();
+            Ok(PurgePreview {
+                worktrees: Default::default(), schema_version: PURGE_SCHEMA_VERSION,
+                kind: PURGE_KIND, platform: if cfg!(target_os = "macos") { "macos" } else { "unsupported" },
+                status: preview_status(report), complete: report.complete, effects_performed: false,
+                profile: options.profile, roots: report.roots.clone(), stale_days: options.stale_days,
+                projects: vec![], developer_caches: vec![], finder_metadata: vec![], unsupported_operations: &[],
+                counts: PurgeCounts::default(), scan_issues: report.issues.clone(), scan_metrics: None,
+                scan_issues_omitted: report.issues_omitted,
+            })
+        }
         PurgeProfile::Projects => project_purge_preview(index, options, now),
         PurgeProfile::DeveloperCaches => developer_cache_preview(index, options),
         PurgeProfile::FinderMetadata => finder_metadata_preview(index, options),
@@ -1335,6 +1353,7 @@ fn finder_metadata_preview(
         ..Default::default()
     };
     Ok(PurgePreview {
+        worktrees: Default::default(),
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,
         platform: if cfg!(target_os = "macos") {
@@ -1572,6 +1591,7 @@ fn project_purge_preview(
     let report = index.report();
     let status = preview_status(report);
     Ok(PurgePreview {
+        worktrees: Default::default(),
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,
         platform: if cfg!(target_os = "macos") {
@@ -1604,7 +1624,7 @@ pub fn profile_unsupported_operations(profile: PurgeProfile) -> &'static [Unsupp
     match profile {
         PurgeProfile::Projects => &[],
         PurgeProfile::DeveloperCaches => UNSUPPORTED_OPERATIONS,
-        PurgeProfile::FinderMetadata => &[],
+        PurgeProfile::FinderMetadata | PurgeProfile::Worktrees => &[],
     }
 }
 
@@ -1797,6 +1817,7 @@ fn developer_cache_preview_with_home(
         preview_status(report)
     };
     Ok(PurgePreview {
+        worktrees: Default::default(),
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,
         platform: if cfg!(target_os = "macos") {
