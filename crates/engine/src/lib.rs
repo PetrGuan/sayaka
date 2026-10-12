@@ -25,6 +25,7 @@ pub mod journal;
 pub mod maintenance_catalog;
 pub mod model;
 pub mod plan;
+pub mod project_git;
 pub mod purge_preview;
 mod readonly_task;
 pub mod receipt;

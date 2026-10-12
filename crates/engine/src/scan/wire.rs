@@ -433,6 +433,7 @@ mod tests {
             complete: true,
             entries: vec![],
             issues: vec![],
+            vcs_metadata: Vec::new(),
             issues_omitted: 0,
             totals: ScanTotals::default(),
             metrics: ScanMetrics::default(),

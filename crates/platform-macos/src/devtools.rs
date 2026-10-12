@@ -265,20 +265,71 @@ pub fn run_bounded_cancellable(
     stderr_cap: usize,
     cancel: &dyn Fn() -> bool,
 ) -> Result<ToolOutput, ToolError> {
-    if cancel() {
+    let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+    run_bounded_native_cancellable(program, &args, env, timeout, stdout_cap, stderr_cap, cancel)
+}
+
+/// Native path variant, retaining the same bounded process-group lifecycle.
+pub(crate) fn run_bounded_native_cancellable(
+    program: &Path,
+    args: &[OsString],
+    env: &[(OsString, OsString)],
+    timeout: Duration,
+    stdout_cap: usize,
+    stderr_cap: usize,
+    cancel: &dyn Fn() -> bool,
+) -> Result<ToolOutput, ToolError> {
+    run_bounded_native_input_cancellable(
+        program, args, env, timeout, stdout_cap, stderr_cap, cancel, None,
+    )
+}
+
+pub(crate) fn run_bounded_native_input_cancellable(
+    program: &Path,
+    args: &[OsString],
+    env: &[(OsString, OsString)],
+    timeout: Duration,
+    stdout_cap: usize,
+    stderr_cap: usize,
+    cancel: &dyn Fn() -> bool,
+    input: Option<&[u8]>,
+) -> Result<ToolOutput, ToolError> {
+    if cancel() || timeout.is_zero() {
         return Err(ToolError::Io(io::ErrorKind::Interrupted.into()));
     }
     let child = Command::new(program)
         .args(args)
         .env_clear()
         .envs(env.iter().map(|(key, value)| (key, value)))
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
         .spawn()
         .map_err(ToolError::Spawn)?;
     let mut guard = GroupGuard { child, armed: true };
+    // The caller caps input. A concurrent writer cannot block cancellation or
+    // the process deadline; killing the owned group closes its pipe on failure.
+    let input_result = if let Some(input) = input {
+        use std::io::Write;
+        let mut stdin = guard
+            .child
+            .stdin
+            .take()
+            .ok_or_else(|| ToolError::Io(io::ErrorKind::BrokenPipe.into()))?;
+        let input = input.to_vec();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(stdin.write_all(&input));
+        });
+        Some(receiver)
+    } else {
+        None
+    };
     let broken = || ToolError::Io(io::ErrorKind::BrokenPipe.into());
     let stdout = spawn_reader(guard.child.stdout.take().ok_or_else(broken)?, stdout_cap);
     let stderr = spawn_reader(guard.child.stderr.take().ok_or_else(broken)?, stderr_cap);
@@ -321,6 +372,12 @@ pub fn run_bounded_cancellable(
                 .unwrap_or(Err(ToolError::Io(io::ErrorKind::TimedOut.into()))),
         }
     };
+    if let Some(receiver) = input_result {
+        receiver
+            .recv_timeout(timeout.saturating_sub(started.elapsed()))
+            .map_err(|_| ToolError::Timeout)?
+            .map_err(ToolError::Io)?;
+    }
     let stdout = collect(stdout_result, &stdout)?;
     let stderr = collect(stderr_result, &stderr)?;
     Ok(ToolOutput {

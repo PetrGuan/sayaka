@@ -96,6 +96,7 @@ fn report(entries: Vec<ScanEntry>) -> ScanReport {
         complete: true,
         entries,
         issues: Vec::new(),
+        vcs_metadata: Vec::new(),
         issues_omitted: 0,
         totals: ScanTotals::default(),
         metrics: ScanMetrics::default(),

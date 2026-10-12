@@ -1009,3 +1009,63 @@ fn cache_worker_start_failure_and_child_panic_return_without_stranding_queue() {
         }
     }
 }
+
+#[test]
+fn project_scan_excludes_git_metadata_without_a_coverage_gap() {
+    let mut tree = tree();
+    let git = add_directory(&mut tree, &root(), ".git", 2);
+    add_directory(&mut tree, &git, "objects", 3);
+    let linked = add_directory(&mut tree, &root(), "linked", 4);
+    add_file(&mut tree, &linked, ".git", 5, Some(40));
+    add_file(&mut tree, &root(), "Cargo.toml", 6, Some(20));
+    let backend = FakeBackend(Arc::new(tree));
+    let limits = ScanLimits::default();
+    let report = run_with_policy(
+        &backend,
+        vec![root()],
+        RunOptions {
+            limits: &limits,
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            started: Instant::now(),
+        },
+        |_| {},
+    )
+    .unwrap();
+    assert!(report.complete);
+    assert!(report.issues.is_empty());
+    assert_eq!(report.vcs_metadata.len(), 2);
+    assert!(!backend.0.opened.lock().unwrap().contains(&git));
+    assert!(
+        report
+            .entries
+            .iter()
+            .all(|e| !crate::project_git::is_metadata_path(&e.path))
+    );
+    assert!(report.entries.iter().any(|e| e.path == root()));
+}
+
+#[test]
+fn explicit_git_root_is_excluded_before_any_open() {
+    let backend = FakeBackend(Arc::new(tree()));
+    let limits = ScanLimits::default();
+    let path = root().join(".git/objects");
+    let report = run_with_policy(
+        &backend,
+        vec![path.clone()],
+        RunOptions {
+            limits: &limits,
+            cancellation: &Cancellation::default(),
+            task_id: ScanTaskId::new().unwrap(),
+            traversal_policy: TraversalPolicy::ProjectArtifacts,
+            started: Instant::now(),
+        },
+        |_| {},
+    )
+    .unwrap();
+    assert!(report.complete);
+    assert!(report.issues.is_empty());
+    assert_eq!(report.vcs_metadata, vec![path]);
+    assert!(backend.0.opened.lock().unwrap().is_empty());
+}

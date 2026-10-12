@@ -116,13 +116,36 @@ pub fn scan_preview(
         PurgeProfile::FinderMetadata => {
             scan::scan_prune_native_packages(roots, limits, cancellation, &mut progress)?
         }
-        PurgeProfile::Projects => scan::scan(roots, limits, cancellation, &mut progress)?,
+        PurgeProfile::Projects => scan::scan_with_policy(
+            roots,
+            limits,
+            cancellation,
+            scan::TraversalPolicy::ProjectArtifacts,
+            &mut progress,
+        )?,
     };
     let task_id = report.task_id;
     let mut observed = report.entries.len();
     let index = ScanTree::build(report, cancellation)?;
     let mut preview = purge_preview(&index, &options, SystemTime::now())
         .map_err(|s| ScanError::new(ScanCode::InvalidLimits, s))?;
+    if options.profile == PurgeProfile::Projects {
+        let paths = preview
+            .projects
+            .iter()
+            .flat_map(|p| p.artifacts.iter().map(|a| a.path.clone()))
+            .collect::<Vec<_>>();
+        let observations =
+            crate::project_git::inspect_before(&paths, cancellation, started + limits.time_budget);
+        for artifact in preview.projects.iter_mut().flat_map(|p| &mut p.artifacts) {
+            if artifact.git.state != crate::project_git::GitState::ContainsMetadata {
+                artifact.git = observations
+                    .get(&artifact.path)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+        }
+    }
     if options.profile != PurgeProfile::DeveloperCaches {
         return Ok(preview);
     }

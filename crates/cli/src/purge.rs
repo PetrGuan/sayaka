@@ -405,6 +405,14 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                 "complete": artifact.complete,
                 "modified_unix_ms": artifact.modified_unix_ms,
                 "stale": artifact.stale,
+                        "execution_supported": artifact.git.permits_cleanup(),
+                        "git": {
+                            "state": artifact.git.state.as_str(),
+                            "reason": artifact.git.state.reason(),
+                            "ignored": artifact.git.ignored,
+                            "repository": artifact.git.repository.as_ref().map(|p| crate::apps::write_native_path(p)),
+                            "tool": artifact.git.tool,
+                        },
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "developer_caches": preview.developer_caches.iter().map(|cache| serde_json::json!({
@@ -457,6 +465,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
             "artifacts": preview.counts.artifacts,
             "stale_artifacts": preview.counts.stale_artifacts,
             "excluded": preview.counts.excluded,
+            "exclusion_reasons": { "vcs_metadata": preview.counts.vcs_metadata },
             "developer_caches": preview.counts.developer_caches,
             "unsupported_operations": preview.counts.unsupported_operations,
         },
@@ -542,13 +551,18 @@ fn write_human(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
             } else {
                 ", partial coverage"
             };
-            writeln!(out, "    - {} ({size}, {stale}{coverage})", artifact.name)?;
+            writeln!(
+                out,
+                "    - {} ({size}, {stale}{coverage}) · {}",
+                artifact.name,
+                artifact.git.state.reason()
+            )?;
         }
     }
     if preview.counts.excluded > 0 {
         writeln!(
             out,
-            "excluded (nested inside another artifact or dataless): {}",
+            "excluded (nested artifacts, dataless, or vcs_metadata): {}",
             preview.counts.excluded
         )?;
     }
@@ -581,6 +595,10 @@ mod tests {
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![
                     purge_preview::PurgeArtifact {
+                        git: sayaka_engine::project_git::GitObservation {
+                            state: sayaka_engine::project_git::GitState::Untracked,
+                            ..Default::default()
+                        },
                         path: project.join("target"),
                         name: "target".into(),
                         markers: vec![purge_preview::ProjectMarker::CargoToml],
@@ -591,6 +609,10 @@ mod tests {
                         stale: Some(false),
                     },
                     purge_preview::PurgeArtifact {
+                        git: sayaka_engine::project_git::GitObservation {
+                            state: sayaka_engine::project_git::GitState::Untracked,
+                            ..Default::default()
+                        },
                         path: project.join("dist"),
                         name: "dist".into(),
                         markers: vec![purge_preview::ProjectMarker::CargoToml],
@@ -610,6 +632,34 @@ mod tests {
             counts: purge_preview::PurgeCounts::default(),
             scan_issues: vec![],
             scan_issues_omitted: 0,
+        }
+    }
+
+    #[test]
+    fn git_refusal_changes_fingerprint_and_blocks_both_resolvers() {
+        use sayaka_engine::project_git::GitState;
+        let mut preview = preview_with_artifacts(std::path::Path::new("/fixture"));
+        let digest = preview.fingerprint();
+        for state in [
+            GitState::Tracked,
+            GitState::Unknown,
+            GitState::ContainsMetadata,
+        ] {
+            preview.projects[0].artifacts[0].git.state = state;
+            assert_ne!(preview.fingerprint(), digest);
+            let error = purge_preview::resolve_selections_by_paths(
+                &preview,
+                &["/fixture/app/target".into()],
+            )
+            .unwrap_err();
+            assert_eq!(error, state.reason());
+            assert!(
+                purge_preview::resolve_selections_by_ids(
+                    &preview,
+                    &[purge_preview::PurgeItemId(1)]
+                )
+                .is_err()
+            );
         }
     }
 

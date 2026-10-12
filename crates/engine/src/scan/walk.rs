@@ -41,7 +41,7 @@ fn should_descend_directory(policy: &TraversalPolicy, path: &Path) -> bool {
         TraversalPolicy::RestrictedTo(paths) => paths
             .iter()
             .any(|scope| path.starts_with(scope) || scope.starts_with(path)),
-        TraversalPolicy::Default => true,
+        TraversalPolicy::Default | TraversalPolicy::ProjectArtifacts => true,
         TraversalPolicy::PruneAppBundles => !app_candidate_directory(path),
         TraversalPolicy::PruneNativePackages => {
             #[cfg(target_os = "macos")]
@@ -242,6 +242,7 @@ impl<D> Drop for StopOnDrop<'_, D> {
 }
 
 enum Event {
+    VcsMetadata(PathBuf),
     Entry {
         path: PathBuf,
         metadata: Metadata,
@@ -413,6 +414,19 @@ fn worker<B: Backend>(
                 continue;
             }
             let path = frame.path.join(&item.name);
+            if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts)
+                && crate::project_git::is_metadata_path(&path)
+            {
+                send(
+                    &sender,
+                    Event::VcsMetadata(path),
+                    shared,
+                    limits,
+                    cancellation,
+                    started,
+                );
+                continue;
+            }
             if path.as_os_str().len() > limits.max_path_bytes.min(65_536) {
                 send(
                     &sender,
@@ -737,6 +751,37 @@ struct SeenEntries {
     directories: HashSet<FileIdentity>,
 }
 
+fn record_vcs_metadata(
+    report: &mut ScanReport,
+    path: PathBuf,
+    limits: &ScanLimits,
+) -> Result<(), ScanError> {
+    if report
+        .entries
+        .len()
+        .saturating_add(report.vcs_metadata.len())
+        >= limits.max_entries
+    {
+        return Err(ScanError::new(
+            ScanCode::EntryLimit,
+            "retained exclusion budget reached",
+        ));
+    }
+    let bytes = report
+        .metrics
+        .retained_path_bytes
+        .saturating_add(path.as_os_str().len());
+    if bytes > limits.max_path_bytes {
+        return Err(ScanError::new(
+            ScanCode::PathBytesLimit,
+            "retained exclusion path budget reached",
+        ));
+    }
+    report.metrics.retained_path_bytes = bytes;
+    report.vcs_metadata.push(path);
+    Ok(())
+}
+
 fn record_entry(
     report: &mut ScanReport,
     identities: &mut SeenEntries,
@@ -750,7 +795,12 @@ fn record_entry(
     {
         return Ok(false);
     }
-    if report.entries.len() >= limits.max_entries {
+    if report
+        .entries
+        .len()
+        .saturating_add(report.vcs_metadata.len())
+        >= limits.max_entries
+    {
         return Err(ScanError::new(
             ScanCode::EntryLimit,
             "retained entry budget reached",
@@ -872,6 +922,7 @@ pub(super) fn run_with_policy<B: Backend>(
         complete: true,
         entries: Vec::new(),
         issues: Vec::new(),
+        vcs_metadata: Vec::new(),
         issues_omitted: 0,
         totals: ScanTotals::default(),
         metrics: ScanMetrics::default(),
@@ -890,6 +941,16 @@ pub(super) fn run_with_policy<B: Backend>(
     };
     let mut identities = SeenEntries::default();
     for path in report.roots.clone() {
+        if matches!(traversal_policy, TraversalPolicy::ProjectArtifacts)
+            && crate::project_git::is_metadata_path(&path)
+        {
+            if let Err(error) = record_vcs_metadata(&mut report, path, limits) {
+                add_issue(&mut report, limits, None, error);
+                shared.stop();
+                break;
+            }
+            continue;
+        }
         if shared.should_stop(cancellation, started, limits.time_budget) {
             break;
         }
@@ -1029,6 +1090,14 @@ pub(super) fn run_with_policy<B: Backend>(
                 Ok(event) => {
                     counters.pending_events.fetch_sub(1, Ordering::AcqRel);
                     match event {
+                        Event::VcsMetadata(path) => {
+                            if !shared.stop.load(Ordering::Acquire) {
+                                if let Err(error) = record_vcs_metadata(&mut report, path, limits) {
+                                    add_issue(&mut report, limits, None, error);
+                                    shared.stop();
+                                }
+                            }
+                        }
                         Event::Entry {
                             path,
                             metadata,
@@ -1128,7 +1197,7 @@ pub(super) fn run_with_policy<B: Backend>(
             ),
         );
         report.status = ScanStatus::Partial;
-    } else if report.metrics.accepted_roots == 0 {
+    } else if report.metrics.accepted_roots == 0 && report.vcs_metadata.is_empty() {
         report.complete = false;
         report.status = ScanStatus::Failed;
     } else if !report.complete {
