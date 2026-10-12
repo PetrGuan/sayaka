@@ -1252,6 +1252,9 @@ impl PurgeSession {
                 }
             }
         }
+        crate::project_activity::require_idle(
+            &selections.iter().map(|s| s.project_root.clone()).collect::<Vec<_>>(), cancellation,
+        ).map_err(|reason| journal::invalid(&reason))?;
         crate::project_git::require_cleanup(
             &selections
                 .iter()
@@ -1403,6 +1406,8 @@ impl PurgeSession {
             .iter()
             .filter_map(|s| s.signature.clone().map(|e| (s.artifact.clone(), e)))
             .collect();
+        let project_roots: HashMap<_, _> = self.selections.iter()
+            .map(|s| (s.artifact.clone(), s.project_root.clone())).collect();
         let mut guard = move |point: GuardPoint, path: &Path| -> io::Result<GuardDecision> {
             if let Some((config, root, snapshot)) = policy {
                 match clean_policy::guard_snapshot(config, root, snapshot)? {
@@ -1410,6 +1415,12 @@ impl PurgeSession {
                     PolicyGuardStatus::Refused(reason) => {
                         return Ok(GuardDecision::Refused(reason));
                     }
+                }
+            }
+            if matches!(point, GuardPoint::LastNative) {
+                let Some(root) = project_roots.get(path) else { return Ok(GuardDecision::Refused("Project scope unavailable".into())); };
+                if let Err(reason) = crate::project_activity::require_idle(std::slice::from_ref(root), cancellation) {
+                    return Ok(GuardDecision::Refused(reason));
                 }
             }
             if matches!(point, GuardPoint::LastNative) {

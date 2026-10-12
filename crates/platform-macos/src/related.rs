@@ -337,7 +337,7 @@ pub fn executable_paths() -> io::Result<Vec<PathBuf>> {
     }
     Ok(result)
 }
-fn process_identity(pid: i32) -> io::Result<(u32, u64, u64)> {
+pub(crate) fn process_identity(pid: i32) -> io::Result<(u32, u64, u64)> {
     let mut value: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     // SAFETY: Initialized C output and exact PROC_PIDTBSDINFO buffer size.
     let n = unsafe {

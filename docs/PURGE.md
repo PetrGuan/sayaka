@@ -32,7 +32,7 @@ A directory is an artifact candidate only when **all** hold:
    hydrated or counted as cleanable.
 
 Each artifact reports known logical/allocated subtotals (unknown stays
-unknown, partial coverage is marked), the observed directory mtime, and a
+unknown, partial coverage is marked), the observed directory mtime, project activity evidence, and a
 staleness flag against `--stale-days` (default 30, max 3650). **mtime is an
 observation, not proof of disuse**; a "stale" artifact may still be wanted,
 and a "fresh" one may be disposable. Sizes are deduplicated within each
@@ -230,3 +230,30 @@ age, size, completeness, protection and Git policy as marker-bound artifacts.
 ## Extended macOS project rules
 
 See [Project artifact rules](PROJECT_ARTIFACT_RULES.md) for the shared fixed table, nested paths, directory markers, tag-only observations and Pods prerequisites.
+
+## Project activity
+
+Native project previews include `project_activity`: commit and bounded source
+metadata dates (Unix milliseconds), the artifact date, nullable uncommitted/build
+state and source-coverage status. Project source/commit dates take precedence;
+artifact mtime is a fallback only. A fresh build alone does not make old source
+active. Stale means at least the configured age, clean observed Git status (or a
+positively observed non-repository), complete bounded source observation, and no
+observed build activity. Unknown is not inactive; this does not weaken Git safety.
+
+Source observation reads metadata at depths 1–2 (500 entries / one second per
+project), skips artifact and known AI-tool directories, and observes HEAD/index
+metadata without traversing Git objects. Git queries use the fixed verified tool
+boundary with a two-second per-repository budget and no optional index locks.
+Build observations use same-user native executable/cwd metadata for cargo, rustc,
+xcodebuild, swift-build, swift, node, npm, pnpm, yarn, gradle and java. Unknown
+process visibility refuses cleanup. Cargo profile lock checks are bounded to
+500 entries / 250 ms / four directory levels, skip generated leaf trees, and
+immediately release a nonblocking shared lock used to detect an exclusive holder.
+Swift workspace-state metadata modified within two seconds is treated as writing.
+Bounds or unreadable lock state remain unknown. No files are created or written.
+
+Preview and native session admission refuse running/unknown builds; the final
+native guard repeats this observation. The existing last-check/path-replacement
+and process-start race remains: these checks are not an atomic exclusion lock on
+all build tools. Fresh metadata and an explicit Trash confirmation remain required.

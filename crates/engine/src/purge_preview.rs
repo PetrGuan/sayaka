@@ -323,6 +323,7 @@ impl ArtifactSignature {
 
 #[derive(Clone, Debug)]
 pub struct PurgeArtifact {
+    pub project_activity: Option<crate::project_activity::ProjectActivity>,
     pub signature: Option<ArtifactSignature>,
     pub size_complete: bool,
     pub git: crate::project_git::GitObservation,
@@ -345,6 +346,7 @@ pub struct PurgeArtifact {
 impl PurgeArtifact {
     pub fn execution_supported(&self) -> bool {
         self.complete && self.size_complete && self.git.permits_cleanup()
+            && self.project_activity.as_ref().is_some_and(|a| a.build_running == Some(false))
             && self.signature.as_ref().is_none_or(|s| s.permits_cleanup(&self.git))
     }
 }
@@ -1040,6 +1042,7 @@ impl PurgePreview {
             }
             for artifact in &project.artifacts {
                 hash_path(&mut hasher, &artifact.path);
+                hasher.update(serde_json::to_vec(&artifact.project_activity).expect("activity serialization"));
                 hasher.update(artifact.git.state.as_str().as_bytes());
                 hasher.update([match artifact.git.ignored {
                     None => 0,
@@ -1517,6 +1520,7 @@ fn project_purge_preview(
                 crate::project_git::GitObservation::default()
             };
             out_artifacts.push(PurgeArtifact {
+                project_activity: None,
                 signature,
                 size_complete: summary.is_some_and(|summary| summary.complete),
                 git,

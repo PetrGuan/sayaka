@@ -347,3 +347,5 @@ available for existing clients but do not opt into a policy directory.
 Optimize currently has no effectful operation, so there is no optimize
 execution set to filter. Any future optimize effect must take the same
 policy snapshot and guard before it can be enabled in the App Store client.
+
+Project build activity is also checked at admission and the final native guard; see [PURGE.md](PURGE.md#project-activity). Running or unverified activity refuses removal.
