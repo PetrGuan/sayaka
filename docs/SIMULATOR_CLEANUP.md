@@ -130,7 +130,7 @@ targets are canonical image UUIDs. Anything else is rejected before launch.
 ## Fixed argument tables
 
 Read-only (preview and revalidation): `simctl list devices -j`,
-`simctl list pairs -j`, `simctl runtime list -j`, `simctl runtime match list -j`.
+`simctl list pairs -j`, `simctl list devicetypes -j`, `simctl runtime list -j`, `simctl runtime match list -j`.
 
 Slice 1a execution:
 
@@ -347,3 +347,28 @@ in [SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md); retained here for context):
 5. For MobileAsset-managed cryptex images, confirm `simctl` is the supported
    removal path, decide `--keep-asset`, and verify that the reported
    `sizeBytes` matches the space actually freed.
+
+## Advisory device suggestions (Cleaner #440)
+
+Preview additionally reads the fixed `simctl list devicetypes -j` vector through
+the same bounded native runner. If that catalog fails or is malformed, the
+preview includes `suggestion_warning`; names remain unknown and nothing is
+suggested. Explicit device review and execution eligibility are unchanged.
+
+A default-named, shutdown, unpaired, non-test-clone device may be suggested for
+deletion when unavailable, or when an available same-type device exists on a
+numerically newer runtime of the same platform and no use is reported in the
+last 14 days. A newer test clone does not qualify as a replacement. Names come
+from the device-type catalog, not heuristics. Custom and unknown names are never
+suggested. Runtime versions are parsed numerically (including patch components),
+not compared lexically. `lastUsedAt` and `lastBootedAt` are combined using the
+newer valid timestamp; malformed or future activity suppresses duplicates.
+Missing activity stays unknown in presentation; the evidence explicitly says
+`no_boot_or_use_reported` rather than inventing a date.
+
+The additive JSON `custom_name` (nullable boolean) and `suggestion` (nullable
+kind, newer runtime for duplicates, evidence, consequence note) are observations
+only. Nothing is preselected. These suggestions do not change approval phrases,
+selection limits, execution revalidation, runtime-removal grouping, or the
+permanent effect class. A duplicate is a newer device model counterpart, not a
+backup: apps/data/settings are not transferred or recoverable through Sayaka.

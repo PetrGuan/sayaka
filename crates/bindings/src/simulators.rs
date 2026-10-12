@@ -174,6 +174,7 @@ fn prepare(handle: u64, operation: Operation, cancel: Cancellation) -> Result<Ou
                 "paired_with": c.paired_with,
                 "paired_with_id": c.paired_with.as_deref().and_then(|udid| ids.get(udid)).map(ToString::to_string),
                 "refusals": c.refusals, "execution_eligible": c.eligible(),
+                "custom_name": c.custom_name, "suggestion": c.suggestion,
                 "loses": match operation {
                     Operation::Erase => "all apps, data and settings on this simulator; the device itself stays",
                     Operation::Delete => "the simulator device with all of its apps, data and settings",
@@ -197,6 +198,7 @@ fn prepare(handle: u64, operation: Operation, cancel: Cancellation) -> Result<Ou
             "expires_unix_ms": expires.duration_since(std::time::UNIX_EPOCH).map_err(|_| INTERNAL_ERROR)?.as_millis(),
             "tool": { "fingerprint": preview.tool.fingerprint, "versions": preview.versions },
             "developer_activity": preview.developer_activity,
+            "suggestion_warning": preview.suggestion_warning,
             "items": items,
             "size_note": "CoreSimulator sizes cover the data directory only and can include clone-shared blocks; freed space is not guaranteed",
             "residual_race_disclosed": preview.residual_race_disclosed,

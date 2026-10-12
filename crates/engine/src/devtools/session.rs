@@ -193,6 +193,12 @@ pub trait Host {
     fn data_modified_unix_ns(&self, data_path: &Path) -> Option<i128>;
     fn data_identity(&self, data_path: &Path) -> Option<(u64, u64)>;
     fn now(&self) -> Instant;
+    fn unix_seconds(&self) -> Option<u64> {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+    }
 }
 
 /// Sealed, effect-free preview of one operation kind.
@@ -209,6 +215,7 @@ pub struct Preview {
     /// execution refuses while any remain.
     pub developer_activity: Vec<String>,
     pub residual_race_disclosed: bool,
+    pub suggestion_warning: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -321,6 +328,17 @@ impl<H: Host> SimulatorSession<H> {
             return Err(SessionError::Cancelled);
         }
         let (devices, pairs) = list(&host)?;
+        // Advisory evidence only: losing the type catalog never broadens a
+        // suggestion or disables the existing explicit device-review flow.
+        let types = host
+            .run(
+                &["simctl", "list", "devicetypes", "-j"].map(str::to_owned),
+                false,
+            )
+            .ok()
+            .filter(|r| r.success)
+            .and_then(|r| runtimes::parse_types(&r.stdout).ok());
+        let suggestion_warning = types.is_none().then(|| "Device type names could not be checked. Suggestions are unavailable; review devices individually.".to_owned());
         if cancellation.is_cancelled() {
             return Err(SessionError::Cancelled);
         }
@@ -332,7 +350,10 @@ impl<H: Host> SimulatorSession<H> {
                 .map_err(|_| SessionError::DeveloperActivity {
                     executables: Vec::new(),
                 })?;
-        let candidates = candidates(&devices, &pairs, operation);
+        let mut candidates = candidates(&devices, &pairs, operation);
+        if let Some(types) = types {
+            suggestions::assess(&mut candidates, &types, operation, host.unix_seconds());
+        }
         let plan_digest = plan_digest(operation, &tool.fingerprint, &candidates);
         Ok(Self {
             host,
@@ -346,6 +367,7 @@ impl<H: Host> SimulatorSession<H> {
                 plan_digest,
                 developer_activity,
                 residual_race_disclosed: true,
+                suggestion_warning,
             },
             created,
             consumed: false,

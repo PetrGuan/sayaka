@@ -108,6 +108,7 @@ impl Host for Rc<Fake> {
         let stdout = match args[2].as_str() {
             "devices" => self.devices.borrow().clone(),
             "pairs" => self.pairs.borrow().clone(),
+            "devicetypes" => r#"{"devicetypes": []}"#.into(),
             other => panic!("unexpected list {other}"),
         };
         Ok(ToolResult {
@@ -512,6 +513,8 @@ fn pair_batches_never_split_a_pair() {
             .remove(0),
         paired_with: partner.map(str::to_owned),
         refusals: vec![],
+        custom_name: None,
+        suggestion: None,
     };
     let mut candidates = Vec::new();
     let mut selected = Vec::new();

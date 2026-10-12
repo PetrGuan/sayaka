@@ -9,6 +9,7 @@
 //! observations map to per-identity outcomes.
 
 use serde::{Deserialize, Serialize};
+pub mod suggestions;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -105,6 +106,8 @@ struct RawDevice {
     #[serde(default)]
     last_used_at: Option<String>,
     #[serde(default)]
+    last_booted_at: Option<String>,
+    #[serde(default)]
     availability_error: Option<String>,
 }
 
@@ -170,7 +173,10 @@ pub fn parse_devices(bytes: &[u8]) -> Result<Vec<Device>, ParseError> {
                 data_path: entry.data_path,
                 data_path_size: entry.data_path_size,
                 log_path_size: entry.log_path_size,
-                last_used_at: entry.last_used_at,
+                last_used_at: suggestions::latest_activity(
+                    entry.last_used_at,
+                    entry.last_booted_at,
+                ),
                 availability_error: entry.availability_error,
             });
         }
@@ -220,6 +226,8 @@ pub struct Candidate {
     /// The other member of a watch/phone pair, if any.
     pub paired_with: Option<String>,
     pub refusals: Vec<CandidateRefusal>,
+    pub custom_name: Option<bool>,
+    pub suggestion: Option<suggestions::SimulatorSuggestion>,
 }
 
 impl Candidate {
@@ -276,6 +284,8 @@ pub fn candidates(
                 device: device.clone(),
                 paired_with,
                 refusals,
+                custom_name: None,
+                suggestion: None,
             }
         })
         .collect()
