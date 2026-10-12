@@ -41,8 +41,7 @@ fn should_descend_directory(policy: &TraversalPolicy, path: &Path) -> bool {
         TraversalPolicy::RestrictedTo(paths) => paths
             .iter()
             .any(|scope| path.starts_with(scope) || scope.starts_with(path)),
-        TraversalPolicy::Default
-        | TraversalPolicy::ProjectDiscovery => true,
+        TraversalPolicy::Default | TraversalPolicy::ProjectDiscovery => true,
         TraversalPolicy::PruneAppBundles => !app_candidate_directory(path),
         TraversalPolicy::PruneNativePackages => {
             #[cfg(target_os = "macos")]
@@ -72,6 +71,12 @@ pub(super) struct DirItem {
 
 pub(super) trait Cursor: Send {
     fn metadata(&self) -> Metadata;
+    fn project_signature(
+        &self,
+        _path: &Path,
+    ) -> Result<Option<crate::purge_preview::ArtifactSignature>, ScanError> {
+        Ok(None)
+    }
     fn binds_project_artifact(&self, _name: &std::ffi::OsStr) -> Result<bool, ScanError> {
         Ok(false)
     }
@@ -193,6 +198,7 @@ fn reserve(counters: &Arc<Counters>, limit: usize) -> Option<Permit> {
 }
 
 struct Frame<D> {
+    signature_checked: bool,
     directory: D,
     // Drop the directory descriptor before releasing its counted slot.
     _permit: Permit,
@@ -253,6 +259,7 @@ impl<D> Drop for StopOnDrop<'_, D> {
 }
 
 enum Event {
+    Signature(PathBuf, crate::purge_preview::ArtifactSignature),
     VcsMetadata(PathBuf),
     Entry {
         path: PathBuf,
@@ -365,6 +372,63 @@ fn worker<B: Backend>(
         let mut stack = vec![job];
         while !stack.is_empty() && !shared.should_stop(cancellation, started, limits.time_budget) {
             let frame = stack.last_mut().expect("nonempty scan stack");
+            if matches!(traversal_policy, TraversalPolicy::ProjectDiscovery)
+                && !frame.signature_checked
+            {
+                frame.signature_checked = true;
+                // The fixed native probes can hold Build/Logs plus one child.
+                // Charge those transient descriptors to the same aggregate cap.
+                let probe_permits = (
+                    reserve(&shared.counters, limits.max_open_dirs),
+                    reserve(&shared.counters, limits.max_open_dirs),
+                );
+                if probe_permits.0.is_none() || probe_permits.1.is_none() {
+                    send(
+                        &sender,
+                        issue_event(
+                            Some(frame.path.clone()),
+                            ScanCode::OpenHandleLimit,
+                            "Xcode signature probe handle budget reached",
+                        ),
+                        shared,
+                        limits,
+                        cancellation,
+                        started,
+                    );
+                    stack.pop();
+                    continue;
+                }
+                match frame.directory.project_signature(&frame.path) {
+                    Ok(Some(signature)) => {
+                        send(
+                            &sender,
+                            Event::Signature(frame.path.clone(), signature),
+                            shared,
+                            limits,
+                            cancellation,
+                            started,
+                        );
+                        stack.pop();
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        send(
+                            &sender,
+                            Event::Issue {
+                                path: Some(frame.path.clone()),
+                                error,
+                            },
+                            shared,
+                            limits,
+                            cancellation,
+                            started,
+                        );
+                        stack.pop();
+                        continue;
+                    }
+                }
+            }
             let item = match frame.directory.next_entry() {
                 Some(Ok(item)) => item,
                 Some(Err(error)) => {
@@ -503,6 +567,17 @@ fn worker<B: Backend>(
                     cancellation,
                     started,
                 );
+                continue;
+            }
+            // Project discovery needs directory identities and binding markers,
+            // not a retained record for every unrelated source/generated file.
+            // Artifact bytes and tracked files are observed by independent passes.
+            if matches!(traversal_policy, TraversalPolicy::ProjectDiscovery)
+                && metadata.kind == ResourceKind::File
+                && !crate::purge_preview::ProjectMarker::ALL
+                    .iter()
+                    .any(|m| item.name == m.file_name())
+            {
                 continue;
             }
             let depth = frame.depth + 1;
@@ -744,6 +819,7 @@ fn worker<B: Backend>(
                 Some(true) => {}
             }
             let child = Frame {
+                signature_checked: false,
                 directory,
                 _permit: permit,
                 path,
@@ -929,6 +1005,7 @@ fn record_entry(
     report.totals = totals;
     report.metrics.retained_path_bytes = path_bytes;
     report.entries.push(ScanEntry {
+        project_signature: None,
         id: report.entries.len() as u64 + 1,
         path,
         kind: metadata.kind,
@@ -1102,6 +1179,7 @@ pub(super) fn run_with_policy<B: Backend>(
                 .expect("scan queue poisoned")
                 .jobs
                 .push_back(Frame {
+                    signature_checked: false,
                     directory,
                     _permit: permit,
                     path,
@@ -1166,6 +1244,28 @@ pub(super) fn run_with_policy<B: Backend>(
                 Ok(event) => {
                     counters.pending_events.fetch_sub(1, Ordering::AcqRel);
                     match event {
+                        Event::Signature(path, signature) => {
+                            let bytes = signature.retained_bytes();
+                            if report.metrics.retained_path_bytes.saturating_add(bytes)
+                                > limits.max_path_bytes
+                            {
+                                add_issue(
+                                    &mut report,
+                                    limits,
+                                    Some(path),
+                                    ScanError::new(
+                                        ScanCode::PathBytesLimit,
+                                        "signature evidence retention budget reached",
+                                    ),
+                                );
+                                shared.stop();
+                            } else if let Some(entry) =
+                                report.entries.iter_mut().rev().find(|e| e.path == path)
+                            {
+                                entry.project_signature = Some(signature);
+                                report.metrics.retained_path_bytes += bytes;
+                            }
+                        }
                         Event::VcsMetadata(path) => {
                             if !shared.stop.load(Ordering::Acquire) {
                                 if let Err(error) = record_vcs_metadata(&mut report, path, limits) {

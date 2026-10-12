@@ -571,6 +571,14 @@ impl CacheTrashCandidate {
 }
 
 impl PurgeTrashCandidate {
+    /// Content-based Xcode target; ordinary strict scope/identity/ownership
+    /// admission and a fresh native signature check remain required.
+    #[cfg(target_os = "macos")]
+    pub fn capture_xcode_build(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
+        native::Candidate::capture_xcode_build(scope, path, protected)
+            .map(|native| Self { native }).map_err(NativeCaptureFailure::into_legacy_error)
+    }
+
     /// Captures an artifact directory with its sealed marker files:
     /// ordinary user-owned directory strictly beneath the explicit scope on
     /// the same supported volume; every marker an ordinary user-owned

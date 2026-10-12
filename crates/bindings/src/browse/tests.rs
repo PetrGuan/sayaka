@@ -534,6 +534,7 @@ mod native {
         report.complete = true;
         for (id, logical) in [(root_id + 1, Some(11)), (root_id + 2, None)] {
             report.entries.push(ScanEntry {
+                project_signature: None,
                 id,
                 path: root.path.join(format!("alias-{id}")),
                 kind: ResourceKind::File,
@@ -566,6 +567,7 @@ mod native {
             ("alias", root_id + 4, Some(99), Some(99)),
         ] {
             report.entries.push(ScanEntry {
+                project_signature: None,
                 id,
                 path: root.path.join(name),
                 kind: ResourceKind::File,
@@ -608,6 +610,7 @@ mod native {
         report.entries.truncate(1);
         for index in 1..=MAX_PAGE_NODES {
             report.entries.push(ScanEntry {
+                project_signature: None,
                 id: root_id + u64::from(index),
                 path: root.path.join(format!("{}-{index}", "x".repeat(2048))),
                 kind: ResourceKind::File,
@@ -631,6 +634,7 @@ mod native {
         let selected_id = root_id + 1;
         for index in (0..20).rev() {
             report.entries.push(ScanEntry {
+                project_signature: None,
                 id: root_id + 1 + index,
                 path: root.path.join(format!("{index:02}-alias")),
                 kind: ResourceKind::File,

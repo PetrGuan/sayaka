@@ -249,8 +249,45 @@ impl PurgeOptions {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ArtifactSignature {
+    XcodeDerivedData {
+        signals: Vec<String>,
+        workspace: Option<PathBuf>,
+        workspace_state: String,
+    },
+}
+impl ArtifactSignature {
+    pub fn rule(&self) -> &'static str {
+        "xcode_build_signature_v1"
+    }
+    pub fn retained_bytes(&self) -> usize {
+        match self {
+            Self::XcodeDerivedData {
+                workspace,
+                signals,
+                workspace_state,
+            } => {
+                workspace.as_ref().map_or(0, |p| p.as_os_str().len())
+                    + signals.iter().map(String::len).sum::<usize>()
+                    + workspace_state.len()
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    pub(crate) fn from_native(e: sayaka_platform_macos::xcode_build::Evidence) -> Self {
+        Self::XcodeDerivedData {
+            signals: e.signals.into_iter().map(str::to_owned).collect(),
+            workspace: e.workspace,
+            workspace_state: e.workspace_state.into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PurgeArtifact {
+    pub signature: Option<ArtifactSignature>,
     pub size_complete: bool,
     pub git: crate::project_git::GitObservation,
     pub path: PathBuf,
@@ -973,6 +1010,9 @@ impl PurgePreview {
                     hasher.update(tool.as_bytes());
                 }
                 hasher.update([0]);
+                hasher.update(
+                    serde_json::to_vec(&artifact.signature).expect("signature serialization"),
+                );
                 hasher.update(artifact.name.as_bytes());
                 hasher.update([0]);
                 for marker in &artifact.markers {
@@ -1165,6 +1205,7 @@ fn selection_from_parts(
     }
     Ok(PurgeSelection {
         artifact: artifact.path.clone(),
+        signature: artifact.signature.clone(),
         project_root: project.root.clone(),
         markers: artifact
             .markers
@@ -1326,10 +1367,34 @@ fn project_purge_preview(
                 continue;
             }
             artifact_paths.push(entry.path.clone());
-            artifacts.push((child, entry.path.clone(), name.to_string(), bound));
+            artifacts.push((child, entry.path.clone(), name.to_string(), bound, None));
         }
         if !artifacts.is_empty() {
             projects.push((root, markers, artifacts));
+        }
+    }
+    for &id in &directories {
+        let entry = index.entry(id).expect("directory entry");
+        if let Some(signature) = &entry.project_signature {
+            if let Some(parent) = entry.path.parent() {
+                artifact_paths.push(entry.path.clone());
+                projects.push((
+                    parent.to_path_buf(),
+                    Vec::new(),
+                    vec![(
+                        id,
+                        entry.path.clone(),
+                        entry
+                            .path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        Vec::new(),
+                        Some(signature.clone()),
+                    )],
+                ));
+            }
         }
     }
     // Second pass: drop projects/artifacts nested inside another project's
@@ -1350,7 +1415,7 @@ fn project_purge_preview(
             continue;
         }
         let mut out_artifacts = Vec::new();
-        for (child, path, name, bound) in artifacts {
+        for (child, path, name, bound, signature) in artifacts {
             if artifact_paths
                 .iter()
                 .any(|artifact| path != *artifact && path.starts_with(artifact))
@@ -1397,6 +1462,7 @@ fn project_purge_preview(
                 crate::project_git::GitObservation::default()
             };
             out_artifacts.push(PurgeArtifact {
+                signature,
                 size_complete: summary.is_some_and(|summary| summary.complete),
                 git,
                 path,
@@ -1969,6 +2035,47 @@ mod tests {
     use crate::model::Cancellation;
     use crate::scan::{ScanLimits, index::ScanTree, scan};
     use std::fs;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn signature_discovery_prunes_and_keeps_custom_artifact_with_evidence() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let data = root.join("Artifacts/CustomData");
+        fs::create_dir_all(data.join("Build/Products/nested")).unwrap();
+        fs::create_dir_all(data.join("Logs/Build")).unwrap();
+        fs::write(
+            data.join("Build/Products/nested/large"),
+            b"size me separately",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("not-xcode/Build/Products")).unwrap();
+        let cancel = Cancellation::default();
+        let report = crate::scan::scan_with_policy(
+            &[root],
+            &ScanLimits::default(),
+            &cancel,
+            crate::scan::TraversalPolicy::ProjectDiscovery,
+            |_| {},
+        )
+        .unwrap();
+        assert!(
+            !report
+                .entries
+                .iter()
+                .any(|e| e.path != data && e.path.starts_with(&data))
+        );
+        let index = ScanTree::build(report, &cancel).unwrap();
+        let preview = purge_preview(&index, &PurgeOptions::default(), SystemTime::now()).unwrap();
+        assert_eq!(preview.projects.len(), 1);
+        let artifact = &preview.projects[0].artifacts[0];
+        assert_eq!(artifact.path, data);
+        assert_eq!(
+            artifact.signature.as_ref().unwrap().rule(),
+            "xcode_build_signature_v1"
+        );
+        assert!(artifact.markers.is_empty());
+    }
 
     fn fixture_tree() -> tempfile::TempDir {
         let root = tempfile::tempdir().expect("tempdir");

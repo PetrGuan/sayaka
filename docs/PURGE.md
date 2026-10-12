@@ -194,3 +194,35 @@ moves as one container with per-item journaled outcomes; the binding marker
 are observations, not reclaimed space, and a running build tool is not
 detected — see [PURGE_EXECUTION.md](PURGE_EXECUTION.md) for the full
 contract and its disclosures.
+
+## Custom Xcode build data (signature v1)
+
+Project discovery recognizes a directory by its contents, independent of its name:
+`Build/Intermediates.noindex` or `Build/Products`, plus at least one of
+`Logs/Build`, `ModuleCache.noindex`, `Index.noindex`, `SourcePackages`, or a bounded
+`info.plist` whose `WorkspacePath` is an absolute native path. A `Build` folder alone
+never qualifies. Native descriptor-relative probes reject symlinks, dataless
+objects and mount crossings. Their transient handles and retained evidence count
+against classification resource budgets. Matching descendants are pruned from
+classification and independently sized as described above. Classification retains
+directories and binding marker files, not unrelated regular files; Git tracked-file
+inspection remains independent and complete-or-refused.
+
+Evidence: a fresh macOS Xcode Debug build observed on 2026-10-12 contained both
+Build signals, Logs/Build, ModuleCache.noindex, Index.noindex, SourcePackages and
+info.plist with WorkspacePath in a custom derivedDataPath. A standard per-project
+DerivedData directory contained the same layout except ModuleCache.noindex.
+Each preview carries the signals actually matched, workspace provenance and a
+present/not_found/unknown state. Missing workspace metadata is not proof of safety
+or a reason to bypass Git checks. Standard native-home
+`Library/Developer/Xcode/DerivedData` is excluded from this signature because the
+cache profile owns it. Only the matching child is targeted: `.build/xcode` does not
+make the entire `.build` parent disposable.
+
+Signature targets use ordinary native directory admission and Trash-only execution,
+with fresh signature checks at preparation/revalidation/last guard plus existing Git
+checks. The exact `.build` path component is permitted for this target kind; all other
+hidden, system, cloud, package, identity, ownership and protection boundaries remain.
+Changes in the previewed signature/workspace provenance require a fresh preview.
+Path replacement races remain disclosed. The recommendation tier uses the same
+age, size, completeness, protection and Git policy as marker-bound artifacts.

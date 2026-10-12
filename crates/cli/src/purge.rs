@@ -400,6 +400,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
             "artifacts": project.artifacts.iter().map(|artifact| serde_json::json!({
                 "path": crate::apps::write_native_path(&artifact.path),
                 "name": artifact.name,
+                "signature": artifact.signature,
                 "markers": artifact.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
                 "logical_bytes": artifact.logical_bytes,
                 "allocated_bytes": artifact.allocated_bytes,
@@ -602,6 +603,7 @@ mod tests {
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![
                     purge_preview::PurgeArtifact {
+                        signature: None,
                         size_complete: true,
                         git: sayaka_engine::project_git::GitObservation {
                             state: sayaka_engine::project_git::GitState::Untracked,
@@ -617,6 +619,7 @@ mod tests {
                         stale: Some(false),
                     },
                     purge_preview::PurgeArtifact {
+                        signature: None,
                         size_complete: true,
                         git: sayaka_engine::project_git::GitObservation {
                             state: sayaka_engine::project_git::GitState::Untracked,

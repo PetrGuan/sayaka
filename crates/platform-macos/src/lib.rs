@@ -326,3 +326,6 @@ pub mod diagnostic_tools;
 
 #[cfg(target_os = "macos")]
 pub mod project_git;
+
+#[cfg(target_os = "macos")]
+pub mod xcode_build;

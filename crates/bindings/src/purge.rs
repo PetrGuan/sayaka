@@ -185,6 +185,17 @@ fn ensure_preview(job: &mut PurgePreviewJob) -> Result<Arc<PurgePreview>, i32> {
         .clone()
 }
 
+fn signature_json(signature: Option<&purge_preview::ArtifactSignature>) -> Value {
+    match signature {
+        Some(purge_preview::ArtifactSignature::XcodeDerivedData { signals, workspace, workspace_state }) => json!({
+            "kind": "xcode_derived_data", "signals": signals,
+            "workspace": workspace.as_ref().map(|p| wire::NativePath(p)), "workspace_state": workspace_state,
+            "source": "Fresh Xcode build observed 2026-10-12: custom derivedDataPath and standard per-project DerivedData; build product/intermediate directory plus an independent Xcode signal."
+        }),
+        None => Value::Null,
+    }
+}
+
 fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy>) -> Value {
     let digest = preview.plan_digest();
     let mut next_id = 1u64;
@@ -201,7 +212,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                         "path": wire::NativePath(&artifact.path),
                         "name": artifact.name,
                         "kind": "directory",
-                        "rule": "marker_bound_project_artifact_v1",
+                        "rule": artifact.signature.as_ref().map_or("marker_bound_project_artifact_v1", |s| s.rule()),
                         "markers": artifact.markers.iter().map(|marker| marker.as_str()).collect::<Vec<_>>(),
                         "sizes": {
                             "logical": artifact.logical_bytes,
@@ -222,6 +233,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
                         "reasons": reasons(artifact, policy),
                         "policy_excluded": policy.is_some_and(|p| p.excludes(&artifact.path)),
                         "evidence": {
+                            "signature": signature_json(artifact.signature.as_ref()),
                             "project_markers": artifact.markers.iter().map(|marker| json!({
                                 "kind": marker.as_str(),
                                 "path": wire::NativePath(&project.root.join(marker.file_name())),
@@ -437,7 +449,7 @@ fn reasons(
     artifact: &purge_preview::PurgeArtifact,
     policy: Option<&PurgePolicy>,
 ) -> Vec<&'static str> {
-    let mut reasons = vec!["project_marker_bound"];
+    let mut reasons = vec![if artifact.signature.is_some() { "xcode_build_signature" } else { "project_marker_bound" }];
     reasons.push(match artifact.stale {
         Some(true) => "stale",
         Some(false) => "not_stale",
@@ -1746,6 +1758,7 @@ mod tests {
                 root: std::path::PathBuf::from("/repo"),
                 markers: vec![purge_preview::ProjectMarker::CargoToml],
                 artifacts: vec![purge_preview::PurgeArtifact {
+                    signature: None,
                     size_complete: true,
                     git: Default::default(),
                     path: std::path::PathBuf::from("/repo/target"),
