@@ -226,3 +226,7 @@ hidden, system, cloud, package, identity, ownership and protection boundaries re
 Changes in the previewed signature/workspace provenance require a fresh preview.
 Path replacement races remain disclosed. The recommendation tier uses the same
 age, size, completeness, protection and Git policy as marker-bound artifacts.
+
+## Extended macOS project rules
+
+See [Project artifact rules](PROJECT_ARTIFACT_RULES.md) for the shared fixed table, nested paths, directory markers, tag-only observations and Pods prerequisites.

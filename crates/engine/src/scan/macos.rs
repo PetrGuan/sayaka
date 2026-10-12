@@ -294,6 +294,11 @@ impl Cursor for MacDirectory {
         &self,
         path: &Path,
     ) -> Result<Option<crate::purge_preview::ArtifactSignature>, ScanError> {
+        let fd = self.stream.fd().map_err(native_error)?;
+        if let Some(e) = sayaka_platform_macos::project_artifacts::inspect(fd, path)
+            .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))? {
+            return Ok(Some(crate::purge_preview::ArtifactSignature::from_project(e)));
+        }
         sayaka_platform_macos::xcode_build::inspect(self.stream.fd().map_err(native_error)?, path)
             .map(|e| e.map(crate::purge_preview::ArtifactSignature::from_native))
             .map_err(|e| ScanError::new(ScanCode::Io, e.to_string()))
@@ -303,32 +308,8 @@ impl Cursor for MacDirectory {
         self.original.clone()
     }
 
-    fn binds_project_artifact(&self, name: &OsStr) -> Result<bool, ScanError> {
-        let Some(name) = name.to_str() else {
-            return Ok(false);
-        };
-        let fd = self.stream.fd().map_err(native_error)?;
-        for marker in crate::purge_preview::ProjectMarker::ALL {
-            if !marker.artifacts().contains(&name) {
-                continue;
-            }
-            match fs::statat(fd, marker.file_name(), AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(stat) => {
-                    let observed = from_stat(&stat);
-                    if observed.kind == ResourceKind::File
-                        && !observed.dataless
-                        && matches!((observed.identity, self.original.identity), (FileIdentity::Unix { device: a, .. }, FileIdentity::Unix { device: b, .. }) if a == b)
-                    {
-                        return Ok(true);
-                    }
-                }
-                Err(error) if error == rustix::io::Errno::NOENT => {}
-                Err(error) => return Err(native_error(error)),
-            }
-        }
-        Ok(false)
-    }
-
+    // Native project signatures use the same fixed rule table as execution.
+    // Open the child once so the worker can attach evidence before pruning it.
     fn bare_repository(&self) -> Result<bool, ScanError> {
         bare_repository_at(self.stream.fd().map_err(native_error)?, &self.original)
     }

@@ -1101,7 +1101,10 @@ impl Probe for PurgePlatform {
         } else {
             let markers = self.markers.get(path).cloned().unwrap_or_default();
             let captured = if let Some(expected) = self.signatures.get(path) {
-                verify_xcode_signature(path, expected).and_then(|()| {
+                verify_artifact_signature(path, expected).and_then(|()| {
+                    if matches!(expected, purge_preview::ArtifactSignature::ProjectArtifact { .. }) {
+                        return PurgeTrashCandidate::capture_rule_artifact(scope.root(), path, scope.protected_paths());
+                    }
                     PurgeTrashCandidate::capture_xcode_build(
                         scope.root(),
                         path,
@@ -1217,7 +1220,12 @@ impl PurgeSession {
                     "artifacts and project roots must be absolute native paths without traversal",
                 ));
             }
-            if selection.artifact.parent() != Some(selection.project_root.as_path()) {
+            let rule_root = match &selection.signature {
+                Some(purge_preview::ArtifactSignature::ProjectArtifact { project_root, .. }) => Some(project_root.as_path()),
+                _ => selection.artifact.parent(),
+            };
+            if rule_root != Some(selection.project_root.as_path()) || selection.artifact == selection.project_root
+                || !selection.artifact.starts_with(&selection.project_root) {
                 return Err(journal::invalid(
                     "an artifact must be a direct child of its project root",
                 ));
@@ -1228,7 +1236,7 @@ impl PurgeSession {
                         "signature artifacts cannot carry project markers",
                     ));
                 }
-                verify_xcode_signature(&selection.artifact, expected)?;
+                verify_artifact_signature(&selection.artifact, expected)?;
             } else if selection.markers.is_empty() || selection.markers.len() > 4 {
                 return Err(journal::invalid(
                     "an artifact carries between 1 and 4 binding markers",
@@ -1412,7 +1420,7 @@ impl PurgeSession {
                 }
             }
             if let Some(expected) = signatures.get(path) {
-                if let Err(error) = verify_xcode_signature(path, expected) {
+                if let Err(error) = verify_artifact_signature(path, expected) {
                     return Ok(GuardDecision::Refused(error.to_string()));
                 }
             }
@@ -1451,6 +1459,10 @@ fn purge_nesting_observed(artifact: &Path) -> bool {
         let Some(parent) = ancestor.parent() else {
             continue;
         };
+        match sayaka_platform_macos::project_artifacts::inspect_path(ancestor) {
+            Ok(Some(_)) | Err(_) => return true,
+            Ok(None) => {}
+        }
         match sayaka_platform_macos::xcode_build::inspect_path(ancestor) {
             Ok(Some(_)) | Err(_) => return true,
             Ok(None) => {}
@@ -1471,14 +1483,26 @@ fn purge_nesting_observed(artifact: &Path) -> bool {
     false
 }
 
-fn verify_xcode_signature(
+fn verify_artifact_signature(
     path: &Path,
     expected: &purge_preview::ArtifactSignature,
 ) -> io::Result<()> {
-    let current = sayaka_platform_macos::xcode_build::inspect_path(path)?
-        .map(purge_preview::ArtifactSignature::from_native);
+    let current = match expected {
+        purge_preview::ArtifactSignature::ProjectArtifact { rule_id: None, .. } =>
+            return Err(journal::invalid("Cache tag alone does not authorize cleanup")),
+        purge_preview::ArtifactSignature::ProjectArtifact { rule_id, .. } => {
+            if rule_id.as_deref().and_then(purge_preview::project_rules::rule).is_some_and(|r| r.requires_ignored) {
+                let observations = crate::project_git::inspect(&[path.to_path_buf()], &Cancellation::default());
+                if !observations.get(path).is_some_and(|g| g.permits_cleanup() && g.ignored == Some(true)) {
+                    return Err(journal::invalid("Pods requires fresh Git ignore evidence and no tracked files"));
+                }
+            }
+            sayaka_platform_macos::project_artifacts::inspect_path(path)?.map(purge_preview::ArtifactSignature::from_project)
+        },
+        _ => sayaka_platform_macos::xcode_build::inspect_path(path)?.map(purge_preview::ArtifactSignature::from_native),
+    };
     if current.as_ref() != Some(expected) {
-        return Err(journal::invalid("Xcode build evidence changed; scan again"));
+        return Err(journal::invalid("Project artifact evidence changed; scan again"));
     }
     Ok(())
 }

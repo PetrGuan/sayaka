@@ -579,6 +579,13 @@ impl PurgeTrashCandidate {
             .map(|native| Self { native }).map_err(NativeCaptureFailure::into_legacy_error)
     }
 
+    /// Fixed-table target with freshly rechecked and sealed project markers.
+    #[cfg(target_os = "macos")]
+    pub fn capture_rule_artifact(scope: &Path, path: &Path, protected: &[PathBuf]) -> io::Result<Self> {
+        native::Candidate::capture_rule_artifact(scope, path, protected)
+            .map(|native| Self { native }).map_err(NativeCaptureFailure::into_legacy_error)
+    }
+
     /// Captures an artifact directory with its sealed marker files:
     /// ordinary user-owned directory strictly beneath the explicit scope on
     /// the same supported volume; every marker an ordinary user-owned

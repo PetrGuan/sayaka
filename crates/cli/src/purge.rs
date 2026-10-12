@@ -408,7 +408,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
                         "size_complete": artifact.size_complete,
                 "modified_unix_ms": artifact.modified_unix_ms,
                 "stale": artifact.stale,
-                        "execution_supported": artifact.complete && artifact.size_complete && artifact.git.permits_cleanup(),
+                        "execution_supported": artifact.execution_supported(),
                         "git": {
                             "state": artifact.git.state.as_str(),
                             "reason": artifact.git.state.reason(),

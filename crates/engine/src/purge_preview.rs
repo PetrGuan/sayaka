@@ -24,6 +24,9 @@ mod adobe;
 pub mod bundle_owned;
 pub mod task;
 
+#[cfg(target_os = "macos")]
+pub use sayaka_platform_macos::project_rules;
+
 pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
@@ -252,6 +255,12 @@ impl PurgeOptions {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ArtifactSignature {
+    ProjectArtifact {
+        rule_id: Option<String>,
+        project_root: PathBuf,
+        markers: Vec<PathBuf>,
+        cache_tag: bool,
+    },
     XcodeDerivedData {
         signals: Vec<String>,
         workspace: Option<PathBuf>,
@@ -260,10 +269,17 @@ pub enum ArtifactSignature {
 }
 impl ArtifactSignature {
     pub fn rule(&self) -> &'static str {
-        "xcode_build_signature_v1"
+        match self {
+            Self::XcodeDerivedData { .. } => "xcode_build_signature_v1",
+            Self::ProjectArtifact { rule_id: Some(_), .. } => "project_artifact_table_v1",
+            Self::ProjectArtifact { .. } => "cache_tag_observation_v1",
+        }
     }
     pub fn retained_bytes(&self) -> usize {
         match self {
+            Self::ProjectArtifact { rule_id, project_root, markers, .. } =>
+                rule_id.as_ref().map_or(0, String::len) + project_root.as_os_str().len()
+                    + markers.iter().map(|p| p.as_os_str().len()).sum::<usize>(),
             Self::XcodeDerivedData {
                 workspace,
                 signals,
@@ -274,6 +290,23 @@ impl ArtifactSignature {
                     + workspace_state.len()
             }
         }
+    }
+    pub fn permits_cleanup(&self, git: &crate::project_git::GitObservation) -> bool {
+        match self {
+            Self::ProjectArtifact { rule_id: None, .. } => false,
+            Self::ProjectArtifact { rule_id: Some(id), .. } => {
+                #[cfg(target_os = "macos")]
+                { project_rules::rule(id).is_some_and(|r| !r.requires_ignored || git.ignored == Some(true)) }
+                #[cfg(not(target_os = "macos"))]
+                { let _ = (id, git); false }
+            },
+            _ => true,
+        }
+    }
+    #[cfg(target_os = "macos")]
+    pub(crate) fn from_project(e: sayaka_platform_macos::project_artifacts::Evidence) -> Self {
+        Self::ProjectArtifact { rule_id: e.rule_id.map(str::to_owned), project_root: e.project_root,
+            markers: e.markers, cache_tag: e.cache_tag }
     }
     #[cfg(target_os = "macos")]
     pub(crate) fn from_native(e: sayaka_platform_macos::xcode_build::Evidence) -> Self {
@@ -304,6 +337,13 @@ pub struct PurgeArtifact {
     pub modified_unix_ms: Option<i64>,
     /// Staleness vs the cutoff; None when mtime is unknown.
     pub stale: Option<bool>,
+}
+
+impl PurgeArtifact {
+    pub fn execution_supported(&self) -> bool {
+        self.complete && self.size_complete && self.git.permits_cleanup()
+            && self.signature.as_ref().is_none_or(|s| s.permits_cleanup(&self.git))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1203,6 +1243,9 @@ fn selection_from_parts(
     if !artifact.git.permits_cleanup() {
         return Err(artifact.git.state.reason().into());
     }
+    if !artifact.execution_supported() {
+        return Err("Cache tag alone does not authorize cleanup; Pods also requires Git ignore evidence".into());
+    }
     Ok(PurgeSelection {
         artifact: artifact.path.clone(),
         signature: artifact.signature.clone(),
@@ -1352,7 +1395,7 @@ fn project_purge_preview(
             let Some(entry) = index.entry(child) else {
                 continue;
             };
-            if entry.kind != ResourceKind::Directory {
+            if entry.kind != ResourceKind::Directory || entry.project_signature.is_some() {
                 continue;
             }
             let Some(name) = entry.path.file_name().and_then(|name| name.to_str()) else {
@@ -1376,7 +1419,16 @@ fn project_purge_preview(
     for &id in &directories {
         let entry = index.entry(id).expect("directory entry");
         if let Some(signature) = &entry.project_signature {
-            if let Some(parent) = entry.path.parent() {
+            let parent = match signature {
+                ArtifactSignature::ProjectArtifact { project_root, .. } => Some(project_root.as_path()),
+                _ => entry.path.parent(),
+            };
+            if let Some(parent) = parent {
+                if matches!(signature, ArtifactSignature::ProjectArtifact { .. })
+                    && !index.roots().iter().filter_map(|id| index.entry(*id))
+                        .any(|root| parent.starts_with(&root.path)) {
+                    continue;
+                }
                 artifact_paths.push(entry.path.clone());
                 projects.push((
                     parent.to_path_buf(),

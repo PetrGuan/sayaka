@@ -329,3 +329,7 @@ pub mod project_git;
 
 #[cfg(target_os = "macos")]
 pub mod xcode_build;
+
+pub mod project_rules;
+#[cfg(target_os = "macos")]
+pub mod project_artifacts;
