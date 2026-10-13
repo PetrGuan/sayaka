@@ -446,3 +446,10 @@ ancestor accounting/change checks, hardlink totals, cancellation, descriptor
 closure, policy restoration, resource limits, full queues and the project
 scheduler boundary. No unit/UI tests, test binaries, harnesses, benchmarks or
 UI automation were executed. New owner App timing/Stop acceptance is pending.
+
+Independent review required retaining lending ancestors on fatal accounting
+errors and cursor panics too. A traversal-stack drop guard now transfers marked
+frames to the post-join retention list on every exit. Added compile-only sources
+force overflow and panic after a real queue handoff, checking that the parent is
+not checked/closed until the outstanding child finishes. The timing observations
+above precede this unwind-only correction; no forced-failure source was executed.

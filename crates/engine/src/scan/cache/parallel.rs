@@ -40,6 +40,29 @@ struct Frame<D> {
     depth: usize,
     deferred_check: bool,
 }
+// A lending ancestor must outlive all dispatched descendants even if a
+// cursor panics or accounting returns early through `?`.
+struct WalkStack<'a, 'b, D> {
+    shared: &'a Shared<'b, D>,
+    frames: Vec<Frame<D>>,
+}
+impl<D> std::ops::Deref for WalkStack<'_, '_, D> {
+    type Target = Vec<Frame<D>>;
+    fn deref(&self) -> &Self::Target { &self.frames }
+}
+impl<D> std::ops::DerefMut for WalkStack<'_, '_, D> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.frames }
+}
+impl<D> Drop for WalkStack<'_, '_, D> {
+    fn drop(&mut self) {
+        if self.frames.iter().any(|frame| frame.deferred_check) {
+            let mut retained = lock(&self.shared.deferred);
+            for frame in self.frames.drain(..) {
+                if frame.deferred_check { retained.push(frame); }
+            }
+        }
+    }
+}
 struct Queue<D> {
     jobs: VecDeque<Frame<D>>,
     producer_done: bool,
@@ -480,7 +503,7 @@ fn walk<D: Cursor>(
     producer: bool,
     progress: &mut impl FnMut(usize, u64, u64),
 ) -> Result<Option<Frame<D>>, ScanError> {
-    let mut stack = vec![frame];
+    let mut stack = WalkStack { shared, frames: vec![frame] };
     let mut local = empty_totals();
     while !stack.is_empty() && !shared.interrupted() {
         let frame = stack.last_mut().expect("nonempty stack");
@@ -716,11 +739,9 @@ fn walk<D: Cursor>(
             ),
         }
     }
-    // Cancellation may stop a lender before EOF; keep its descriptors alive
-    // until the already dispatched work has also stopped and joined.
-    for frame in stack.into_iter().rev() {
-        if frame.deferred_check { lock(&shared.deferred).push(frame); }
-    }
+    // The guard also retains lending ancestors on cancellation, fatal
+    // accounting errors and unwinding, not just on the normal EOF path.
+    drop(stack);
     shared.flush(&mut local)?;
     Ok(None)
 }
@@ -757,7 +778,7 @@ fn device(identity: FileIdentity) -> u64 {
 mod scheduling_tests {
     use super::*;
 
-    fn shared<'a>(limits: &'a ScanLimits, cancellation: &'a Cancellation) -> Shared<'a, ()> {
+    fn shared<'a, D>(limits: &'a ScanLimits, cancellation: &'a Cancellation) -> Shared<'a, D> {
         Shared {
             root: Path::new("/cache"), expected: FileIdentity::Unix { device: 1, inode: 1 },
             limits, cancellation, started: Instant::now(), project_budget: None,
@@ -801,7 +822,7 @@ mod scheduling_tests {
     fn idle_worker_waits_for_active_lender_after_root_producer_finishes() {
         let limits = ScanLimits::default();
         let cancellation = Cancellation::default();
-        let shared = shared(&limits, &cancellation);
+        let shared = shared::<()>(&limits, &cancellation);
         std::thread::scope(|scope| {
             let waiter = scope.spawn(|| shared.take());
             let until = Instant::now() + Duration::from_secs(2);
@@ -833,4 +854,74 @@ mod scheduling_tests {
         assert!(shared.lend(frame(&shared, "project"), &mut ancestors).is_some());
         assert!(!ancestors[0].deferred_check);
     }
+
+    struct AbnormalCursor {
+        child: bool,
+        position: usize,
+        panic: bool,
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+    impl Drop for AbnormalCursor {
+        fn drop(&mut self) { lock(&self.events).push(if self.child { "child closed" } else { "parent closed" }); }
+    }
+    fn metadata(inode: u64, kind: ResourceKind, size: Option<u64>) -> crate::scan::walk::Metadata {
+        crate::scan::walk::Metadata {
+            identity: FileIdentity::Unix { device: 1, inode }, kind,
+            logical_bytes: size, allocated_bytes: size, private_bytes: size,
+            link_count: Some(1), modified_unix_ms: None, dataless: false,
+        }
+    }
+    impl Cursor for AbnormalCursor {
+        fn metadata(&self) -> crate::scan::walk::Metadata {
+            metadata(if self.child { 2 } else { 1 }, ResourceKind::Directory, None)
+        }
+        fn next_entry(&mut self) -> Option<Result<crate::scan::walk::DirItem, ScanError>> {
+            if self.child { return None; }
+            let position = self.position;
+            self.position += 1;
+            let (name, value) = match position {
+                0 => ("child", metadata(2, ResourceKind::Directory, None)),
+                1 => {
+                    assert!(!self.panic, "injected cursor panic after lending");
+                    ("large", metadata(3, ResourceKind::File, Some(u64::MAX)))
+                }
+                2 => ("overflow", metadata(4, ResourceKind::File, Some(1))),
+                _ => return None,
+            };
+            Some(Ok(crate::scan::walk::DirItem { name: name.into(), metadata: Ok(value) }))
+        }
+        fn open_child(&self, _: &crate::scan::walk::DirItem) -> Result<Self, ScanError> {
+            Ok(Self { child: true, position: 0, panic: false, events: Arc::clone(&self.events) })
+        }
+        fn unchanged(&self) -> Result<bool, ScanError> {
+            lock(&self.events).push(if self.child { "child checked" } else { "parent checked" });
+            Ok(true)
+        }
+    }
+    #[test]
+    fn fatal_accounting_and_cursor_panic_retain_lenders_until_descendants_finish() {
+        for panic in [false, true] {
+            let limits = ScanLimits::default();
+            let cancellation = Cancellation::default();
+            let shared = shared::<AbnormalCursor>(&limits, &cancellation);
+            lock(&shared.queue).waiting = 1;
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let parent = Frame {
+                directory: AbnormalCursor { child: false, position: 0, panic, events: Arc::clone(&events) },
+                _permit: shared.reserve(shared.root).unwrap(), path: shared.root.to_owned(), depth: 1, deferred_check: false,
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| walk(&shared, parent, false, &mut |_, _, _| {})));
+            if panic { assert!(result.is_err()); }
+            else { assert!(matches!(result, Ok(Err(ScanError { code: ScanCode::Overflow, .. })))); }
+            assert_eq!(lock(&shared.queue).jobs.len(), 1, "a child really was lent");
+            assert_eq!(lock(&shared.deferred).len(), 1);
+            assert!(lock(&events).is_empty(), "parent must not close or check while child remains outstanding");
+            let child = lock(&shared.queue).jobs.pop_front().unwrap();
+            walk(&shared, child, false, &mut |_, _, _| {}).unwrap();
+            for frame in lock(&shared.deferred).drain(..) { check_unchanged(&shared, &frame); }
+            assert_eq!(*lock(&events), ["child checked", "child closed", "parent checked", "parent closed"]);
+            assert_eq!(lock(&shared.resources).open, 0);
+        }
+    }
+
 }
