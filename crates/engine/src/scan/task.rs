@@ -27,8 +27,13 @@ pub struct ScanTaskSnapshot {
 }
 
 pub struct ScanTask {
-    inner: ReadOnlyTask<ScanReport, ScanProgress>,
-    prepared_tree: Option<Arc<Mutex<Option<ScanTree>>>>,
+    inner: ReadOnlyTask<Arc<ScanReport>, ScanProgress>,
+    prepared_tree: Option<Arc<Mutex<Option<PreparedAI>>>>,
+}
+
+struct PreparedAI {
+    tree: Option<ScanTree>,
+    footprints: Vec<(crate::ai_footprint::Tool, crate::ai_footprint::Footprint)>,
 }
 
 impl ScanTask {
@@ -49,8 +54,8 @@ impl ScanTask {
         validate_roots(&roots, &limits)?;
         let prepared = Arc::new(Mutex::new(None));
         let output = Arc::clone(&prepared);
-        let mut task = Self::spawn(move |cancel, progress| {
-            let report = super::scan(&roots, &limits, cancel, progress)?;
+        let inner = ReadOnlyTask::spawn("sayaka-ai-scan", move |cancel, progress| {
+            let report = Arc::new(super::scan(&roots, &limits, cancel, progress)?);
             if report.status == ScanStatus::Cancelled || report.status == ScanStatus::Failed {
                 return Ok(report);
             }
@@ -58,30 +63,39 @@ impl ScanTask {
             let started = std::time::Instant::now();
             #[cfg(debug_assertions)]
             eprintln!("[SayakaTraversal] event=index.begin entries={} max_entries={} max_path_bytes={}", report.entries.len(), limits.max_entries, limits.max_path_bytes);
-            // Clone retained observations in cancellable steps; never re-read disk.
-            let mut indexed = ScanReport { entries: Vec::with_capacity(report.entries.len()), ..report_without_entries(&report) };
-            for entry in &report.entries {
-                super::index::check_cancelled(cancel)?;
-                indexed.entries.push(entry.clone());
-            }
-            #[cfg(debug_assertions)]
-            let clone_us = started.elapsed().as_micros();
-            let tree = ScanTree::build_with_limits(indexed, cancel, &limits)?;
+            let tree = ScanTree::build_shared(Arc::clone(&report), cancel, &limits)?;
             super::index::check_cancelled(cancel)?;
             #[cfg(debug_assertions)]
-            eprintln!("[SayakaTraversal] event=index entries={} clone_us={} total_us={} success=true background=true", report.entries.len(), clone_us, started.elapsed().as_micros());
-            *output.lock().map_err(|_| ScanError::new(ScanCode::Internal, "index output poisoned"))? = Some(tree);
+            eprintln!("[SayakaTraversal] event=index entries={} clone_us=0 total_us={} success=true background=true", report.entries.len(), started.elapsed().as_micros());
+            use crate::ai_footprint::{Tool, project_cancellable};
+            #[cfg(debug_assertions)]
+            let projection_started = std::time::Instant::now();
+            let mut footprints = Vec::new();
+            for tool in [Tool::Claude, Tool::Codex, Tool::Copilot, Tool::ComfyUI] {
+                if let Some(footprint) = project_cancellable(&tree, tool, cancel)? { footprints.push((tool, footprint)); }
+            }
+            super::index::check_cancelled(cancel)?;
+            #[cfg(debug_assertions)]
+            eprintln!("[SayakaTraversal] event=ai_projection.prepare entries={} total_us={} background=true", report.entries.len(), projection_started.elapsed().as_micros());
+            *output.lock().map_err(|_| ScanError::new(ScanCode::Internal, "index output poisoned"))? = Some(PreparedAI { tree: Some(tree), footprints });
             Ok(report)
         })?;
-        task.prepared_tree = Some(prepared);
-        Ok(task)
+        Ok(Self { inner, prepared_tree: Some(prepared) })
     }
 
     /// Called only after terminal poll. Transfers the prepared immutable index.
     pub fn take_prepared_tree(&mut self) -> Option<ScanTree> {
         if !self.is_finished() { return None; }
-        self.prepared_tree.as_ref()?.lock().ok()?.take()
+        self.prepared_tree.as_ref()?.lock().ok()?.as_mut()?.tree.take()
     }
+
+    /// Bounded projection prepared by the same cancellable worker as the tree.
+    pub fn prepared_footprint(&self, tool: crate::ai_footprint::Tool) -> Option<crate::ai_footprint::Footprint> {
+        self.prepared_tree.as_ref()?.lock().ok()?.as_ref()?.footprints.iter()
+            .find(|(candidate, _)| *candidate == tool).map(|(_, footprint)| footprint.clone())
+    }
+
+    pub fn has_prepared_profile(&self) -> bool { self.prepared_tree.is_some() }
 
     pub fn start_prune_native_packages(
         roots: Vec<PathBuf>,
@@ -112,7 +126,7 @@ impl ScanTask {
         + 'static,
     ) -> Result<Self, ScanError> {
         Ok(Self {
-            inner: ReadOnlyTask::spawn("sayaka-host-scan", operation)?,
+            inner: ReadOnlyTask::spawn("sayaka-host-scan", move |cancel, progress| operation(cancel, progress).map(Arc::new))?,
             prepared_tree: None,
         })
     }
@@ -147,17 +161,8 @@ impl ScanTask {
     }
 
     /// None until the owned worker has exited; polling never joins active work.
-    pub fn result(&mut self) -> Option<&Result<ScanReport, ScanError>> {
+    pub fn result(&mut self) -> Option<&Result<Arc<ScanReport>, ScanError>> {
         self.inner.result()
-    }
-}
-
-fn report_without_entries(report: &ScanReport) -> ScanReport {
-    ScanReport {
-        task_id: report.task_id, roots: report.roots.clone(), status: report.status,
-        complete: report.complete, entries: Vec::new(), issues: report.issues.clone(),
-        vcs_metadata: report.vcs_metadata.clone(), issues_omitted: report.issues_omitted,
-        totals: report.totals.clone(), metrics: report.metrics.clone(),
     }
 }
 

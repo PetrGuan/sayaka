@@ -857,3 +857,22 @@ fn cancellable_merge_order_matches_total_order_for_uneven_chunks() {
         assert_eq!(ids, expected);
     }
 }
+
+#[test]
+fn shared_index_retains_one_snapshot_and_propagates_cloud_placeholders() {
+    let mut cloud = file(3, "logs/cloud", 3, None, None);
+    cloud.dataless = true;
+    let report = Arc::new(report(vec![directory(1, ""), directory(2, "logs"), cloud, directory(4, "logs-other")]));
+    let entries = report.entries.as_ptr();
+    let tree = ScanTree::build_shared(Arc::clone(&report), &Cancellation::default(), &ScanLimits::default()).unwrap();
+    assert!(std::ptr::eq(tree.report(), report.as_ref()));
+    assert_eq!(tree.report().entries.as_ptr(), entries);
+    assert!(tree.contains_dataless(1));
+    assert!(tree.contains_dataless(2));
+    assert!(tree.contains_dataless(3));
+    assert!(!tree.contains_dataless(4));
+    assert!(!tree.contains_dataless(999));
+    let cancel = Cancellation::default();
+    cancel.cancel();
+    assert!(matches!(crate::ai_footprint::project_cancellable(&tree, crate::ai_footprint::Tool::Copilot, &cancel), Err(error) if error.code == ScanCode::Cancelled));
+}

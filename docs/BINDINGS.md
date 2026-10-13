@@ -1313,7 +1313,12 @@ remain partial; omitted diagnostics, links, unknown measurements and execution
 protections are unchanged. This is a bounded profile, not unlimited coverage.
 
 Poll remains running through background indexing. The same cancellation token
-reaches enumeration, observation copying, index aggregation and ordering. Query
+reaches enumeration, index aggregation, ordering and AI projection. The terminal
+report and index share one immutable snapshot, without duplicating retained paths.
+Cloud-placeholder ancestry is computed during indexing, and AI projection is
+prepared on the worker. The small serialized footprint is cached between buffer
+probe/copy queries. The path budget bounds retained path payload, not total RSS;
+index structures require additional bounded O(entries) memory. Query
 calls consume the prepared tree instead of constructing it under the job mutex.
 Release cancels active work and returns BUSY until the worker exits; callers must
 retain the handle and folder grant until release succeeds. Existing default

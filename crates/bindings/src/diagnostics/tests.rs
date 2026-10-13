@@ -80,7 +80,7 @@ fn fatal_diagnostic_pages_keep_null_task_and_shared_issue_shape() {
     wire::fatal(&mut full, &error).unwrap();
     let full: Value = serde_json::from_slice(&full).unwrap();
     let outcome = Err(error);
-    let bytes = page(Some(&outcome), u64::MAX, 0, 1).unwrap();
+    let bytes = page(Some(outcome.as_ref()), u64::MAX, 0, 1).unwrap();
     assert!(!bytes.ends_with(b"\n"));
     let value: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(value["task_handle"], u64::MAX.to_string());
@@ -91,31 +91,31 @@ fn fatal_diagnostic_pages_keep_null_task_and_shared_issue_shape() {
     assert_eq!(value["issues_omitted"], 0);
     assert_eq!(value["data"]["issues"], full["issues"]);
     assert_eq!(value["data"]["next_offset"], Value::Null);
-    let end: Value = serde_json::from_slice(&page(Some(&outcome), 1, 1, 1).unwrap()).unwrap();
+    let end: Value = serde_json::from_slice(&page(Some(outcome.as_ref()), 1, 1, 1).unwrap()).unwrap();
     assert_eq!(end["data"]["offset"], 1);
     assert_eq!(end["data"]["total"], 1);
     assert_eq!(end["data"]["issues"], serde_json::json!([]));
-    assert_eq!(page(Some(&outcome), 1, 2, 1), Err(INVALID_ARGUMENT));
+    assert_eq!(page(Some(outcome.as_ref()), 1, 2, 1), Err(INVALID_ARGUMENT));
     assert_eq!(page(None, 1, 0, 1), Err(NOT_READY));
 }
 
 #[test]
 fn diagnostic_payload_limit_accepts_exact_bound_and_refuses_one_more_byte() {
     let empty = Err(ScanError::new(ScanCode::Internal, ""));
-    let overhead = page(Some(&empty), 1, 0, 1).unwrap().len();
+    let overhead = page(Some(empty.as_ref()), 1, 0, 1).unwrap().len();
     let at_limit = Err(ScanError::new(
         ScanCode::Internal,
         "x".repeat(MAX_QUERY_BYTES - overhead),
     ));
     assert_eq!(
-        page(Some(&at_limit), 1, 0, 1).unwrap().len(),
+        page(Some(at_limit.as_ref()), 1, 0, 1).unwrap().len(),
         MAX_QUERY_BYTES
     );
     let too_large = Err(ScanError::new(
         ScanCode::Internal,
         "x".repeat(MAX_QUERY_BYTES - overhead + 1),
     ));
-    assert_eq!(page(Some(&too_large), 1, 0, 1), Err(LIMIT_EXCEEDED));
+    assert_eq!(page(Some(too_large.as_ref()), 1, 0, 1), Err(LIMIT_EXCEEDED));
 }
 
 #[cfg(target_os = "macos")]
@@ -138,6 +138,7 @@ mod native {
                     result: None,
                     tree: None,
                     largest_files: Default::default(),
+                    ai_footprints: HashMap::new(),
                     closed: false,
                 })),
             );
@@ -225,7 +226,7 @@ mod native {
             let slot = get(task.0).unwrap();
             let mut job = slot.lock().unwrap();
             assert!(job.result.is_none() && job.tree.is_none());
-            job.task.result().unwrap().as_ref().unwrap().clone()
+            job.task.result().unwrap().as_ref().unwrap().as_ref().clone()
         };
         assert_eq!(report.issues.len(), 128);
         assert_eq!(report.issues_omitted, 12);
@@ -344,7 +345,7 @@ mod native {
             report.complete = status == ScanStatus::Complete;
             let outcome = Ok(report.clone());
             let value: Value =
-                serde_json::from_slice(&page(Some(&outcome), 1, 0, 1).unwrap()).unwrap();
+                serde_json::from_slice(&page(Some(outcome.as_ref()), 1, 0, 1).unwrap()).unwrap();
             assert_eq!(value["scan_status"], status.as_str());
             assert_eq!(value["scan_complete"], report.complete);
             assert_eq!(value["issues_omitted"], 12);
@@ -359,8 +360,8 @@ mod native {
             })
             .collect();
         let outcome = Ok(report);
-        assert_eq!(page(Some(&outcome), 1, 0, 128), Err(LIMIT_EXCEEDED));
-        let small: Value = serde_json::from_slice(&page(Some(&outcome), 1, 0, 1).unwrap()).unwrap();
+        assert_eq!(page(Some(outcome.as_ref()), 1, 0, 128), Err(LIMIT_EXCEEDED));
+        let small: Value = serde_json::from_slice(&page(Some(outcome.as_ref()), 1, 0, 1).unwrap()).unwrap();
         assert_eq!(small["data"]["total"], 128);
         assert_eq!(small["data"]["next_offset"], 1);
         assert_eq!(small["data"]["issues"].as_array().unwrap().len(), 1);

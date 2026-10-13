@@ -110,6 +110,7 @@ struct Job {
     result: Option<Result<Vec<u8>, i32>>,
     tree: Option<Result<ScanTree, i32>>,
     largest_files: [Option<browse::LargestFilesOrder>; 2],
+    ai_footprints: HashMap<u32, Vec<u8>>,
     closed: bool,
 }
 
@@ -346,6 +347,7 @@ unsafe fn start_scan(request: *const SayakaScanRequestV1, out_handle: *mut u64, 
                 result: None,
                 tree: None,
                 largest_files: Default::default(),
+                ai_footprints: HashMap::new(),
                 closed: false,
             })),
         );

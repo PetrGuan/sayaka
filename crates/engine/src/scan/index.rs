@@ -6,6 +6,7 @@
 use super::{ScanCode, ScanEntry, ScanError, ScanLimits, ScanReport, ScanStatus};
 use crate::model::{Cancellation, FileIdentity, ResourceKind, valid_absolute_path};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,11 +41,12 @@ struct Node {
     children: Vec<u64>,
     size_orders: [Vec<u64>; 2],
     summary: Option<DirectorySummary>,
+    contains_dataless: bool,
 }
 
 #[derive(Debug)]
 pub struct ScanTree {
-    report: ScanReport,
+    report: Arc<ScanReport>,
     positions: HashMap<u64, usize>,
     nodes: Vec<Node>,
     roots: Vec<u64>,
@@ -61,6 +63,11 @@ impl ScanTree {
 
     /// Index the same bounded observations accepted by the traversal profile.
     pub fn build_with_limits(report: ScanReport, cancellation: &Cancellation, limits: &ScanLimits) -> Result<Self, ScanError> {
+        Self::build_shared(Arc::new(report), cancellation, limits)
+    }
+
+    /// Shares the terminal snapshot; no second retained entry/path allocation.
+    pub fn build_shared(report: Arc<ScanReport>, cancellation: &Cancellation, limits: &ScanLimits) -> Result<Self, ScanError> {
         limits.validate()?;
         check_cancelled(cancellation)?;
         if report.entries.len() > limits.max_entries {
@@ -121,6 +128,7 @@ impl ScanTree {
                 children: Vec::new(),
                 size_orders: Default::default(),
                 summary: None,
+                contains_dataless: entry.dataless,
             });
         }
 
@@ -212,6 +220,9 @@ impl ScanTree {
             check_cancelled(cancellation)?;
             let entry = &report.entries[position];
             let parent = nodes[position].parent;
+            if let Some(parent) = parent {
+                nodes[parent].contains_dataless |= nodes[position].contains_dataless;
+            }
             match entry.kind {
                 ResourceKind::File => {
                     if let Some(parent) = parent {
@@ -261,6 +272,10 @@ impl ScanTree {
         tree.roots = roots;
         tree.root_size_orders = tree.size_orders(&tree.roots, cancellation)?;
         Ok(tree)
+    }
+
+    pub fn contains_dataless(&self, id: u64) -> bool {
+        self.positions.get(&id).is_some_and(|&index| self.nodes[index].contains_dataless)
     }
 
     pub fn report(&self) -> &ScanReport {
@@ -507,7 +522,7 @@ fn checked_add(total: &mut u64, value: u64) -> Result<(), ScanError> {
     Ok(())
 }
 
-pub(super) fn check_cancelled(cancellation: &Cancellation) -> Result<(), ScanError> {
+pub(crate) fn check_cancelled(cancellation: &Cancellation) -> Result<(), ScanError> {
     if cancellation.is_cancelled() {
         Err(ScanError::new(ScanCode::Cancelled, "scan index cancelled"))
     } else {

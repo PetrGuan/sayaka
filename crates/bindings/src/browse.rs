@@ -77,7 +77,7 @@ pub(crate) fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
         #[cfg(debug_assertions)]
         let (clone_us, entries) = (started.elapsed().as_micros(), report.entries.len());
         job.tree = Some(
-            ScanTree::build(report, &Cancellation::default()).map_err(|error| match error
+            ScanTree::build_shared(report, &Cancellation::default(), &ScanLimits::default()).map_err(|error| match error
                 .code
             {
                 ScanCode::EntryLimit | ScanCode::PathBytesLimit | ScanCode::Overflow => {

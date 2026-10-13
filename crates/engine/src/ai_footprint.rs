@@ -276,7 +276,7 @@ const COMFYUI: &[Rule] = &[
     },
 ];
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Component {
     pub relative_path: &'static str,
     pub role: &'static str,
@@ -288,7 +288,7 @@ pub struct Component {
     pub contains_cloud_placeholder: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Footprint {
     pub schema_version: u32,
     pub kind: &'static str,
@@ -306,6 +306,16 @@ pub struct Footprint {
 /// Projects only exact, documented top-level names from one explicit root.
 /// False `recognized` means no ownership claim is made even if names match.
 pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
+    project_inner(tree, tool, &crate::model::Cancellation::default())
+}
+
+pub fn project_cancellable(tree: &ScanTree, tool: Tool, cancel: &crate::model::Cancellation) -> Result<Option<Footprint>, crate::scan::ScanError> {
+    let result = project_inner(tree, tool, cancel);
+    crate::scan::index::check_cancelled(cancel)?;
+    Ok(result)
+}
+
+fn project_inner(tree: &ScanTree, tool: Tool, cancel: &crate::model::Cancellation) -> Option<Footprint> {
     let [root_id] = tree.roots() else { return None };
     let root = tree.entry(*root_id)?;
     if root.kind != ResourceKind::Directory {
@@ -314,14 +324,13 @@ pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
     let summary = tree.summary(*root_id)?;
     let rules = tool.rules();
     let children = tree.children(*root_id)?;
-    let has = |name: &str| {
-        children
-            .iter()
-            .filter_map(|id| tree.entry(*id))
-            .any(|entry| {
-                entry.path.file_name() == Some(OsStr::new(name)) && matches_kind(name, entry.kind)
-            })
-    };
+    let mut named = std::collections::HashMap::new();
+    for &id in children {
+        crate::scan::index::check_cancelled(cancel).ok()?;
+        let entry = tree.entry(id)?;
+        if let Some(name) = entry.path.file_name() { named.insert(name, entry); }
+    }
+    let has = |name: &str| named.get(OsStr::new(name)).is_some_and(|entry| matches_kind(name, entry.kind));
     // Generic settings/log names never establish ownership by themselves.
     let recognized = match tool {
         Tool::Claude => {
@@ -352,16 +361,8 @@ pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
     let mut components = Vec::new();
     if recognized {
         for rule in rules {
-            let Some(entry) = children
-                .iter()
-                .filter_map(|id| tree.entry(*id))
-                .find(|entry| {
-                    entry.path.file_name() == Some(OsStr::new(rule.name))
-                        && matches_kind(rule.name, entry.kind)
-                })
-            else {
-                continue;
-            };
+            crate::scan::index::check_cancelled(cancel).ok()?;
+            let Some(entry) = named.get(OsStr::new(rule.name)).filter(|entry| matches_kind(rule.name, entry.kind)) else { continue; };
             let (logical_bytes_known, logical_bytes_unknown_files, complete) = match entry.kind {
                 ResourceKind::Directory => {
                     let summary = tree.summary(entry.id)?;
@@ -386,11 +387,7 @@ pub fn project(tree: &ScanTree, tool: Tool) -> Option<Footprint> {
                 logical_bytes_known,
                 logical_bytes_unknown_files,
                 complete,
-                contains_cloud_placeholder: tree
-                    .report()
-                    .entries
-                    .iter()
-                    .any(|child| child.dataless && child.path.starts_with(&entry.path)),
+                contains_cloud_placeholder: tree.contains_dataless(entry.id),
             });
         }
     }
