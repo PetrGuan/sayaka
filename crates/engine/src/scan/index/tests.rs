@@ -966,3 +966,24 @@ fn singleton_private_overflow_remains_unknown_without_hiding_logical_totals() {
     assert_eq!(tree.summary(1).unwrap().logical_bytes_known, 4);
     assert_eq!(tree.summary(1).unwrap().allocated_bytes_known, 6);
 }
+
+
+#[test]
+fn leaf_nodes_do_not_reserve_directory_payloads() {
+    let tree = tree(vec![directory(1, ""), directory(2, "empty"),
+        file(3, "first", 42, Some(7), Some(16)),
+        file(4, "alias", 42, Some(7), Some(16)),
+        entry(5, "link", ResourceKind::Link), entry(6, "other", ResourceKind::Other)]);
+    assert!(std::mem::size_of::<Node>() <= 4 * std::mem::size_of::<usize>());
+    assert_eq!(tree.nodes.iter().filter(|node| node.directory.is_some()).count(), 2);
+    for id in [3, 4, 5, 6] {
+        assert!(tree.nodes[tree.positions[&id]].directory.is_none());
+        assert_eq!(tree.children(id), None);
+        assert_eq!(tree.summary(id), None);
+        assert_eq!(tree.parent(id), Some(1));
+    }
+    assert_eq!(tree.children(2), Some(&[][..]));
+    assert_eq!(tree.summary(1).unwrap().unique_files, 1);
+    assert_eq!(tree.summary(1).unwrap().logical_bytes_known, 7);
+    assert_eq!(tree.ordered_children(2, Sort::Size, Metric::Allocated), Some(&[][..]));
+}

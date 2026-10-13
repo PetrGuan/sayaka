@@ -38,10 +38,16 @@ pub struct DirectorySummary {
 #[derive(Debug)]
 struct Node {
     parent: Option<usize>,
+    directory: Option<Box<DirectoryNode>>,
+    contains_dataless: bool,
+}
+
+/// Files retain no directory vectors or summary storage.
+#[derive(Debug, Default)]
+struct DirectoryNode {
     children: Vec<u64>,
     size_orders: [Vec<u64>; 2],
     summary: Option<DirectorySummary>,
-    contains_dataless: bool,
 }
 
 #[derive(Debug)]
@@ -133,9 +139,8 @@ impl ScanTree {
             }
             nodes.push(Node {
                 parent: None,
-                children: Vec::new(),
-                size_orders: Default::default(),
-                summary: None,
+                directory: (entry.kind == ResourceKind::Directory)
+                    .then(|| Box::new(DirectoryNode::default())),
                 contains_dataless: entry.dataless,
             });
         }
@@ -161,7 +166,8 @@ impl ScanTree {
                     return Err(invalid("scan entry parent is not a directory"));
                 }
                 nodes[position].parent = Some(parent);
-                nodes[parent].children.push(report.entries[position].id);
+                nodes[parent].directory.as_mut().expect("validated directory parent")
+                    .children.push(report.entries[position].id);
             } else if explicit_roots.contains(path) {
                 roots.push(report.entries[position].id);
             } else {
@@ -233,9 +239,11 @@ impl ScanTree {
             check_cancelled(cancellation)?;
             let position = positions[&id];
             order.push(position);
-            for &child in &nodes[position].children {
-                check_cancelled(cancellation)?;
-                pending.push(child);
+            if let Some(directory) = &nodes[position].directory {
+                for &child in &directory.children {
+                    check_cancelled(cancellation)?;
+                    pending.push(child);
+                }
             }
         }
         for &position in order.iter().rev() {
@@ -259,7 +267,7 @@ impl ScanTree {
                     summary.complete =
                         complete || (localized && !incomplete_paths.contains(entry.path.as_path()));
                     if !summary.complete { summary.private_bytes = None; }
-                    nodes[position].summary = Some(summary);
+                    nodes[position].directory.as_mut().expect("directory entry").summary = Some(summary);
                     if let Some(parent) = parent {
                         bags[parent]
                             .get_or_insert_with(|| Box::new(IdentityBag::default()))
@@ -273,6 +281,11 @@ impl ScanTree {
         drop(incomplete_paths);
         drop(paths);
         drop(explicit_roots);
+        // No subsequent query/sort needs normalized identity scratch or postorder.
+        drop(measurements);
+        drop(bags);
+        drop(order);
+        drop(pending);
         #[cfg(debug_assertions)]
         log_index_phase("accounting", &mut phase_started, report.entries.len());
         let mut tree = Self {
@@ -285,15 +298,21 @@ impl ScanTree {
         };
         for position in 0..tree.nodes.len() {
             check_cancelled(cancellation)?;
-            let children = std::mem::take(&mut tree.nodes[position].children);
+            let Some(directory) = tree.nodes[position].directory.as_mut() else { continue };
+            let children = std::mem::take(&mut directory.children);
             let (names, sizes) = tree.build_orders(children, cancellation, true)?;
-            tree.nodes[position].children = names;
-            tree.nodes[position].size_orders = sizes;
+            let directory = tree.nodes[position].directory.as_mut().expect("directory node");
+            directory.children = names;
+            directory.size_orders = sizes;
         }
         let roots = std::mem::take(&mut tree.roots);
         (tree.roots, tree.root_size_orders) = tree.build_orders(roots, cancellation, false)?;
         #[cfg(debug_assertions)]
         log_index_phase("ordering", &mut phase_started, tree.nodes.len());
+        #[cfg(debug_assertions)]
+        eprintln!("[SayakaTraversal] event=index.storage entries={} directories={} node_slot_bytes={} directory_payload_bytes={} node_capacity={} retained_path_bytes={}",
+            tree.nodes.len(), tree.report.entries.iter().filter(|entry| entry.kind == ResourceKind::Directory).count(),
+            std::mem::size_of::<Node>(), std::mem::size_of::<DirectoryNode>(), tree.nodes.capacity(), path_bytes);
         Ok(tree)
     }
 
@@ -325,8 +344,7 @@ impl ScanTree {
     /// Directory children in native path order; files and unknown IDs have none.
     pub fn children(&self, id: u64) -> Option<&[u64]> {
         let &index = self.positions.get(&id)?;
-        (self.report.entries[index].kind == ResourceKind::Directory)
-            .then_some(self.nodes[index].children.as_slice())
+        Some(self.nodes[index].directory.as_ref()?.children.as_slice())
     }
 
     pub fn parent(&self, id: u64) -> Option<u64> {
@@ -337,7 +355,7 @@ impl ScanTree {
     }
 
     pub fn summary(&self, id: u64) -> Option<&DirectorySummary> {
-        self.nodes[*self.positions.get(&id)?].summary.as_ref()
+        self.nodes[*self.positions.get(&id)?].directory.as_ref()?.summary.as_ref()
     }
 
     /// Sum of per-file exclusive bytes, not selection reclaimable capacity.
@@ -361,7 +379,7 @@ impl ScanTree {
         let entry = &self.report.entries[position];
         match entry.kind {
             ResourceKind::Directory => {
-                let summary = self.nodes[position].summary.as_ref()?;
+                let summary = self.nodes[position].directory.as_ref()?.summary.as_ref()?;
                 let (bytes, unknown) = match metric {
                     Metric::Logical => (
                         summary.logical_bytes_known,
@@ -391,7 +409,7 @@ impl ScanTree {
     pub fn ordered_children(&self, id: u64, sort: Sort, metric: Metric) -> Option<&[u64]> {
         let children = self.children(id)?;
         let node = &self.nodes[*self.positions.get(&id)?];
-        Some(ordered(children, &node.size_orders, sort, metric))
+        Some(ordered(children, &node.directory.as_ref()?.size_orders, sort, metric))
     }
 
     pub fn ordered_roots(&self, sort: Sort, metric: Metric) -> &[u64] {
@@ -473,11 +491,11 @@ impl IndexPhaseDiagnostic {
                 let percent = cpu.filter(|_| wall > 0)
                     .map(|cpu| format!("{:.2}", 100.0 * cpu as f64 / wall as f64))
                     .unwrap_or_else(|| "unavailable".into());
-                eprintln!("[SayakaTraversal] event=index.resources phase={} outcome={outcome} available=true start_uptime_ns={} end_uptime_ns={} cpu_avg_percent={percent} rss_start_bytes={} rss_end_bytes={} footprint_start_bytes={} footprint_end_bytes={}",
+                eprintln!("[SayakaTraversal] event=index.resources cpu_unit=ns phase={} outcome={outcome} available=true start_uptime_ns={} end_uptime_ns={} cpu_avg_percent={percent} rss_start_bytes={} rss_end_bytes={} footprint_start_bytes={} footprint_end_bytes={}",
                     self.phase, start.uptime_ns, end.uptime_ns, start.rss_bytes, end.rss_bytes,
                     start.footprint_bytes, end.footprint_bytes);
             } else {
-                eprintln!("[SayakaTraversal] event=index.resources phase={} outcome={outcome} available=false", self.phase);
+                eprintln!("[SayakaTraversal] event=index.resources cpu_unit=ns phase={} outcome={outcome} available=false", self.phase);
             }
             self.resource = end;
         }
