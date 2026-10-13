@@ -876,3 +876,33 @@ fn shared_index_retains_one_snapshot_and_propagates_cloud_placeholders() {
     cancel.cancel();
     assert!(matches!(crate::ai_footprint::project_cancellable(&tree, crate::ai_footprint::Tool::Copilot, &cancel), Err(error) if error.code == ScanCode::Cancelled));
 }
+
+#[test]
+fn position_ordering_preserves_sparse_ids_unknown_sizes_and_native_ties() {
+    let prefix = "a/long-common-parent/deep";
+    let mut entries = vec![directory(90, ""), directory(7, "a"),
+        directory(601, "a/long-common-parent"), directory(32, prefix)];
+    for n in (0..700u64).rev() {
+        entries.push(file(10_000 + n * 17, &format!("{prefix}/item-{n:04}"), 20_000 + n,
+            (n % 5 != 0).then_some(n % 11), (n % 7 != 0).then_some(n % 13)));
+    }
+    let tree = tree(entries);
+    let mut expected: Vec<_> = tree.report().entries.iter().filter(|entry| entry.kind == ResourceKind::File).collect();
+    expected.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(tree.children(32).unwrap(), expected.iter().map(|entry| entry.id).collect::<Vec<_>>());
+    for metric in [Metric::Logical, Metric::Allocated] {
+        expected.sort_unstable_by(|a, b| tree.size(b.id, metric).cmp(&tree.size(a.id, metric)).then_with(|| a.path.cmp(&b.path)));
+        assert_eq!(tree.ordered_children(32, Sort::Size, metric).unwrap(), expected.iter().map(|entry| entry.id).collect::<Vec<_>>());
+    }
+    assert_eq!(tree.summary(32).unwrap().unique_files, 700);
+}
+
+#[test]
+fn explicit_roots_keep_full_path_order_instead_of_final_component_order() {
+    let mut input = report(vec![directory(93, "b/a"), directory(18, "a/z")]);
+    input.roots = vec![path("b/a"), path("a/z")];
+    let tree = ScanTree::build(input, &Cancellation::default()).unwrap();
+    assert_eq!(tree.roots(), &[18, 93]);
+    assert_eq!(tree.ordered_roots(Sort::Size, Metric::Logical), &[18, 93]);
+    assert_eq!(tree.ordered_roots(Sort::Size, Metric::Allocated), &[18, 93]);
+}

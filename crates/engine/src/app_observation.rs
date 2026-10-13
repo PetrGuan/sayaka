@@ -232,10 +232,10 @@ fn inventory_observed(
     for root in roots {
         diagnostics.run("root_revalidate", &root.path, || root.revalidate())?;
         if root.absent { continue; }
-        let mut stack = vec![(root.path.clone(), 0)];
+        let mut stack = vec![(root.path.clone(), 0, None)];
         diagnostics.queued_paths = 1;
         diagnostics.queued_bytes = root.path.as_os_str().len();
-        while let Some((p, depth)) = stack.pop() {
+        while let Some((p, depth, discovered)) = stack.pop() {
             diagnostics.queued_paths -= 1;
             diagnostics.queued_bytes -= p.as_os_str().len();
             diagnostics.apps = result.len();
@@ -248,7 +248,10 @@ fn inventory_observed(
                 continue;
             }
             diagnostics.directories += 1;
-            let mut directory = diagnostics.run("directory_capture", &p, || platform::application_directory::Observation::capture(&p))?;
+            let mut directory = diagnostics.run("directory_capture", &p, || match discovered {
+                Some(child) => platform::application_directory::Observation::capture_discovered(child),
+                None => platform::application_directory::Observation::capture(&p),
+            })?;
             while let Some(entry) = diagnostics.run("read_entry", &p, || directory.next_entry())? {
                 let path = entry.path();
                 diagnostics.entries += 1;
@@ -279,7 +282,10 @@ fn inventory_observed(
                     diagnostics.queued_paths += 1;
                     diagnostics.queued_bytes += path.as_os_str().len();
                     diagnostics.budget(&path, depth + 1, None)?;
-                    stack.push((path, depth + 1));
+                    let discovered = if path.extension().is_some_and(|e| e == "app") { None } else {
+                        Some(diagnostics.run("directory_child", &path, || directory.discovered_directory(&entry))?)
+                    };
+                    stack.push((path, depth + 1, discovered));
                 }
             }
             diagnostics.run("directory_revalidate", &p, || directory.finish())?;
@@ -445,6 +451,19 @@ mod progress_tests {
         insert_copy(&mut paths, PathBuf::from("/Applications/0.app"), 8).unwrap();
         assert_eq!(paths.len(), 8);
         assert!(insert_copy(&mut paths, PathBuf::from("/Applications/8.app"), 8).unwrap_err().to_string().contains("owner count exceeds eight"));
+    }
+    #[test]
+    fn inventory_keeps_deep_apps_beneath_sdk_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        let deep = base.join("SDK/BuildTools/Emscripten/python/lib/Nested.app/Contents");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("Info.plist"), b"<plist><dict><key>CFBundleIdentifier</key><string>org.example.deep</string></dict></plist>").unwrap();
+        let roots = vec![Root::capture(base.clone(), false).unwrap()];
+        let observed = inventory_with_progress(&roots, Instant::now() + std::time::Duration::from_secs(10),
+            &std::cell::Cell::new(100), &mut |_| Ok(())).unwrap();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].id, "org.example.deep");
     }
     #[test]
     fn inventory_progress_counts_captured_apps_and_obeys_cancellation() {
