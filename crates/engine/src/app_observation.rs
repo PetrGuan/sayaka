@@ -14,6 +14,11 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
+mod diagnostics;
+
+// Large SDK/documentation trees still receive complete alias inspection.
+pub(crate) const CACHE_INVENTORY_ENTRY_LIMIT: usize = 100_000;
+
 fn error(s: impl ToString) -> io::Error {
     io::Error::other(s.to_string())
 }
@@ -204,67 +209,71 @@ fn inventory_observed(
     roots: &[Root], deadline: Instant, remaining: &std::cell::Cell<usize>,
     progress: &mut impl FnMut(usize) -> io::Result<()>, allow_application_links: bool,
 ) -> io::Result<Vec<Bundle>> {
+    let mut diagnostics = diagnostics::Diagnostics::new(deadline, if allow_application_links { CACHE_INVENTORY_ENTRY_LIMIT } else { 10_000 });
     progress(0)?;
     let mut result = Vec::new();
-    let mut count = 0;
     for root in roots {
-        root.revalidate()?;
-        if root.absent {
-            continue;
-        }
+        diagnostics.run("root_revalidate", &root.path, || root.revalidate())?;
+        if root.absent { continue; }
         let mut stack = vec![(root.path.clone(), 0)];
+        diagnostics.queued_paths = 1;
+        diagnostics.queued_bytes = root.path.as_os_str().len();
         while let Some((p, depth)) = stack.pop() {
+            diagnostics.queued_paths -= 1;
+            diagnostics.queued_bytes -= p.as_os_str().len();
+            diagnostics.apps = result.len();
             progress(result.len())?;
-            if Instant::now() >= deadline || depth > 32 {
-                return Err(error("copies_unknown: budget"));
-            }
-            let w = orphans::exact(&p)?;
+            diagnostics.budget(&p, depth, None)?;
             if p.extension().is_some_and(|e| e == "app") {
-                result.push(Bundle::capture(&p)?);
+                result.push(diagnostics.run("bundle_capture", &p, || Bundle::capture(&p))?);
+                diagnostics.apps = result.len();
                 progress(result.len())?;
                 continue;
             }
-            for entry in std::fs::read_dir(&p)? {
-                count += 1;
+            diagnostics.directories += 1;
+            let mut directory = diagnostics.run("directory_capture", &p, || platform::application_directory::Observation::capture(&p))?;
+            while let Some(entry) = diagnostics.run("read_entry", &p, || directory.next_entry())? {
+                let path = entry.path();
+                diagnostics.entries += 1;
+                diagnostics.budget(&path, depth, Some(remaining.get()))?;
                 consume(remaining)?;
-                if count > 10_000 || Instant::now() >= deadline {
-                    return Err(error("copies_unknown: budget"));
-                }
-                let entry = entry?;
-                let ty = entry.file_type()?;
+                if diagnostics.entries.is_multiple_of(128) { progress(result.len())?; }
+                let ty = diagnostics.run("file_type", &path, || entry.file_type())?;
                 if ty.is_symlink() {
-                    if entry.path() == Path::new(platform::system_safari::ENTRY) {
-                        result.push(Bundle::capture_system_safari()?);
-                        progress(result.len())?;
-                        continue;
+                    if path == Path::new(platform::system_safari::ENTRY) {
+                        result.push(diagnostics.run("system_safari", &path, Bundle::capture_system_safari)?);
+                    } else if allow_application_links {
+                        result.push(diagnostics.run("application_link", &path, || Bundle::capture_application_link(&path, roots))?);
+                    } else {
+                        return Err(error(format!("copies_unknown: symlink source={path:?} target={:?}", std::fs::read_link(&path))));
                     }
-                    if allow_application_links {
-                        result.push(Bundle::capture_application_link(&entry.path(), roots)?);
-                        progress(result.len())?;
-                        continue;
-                    }
-                    return Err(error(format!("copies_unknown: symlink source={:?} target={:?}", entry.path(), std::fs::read_link(entry.path()))));
+                    diagnostics.apps = result.len();
+                    progress(result.len())?;
+                    continue;
                 }
                 if !ty.is_dir()
-                    && (!ty.is_file()
-                        || entry.path().extension().is_some_and(|e| e == "app")
-                        || orphans::is_finder_alias(&entry.path())?)
+                    && (!ty.is_file() || path.extension().is_some_and(|e| e == "app")
+                        || diagnostics.run("finder_alias", &path, || directory.is_finder_alias(&entry))?)
                 {
-                    return Err(error(format!("copies_unknown: alias or unsupported entry path={:?}", entry.path())));
+                    return Err(error(format!("copies_unknown: alias or unsupported entry path={path:?}")));
                 }
-                if ty.is_dir() {
-                    let p = entry.path();
-                    if p.extension().is_some_and(|e| e == "app") || !platform::is_package(&p)? {
-                        stack.push((p, depth + 1));
-                    }
+                if ty.is_dir() && (path.extension().is_some_and(|e| e == "app")
+                    || !diagnostics.run("package_check", &path, || platform::is_package(&path))?) {
+                    diagnostics.queued_paths += 1;
+                    diagnostics.queued_bytes += path.as_os_str().len();
+                    diagnostics.budget(&path, depth + 1, None)?;
+                    stack.push((path, depth + 1));
                 }
             }
-            w.revalidate()?;
+            diagnostics.run("directory_revalidate", &p, || directory.finish())?;
         }
-        root.revalidate()?;
+        diagnostics.run("root_revalidate", &root.path, || root.revalidate())?;
     }
+    if let Some(root) = roots.last() { diagnostics.budget(&root.path, 0, None)?; }
+    diagnostics.complete();
     Ok(result)
 }
+
 pub struct Copies {
     pub paths: Vec<PathBuf>,
     pub spotlight: Vec<PathBuf>,
@@ -444,4 +453,9 @@ mod application_link_tests {
             std::fs::remove_file(&source).unwrap();
         }
     }
+}
+
+/// One terminal classification record even when individual owners are unknown.
+pub(crate) fn classification_summary(completed: u64, total: u64, issues: usize, elapsed_us: u128) {
+    diagnostics::debug_line(format_args!("event=classification_summary completed={completed} total={total} issues={issues} elapsed_us={elapsed_us}"));
 }

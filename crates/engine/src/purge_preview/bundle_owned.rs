@@ -234,7 +234,7 @@ fn capture(
 ) -> Result<Option<Arc<Proof>>, String> {
     let roots = crate::app_observation::roots(home, &[]).map_err(|e| e.to_string())?;
     let inventory = Arc::new(crate::app_observation::inventory_with_progress(
-        &roots, deadline, &std::cell::Cell::new(10_000), &mut |_| Ok(()),
+        &roots, deadline, &std::cell::Cell::new(crate::app_observation::CACHE_INVENTORY_ENTRY_LIMIT), &mut |_| Ok(()),
     ).map_err(|e| e.to_string())?);
     capture_with_inventory(path, home, policy, deadline, &inventory)
 }
@@ -330,6 +330,7 @@ pub(super) fn append(
     candidates: &mut Vec<DeveloperCacheCandidate>,
     progress: &mut impl FnMut(u32, u64, u64) -> Result<(), String>,
 ) -> Result<Vec<crate::scan::ScanIssue>, String> {
+    let classification_started = Instant::now();
     let deadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(30));
     let mut issues = Vec::new();
     let issue = |path: &Path, message: String| crate::scan::ScanIssue {
@@ -371,7 +372,7 @@ pub(super) fn append(
         if inventory.is_none() {
             let observed = (|| {
                 let roots = crate::app_observation::roots(home, &[]).map_err(|e| e.to_string())?;
-                crate::app_observation::inventory_with_progress(&roots, deadline, &std::cell::Cell::new(10_000),
+                crate::app_observation::inventory_with_progress(&roots, deadline, &std::cell::Cell::new(crate::app_observation::CACHE_INVENTORY_ENTRY_LIMIT),
                     &mut |count| progress(1, count as u64, 0).map_err(std::io::Error::other))
                     .map(Arc::new).map_err(|e| e.to_string())
             })();
@@ -436,6 +437,7 @@ pub(super) fn append(
             "bundle-owned discovery budget exhausted".into(),
         ));
     }
+    crate::app_observation::classification_summary(completed, total, issues.len(), classification_started.elapsed().as_micros());
     Ok(issues)
 }
 

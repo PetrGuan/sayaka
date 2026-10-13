@@ -42,3 +42,61 @@ Regression sources cover accepted helper shortcuts, replacement, unknown targets
 and preservation of strict orphan inventory; agent validation compiles but does
 not execute them. Native end-to-end classification completion still requires a
 manual scan with the built application.
+
+## Bounded directory metadata observations and inventory diagnostics (#158)
+
+Debug builds emit bounded `[SayakaInventory]` records: current operation/path,
+operation and total elapsed microseconds, remaining deadline, visited entry,
+directory and application counts, terminal outcome, and per-operation totals and
+slowest paths. Detail records are capped at 128 per inventory; the fixed set of
+operation summaries still appears. Paths are quoted and these diagnostics remain
+local; Release builds do not emit these stderr records. Error messages in either
+build identify the operation/path or the exact exhausted budget (deadline,
+entries, shared entries, depth, queued paths or queued path bytes). A terminal
+classification summary distinguishes processed candidates from per-owner issues.
+
+A read-only CLI observation localized the original 30-second failure to 7,701
+Finder alias checks in a large installed SDK/documentation tree: 29.14 seconds,
+compared with about 6.6 ms for the two application links. Further process sampling
+identified leaf `openat` calls as the remaining cost after removing repeated
+ancestor enumeration. These are native diagnostic observations, not benchmark
+results or App UI latency measurements.
+
+The inventory now observes each real parent once and binds enumerated spellings
+to its identity and directory generation (including change time). It inspects
+**every** regular file's FinderInfo through `getxattr` with the public Darwin
+`XATTR_NOFOLLOW_ANY` flag, without opening file contents or following any path
+link. File identity, metadata and generation are checked around the read;
+changed/unreadable/dataless objects and malformed attributes remain unknown. Only
+`ENOATTR` establishes absence of FinderInfo. The thread-local no-materialization
+policy is held for each directory and explicitly restored at successful finish;
+its non-Send guard restores it on early exit. The ordinary last-check/path-race
+limitation still applies; this is not a race-free observation claim.
+
+The syscall flag is defined in the macOS SDK `sys/xattr.h`. Missing returned
+FinderInfo fields from `getattrlist` must **not** be interpreted as absence:
+[Apple's implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/vfs/vfs_attrlist.c)
+can omit that attribute after permission and other errors too. The explicit
+`getxattr` error code retains that distinction.
+
+Installed-cache inventory's entry cap is 100,000 (previously 10,000); the observed
+SDK tree needs more than 68,000 visits. Entries are inspected, not retained as
+file records. The 30-second discovery deadline and depth 32 remain unchanged;
+pending paths are limited to 10,000 and 32 MiB. Cancellation is checked at least
+every 128 enumerated entries as well as directory boundaries. Ordinary orphan
+inventory keeps its 10,000-entry cap and strict link policy. Copy/owner limits,
+unknown/running-owner protections and execution-time rebuilding are unchanged.
+
+Compile-only regression sources cover plain files and extension-disguised Finder
+aliases, case-only rename and linked leaf rejection, and specific budget causes.
+No unit/UI tests are executed by the agent. A real CLI cache preview may finish
+all classification candidates and still correctly report partial coverage when
+one candidate exceeds the existing eight-owner bound. Complete classification
+is not permission to clean that protected candidate.
+
+Final diagnostic CLI observation for this change: inventory completed 68,921
+entries / 1,666 directories / 54 application records in 6.177 s; classification
+processed 53/53 candidates in about 7.506 s including inventory. Cache preview
+engine time was 9.275 s, with 32 cache candidates and no effects. One owner-count
+issue remained protected, so overall coverage correctly stayed partial. This
+single run does not establish a percentile or a full App scan duration.
