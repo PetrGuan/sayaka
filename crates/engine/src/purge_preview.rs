@@ -963,8 +963,23 @@ pub struct ProjectScanMetrics {
     pub sizing_ms: u64,
 }
 
+/// Wall-clock phase measurements, not cleanup evidence. Microseconds preserve
+/// short scans; total includes small setup/accounting gaps between phases.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct PreviewTimings {
+    pub discovery_us: u64,
+    pub index_us: u64,
+    pub classification_us: u64,
+    pub git_us: u64,
+    pub activity_us: u64,
+    pub sizing_us: u64,
+    pub worktrees_us: u64,
+    pub total_us: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct PurgePreview {
+    pub timings: Option<PreviewTimings>,
     pub worktrees: crate::worktrees::WorktreeReport,
     pub scan_metrics: Option<ProjectScanMetrics>,
     pub schema_version: u32,
@@ -1294,6 +1309,7 @@ pub fn purge_preview(
         PurgeProfile::Worktrees => {
             let report = index.report();
             Ok(PurgePreview {
+                timings: None,
                 worktrees: Default::default(), schema_version: PURGE_SCHEMA_VERSION,
                 kind: PURGE_KIND, platform: if cfg!(target_os = "macos") { "macos" } else { "unsupported" },
                 status: preview_status(report), complete: report.complete, effects_performed: false,
@@ -1353,6 +1369,7 @@ fn finder_metadata_preview(
         ..Default::default()
     };
     Ok(PurgePreview {
+        timings: None,
         worktrees: Default::default(),
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,
@@ -1591,6 +1608,7 @@ fn project_purge_preview(
     let report = index.report();
     let status = preview_status(report);
     Ok(PurgePreview {
+        timings: None,
         worktrees: Default::default(),
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,
@@ -1817,6 +1835,7 @@ fn developer_cache_preview_with_home(
         preview_status(report)
     };
     Ok(PurgePreview {
+        timings: None,
         worktrees: Default::default(),
         schema_version: PURGE_SCHEMA_VERSION,
         kind: PURGE_KIND,

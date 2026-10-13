@@ -39,6 +39,13 @@ pub(crate) fn observe(
     use sayaka_platform_macos::{project_activity as native, project_git::GitReader};
     use std::collections::BTreeMap;
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    preview.counts.stale_artifacts = 0;
+    // Classification has already finished. With no artifact to assess, process
+    // enumeration and signed Git-tool resolution cannot change any observation.
+    // Do not spend a fresh native activity budget on an empty saved location.
+    if preview.projects.iter().all(|project| project.artifacts.is_empty()) {
+        return;
+    }
     let builds = native::builds(&|| cancellation.is_cancelled() || Instant::now() >= deadline);
     let reader = GitReader::new().ok();
     let mut git = BTreeMap::new();
@@ -47,7 +54,6 @@ pub(crate) fn observe(
         .ok()
         .and_then(|v| i64::try_from(v.as_millis()).ok())
         .unwrap_or(0);
-    preview.counts.stale_artifacts = 0;
     for project in &mut preview.projects {
         let artifacts = project
             .artifacts

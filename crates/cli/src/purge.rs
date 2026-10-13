@@ -19,6 +19,8 @@ use std::time::SystemTime;
 pub fn command() -> Command {
     Command::new("purge")
         .about("Preview rebuildable project artifacts, or Trash the explicitly selected ones")
+        .arg(Arg::new("timings").long("timings").action(ArgAction::SetTrue)
+            .help("Report preview phase and output wall timings to stderr (no paths)"))
         .arg(
             Arg::new("profile")
                 .long("profile")
@@ -236,10 +238,21 @@ fn run_inner(args: &ArgMatches) -> io::Result<u8> {
     }
     match result {
         Ok(preview) => {
+            let output_started = std::time::Instant::now();
             if json {
                 write_json(&mut io::stdout().lock(), &preview)?;
             } else {
                 write_human(&mut io::stdout().lock(), &preview)?;
+            }
+            if args.get_flag("timings") {
+                // Output includes JSON construction, encoding, write and flush.
+                // Keep this separate from engine wall time and stdout protocol.
+                let output_us = u64::try_from(output_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                writeln!(io::stderr().lock(), "{}", serde_json::json!({
+                    "kind": "preview_timings", "profile": preview.profile.as_str(),
+                    "status": preview.status.as_str(), "engine": preview.timings,
+                    "output_us": output_us,
+                }))?;
             }
             if execute {
                 return run_execution(args, &preview, &only, &cancellation);
@@ -395,6 +408,7 @@ fn write_json(out: &mut impl Write, preview: &PurgePreview) -> io::Result<()> {
         "roots": preview.roots.iter().map(|path| crate::apps::write_native_path(path)).collect::<Vec<_>>(),
         "stale_days": preview.stale_days,
         "scan_metrics": preview.scan_metrics,
+        "timings": preview.timings,
         "worktrees": {
             "complete": preview.worktrees.complete,
             "unavailable_repositories": preview.worktrees.unavailable_repositories,
@@ -615,6 +629,7 @@ mod tests {
     fn preview_with_artifacts(root: &std::path::Path) -> PurgePreview {
         let project = root.join("app");
         PurgePreview {
+            timings: None,
             worktrees: Default::default(),
             schema_version: 1,
             kind: purge_preview::PURGE_KIND,
