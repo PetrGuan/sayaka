@@ -61,14 +61,19 @@ pub use installer_provenance::{InstallerOrigin, MetadataState, read_installer_or
 /// Host-wide mach-absolute nanoseconds, in Darwin's CLOCK_UPTIME_RAW domain.
 #[cfg(target_os = "macos")]
 pub fn diagnostic_monotonic_ns() -> io::Result<u64> {
+    // SAFETY: This read-only clock takes no arguments or pointers.
+    diagnostic_ticks_to_ns(unsafe { mach_absolute_time() })
+}
+
+/// Convert Darwin Mach absolute CPU/wall ticks to nanoseconds without overflow.
+#[cfg(target_os = "macos")]
+pub fn diagnostic_ticks_to_ns(ticks: u64) -> io::Result<u64> {
     let mut scale = MachTimebaseInfo { numer: 0, denom: 0 };
     // SAFETY: The initialized writable structure is valid for this synchronous call.
     let result = unsafe { mach_timebase_info(&mut scale) };
     if result != 0 || scale.denom == 0 {
         return Err(io::Error::other("monotonic timebase unavailable"));
     }
-    // SAFETY: This read-only clock takes no arguments or pointers.
-    let ticks = unsafe { mach_absolute_time() };
     u64::try_from(u128::from(ticks) * u128::from(scale.numer) / u128::from(scale.denom))
         .map_err(|_| io::Error::other("monotonic time conversion overflow"))
 }

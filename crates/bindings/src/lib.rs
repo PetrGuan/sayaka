@@ -575,6 +575,15 @@ pub extern "C" fn sayaka_scan_release_v1(handle: u64) -> i32 {
             .jobs
             .remove(&handle)
             .ok_or(INVALID_HANDLE)?;
+        #[cfg(debug_assertions)]
+        {
+            // Weak observation never keeps the report/tree alive. A concurrent
+            // caller may still own a slot, so zero is evidence, not an assumption.
+            let witness = Arc::downgrade(&slot);
+            drop(job);
+            drop(slot);
+            eprintln!("[SayakaTraversal] event=scan.release handle={handle} registry_removed=true remaining_job_owners={}", witness.strong_count());
+        }
         Ok(())
     })
 }

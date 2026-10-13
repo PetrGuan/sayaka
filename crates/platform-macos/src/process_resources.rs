@@ -22,7 +22,8 @@ pub fn snapshot() -> std::io::Result<ProcessResources> {
     let info = unsafe { info.assume_init() };
     Ok(ProcessResources {
         uptime_ns: crate::diagnostic_monotonic_ns()?,
-        cpu_ns: info.ri_user_time.saturating_add(info.ri_system_time),
+        cpu_ns: crate::diagnostic_ticks_to_ns(info.ri_user_time.checked_add(info.ri_system_time)
+            .ok_or_else(|| std::io::Error::other("CPU ticks overflow"))?)?,
         rss_bytes: info.ri_resident_size,
         footprint_bytes: info.ri_phys_footprint,
     })
