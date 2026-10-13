@@ -71,7 +71,7 @@ impl ScanTree {
         limits.validate()?;
         check_cancelled(cancellation)?;
         #[cfg(debug_assertions)]
-        let mut phase_started = std::time::Instant::now();
+        let mut phase_started = IndexPhaseDiagnostic::new();
         if report.entries.len() > limits.max_entries {
             return Err(ScanError::new(
                 ScanCode::EntryLimit,
@@ -446,9 +446,62 @@ impl ScanTree {
 }
 
 #[cfg(debug_assertions)]
-fn log_index_phase(phase: &str, started: &mut std::time::Instant, entries: usize) {
-    eprintln!("[SayakaTraversal] event=index.phase phase={phase} entries={entries} elapsed_us={}", started.elapsed().as_micros());
-    *started = std::time::Instant::now();
+struct IndexPhaseDiagnostic {
+    started: std::time::Instant,
+    phase: &'static str,
+    #[cfg(target_os = "macos")]
+    resource: Option<sayaka_platform_macos::process_resources::ProcessResources>,
+}
+
+#[cfg(debug_assertions)]
+impl IndexPhaseDiagnostic {
+    fn new() -> Self {
+        Self {
+            started: std::time::Instant::now(), phase: "validate",
+            #[cfg(target_os = "macos")]
+            resource: sayaka_platform_macos::process_resources::snapshot().ok(),
+        }
+    }
+
+    fn resource_boundary(&mut self, outcome: &str) {
+        #[cfg(target_os = "macos")]
+        {
+            let end = sayaka_platform_macos::process_resources::snapshot().ok();
+            if let (Some(start), Some(end)) = (&self.resource, &end) {
+                let wall = end.uptime_ns.saturating_sub(start.uptime_ns);
+                let cpu = end.cpu_ns.checked_sub(start.cpu_ns);
+                let percent = cpu.filter(|_| wall > 0)
+                    .map(|cpu| format!("{:.2}", 100.0 * cpu as f64 / wall as f64))
+                    .unwrap_or_else(|| "unavailable".into());
+                eprintln!("[SayakaTraversal] event=index.resources phase={} outcome={outcome} available=true start_uptime_ns={} end_uptime_ns={} cpu_avg_percent={percent} rss_start_bytes={} rss_end_bytes={} footprint_start_bytes={} footprint_end_bytes={}",
+                    self.phase, start.uptime_ns, end.uptime_ns, start.rss_bytes, end.rss_bytes,
+                    start.footprint_bytes, end.footprint_bytes);
+            } else {
+                eprintln!("[SayakaTraversal] event=index.resources phase={} outcome={outcome} available=false", self.phase);
+            }
+            self.resource = end;
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = outcome;
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for IndexPhaseDiagnostic {
+    fn drop(&mut self) {
+        if self.phase != "complete" { self.resource_boundary("interrupted"); }
+    }
+}
+
+#[cfg(debug_assertions)]
+fn log_index_phase(phase: &str, diagnostic: &mut IndexPhaseDiagnostic, entries: usize) {
+    eprintln!("[SayakaTraversal] event=index.phase phase={phase} entries={entries} elapsed_us={}", diagnostic.started.elapsed().as_micros());
+    diagnostic.resource_boundary("complete");
+    diagnostic.phase = match phase {
+        "validate" => "hierarchy_coverage", "hierarchy_coverage" => "accounting",
+        "accounting" => "ordering", _ => "complete",
+    };
+    diagnostic.started = std::time::Instant::now();
 }
 
 fn cancellable_sort(
