@@ -70,6 +70,8 @@ impl ScanTree {
     pub fn build_shared(report: Arc<ScanReport>, cancellation: &Cancellation, limits: &ScanLimits) -> Result<Self, ScanError> {
         limits.validate()?;
         check_cancelled(cancellation)?;
+        #[cfg(debug_assertions)]
+        let mut phase_started = std::time::Instant::now();
         if report.entries.len() > limits.max_entries {
             return Err(ScanError::new(
                 ScanCode::EntryLimit,
@@ -132,6 +134,8 @@ impl ScanTree {
             });
         }
 
+        #[cfg(debug_assertions)]
+        log_index_phase("validate", &mut phase_started, report.entries.len());
         let mut roots = Vec::new();
         for (&path, &position) in &paths {
             check_cancelled(cancellation)?;
@@ -202,6 +206,8 @@ impl ScanTree {
             }
         }
 
+        #[cfg(debug_assertions)]
+        log_index_phase("hierarchy_coverage", &mut phase_started, report.entries.len());
         let mut bags: Vec<Option<IdentityBag>> = (0..report.entries.len()).map(|_| None).collect();
         // Explicit hierarchy postorder replaces global path sorting. Ancestors
         // are processed after all descendants, independent of scan entry order.
@@ -251,6 +257,8 @@ impl ScanTree {
         drop(incomplete_paths);
         drop(paths);
         drop(explicit_roots);
+        #[cfg(debug_assertions)]
+        log_index_phase("accounting", &mut phase_started, report.entries.len());
         let mut tree = Self {
             report,
             positions,
@@ -261,16 +269,15 @@ impl ScanTree {
         };
         for position in 0..tree.nodes.len() {
             check_cancelled(cancellation)?;
-            let mut names = std::mem::take(&mut tree.nodes[position].children);
-            cancellable_sort(&mut names, cancellation, |a, b| tree.entry(*a).unwrap().path.cmp(&tree.entry(*b).unwrap().path))?;
+            let children = std::mem::take(&mut tree.nodes[position].children);
+            let (names, sizes) = tree.build_orders(children, cancellation, true)?;
             tree.nodes[position].children = names;
-            tree.nodes[position].size_orders =
-                tree.size_orders(&tree.nodes[position].children, cancellation)?;
+            tree.nodes[position].size_orders = sizes;
         }
-        let mut roots = std::mem::take(&mut tree.roots);
-        cancellable_sort(&mut roots, cancellation, |a, b| tree.entry(*a).unwrap().path.cmp(&tree.entry(*b).unwrap().path))?;
-        tree.roots = roots;
-        tree.root_size_orders = tree.size_orders(&tree.roots, cancellation)?;
+        let roots = std::mem::take(&mut tree.roots);
+        (tree.roots, tree.root_size_orders) = tree.build_orders(roots, cancellation, false)?;
+        #[cfg(debug_assertions)]
+        log_index_phase("ordering", &mut phase_started, tree.nodes.len());
         Ok(tree)
     }
 
@@ -331,10 +338,14 @@ impl ScanTree {
     /// Known subtotal, not necessarily a complete measurement. Consult summary
     /// unknown counts and coverage. Non-file payloads have no size.
     pub fn size(&self, id: u64, metric: Metric) -> Option<u64> {
-        let entry = self.entry(id)?;
+        self.size_at(*self.positions.get(&id)?, metric)
+    }
+
+    fn size_at(&self, position: usize, metric: Metric) -> Option<u64> {
+        let entry = &self.report.entries[position];
         match entry.kind {
             ResourceKind::Directory => {
-                let summary = self.summary(id)?;
+                let summary = self.nodes[position].summary.as_ref()?;
                 let (bytes, unknown) = match metric {
                     Metric::Logical => (
                         summary.logical_bytes_known,
@@ -371,28 +382,57 @@ impl ScanTree {
         ordered(&self.roots, &self.root_size_orders, sort, metric)
     }
 
-    fn size_orders(
+    /// Sorting uses validated observation positions, not public resource IDs.
+    /// Resolve each ID once; comparisons must not repeatedly hash IDs or walk
+    /// the common parent components of long sibling paths.
+    fn build_orders(
         &self,
-        ids: &[u64],
+        mut names: Vec<u64>,
         cancellation: &Cancellation,
-    ) -> Result<[Vec<u64>; 2], ScanError> {
-        let mut orders = [ids.to_vec(), ids.to_vec()];
+        siblings: bool,
+    ) -> Result<(Vec<u64>, [Vec<u64>; 2]), ScanError> {
+        for id in &mut names {
+            check_cancelled(cancellation)?;
+            // Entries are bounded by ScanLimits, and every child/root ID was
+            // taken from this report after unique-ID and parent validation.
+            *id = self.positions[id] as u64;
+        }
+        let compare_name = |a: &u64, b: &u64| {
+            let a = &self.report.entries[*a as usize].path;
+            let b = &self.report.entries[*b as usize].path;
+            if siblings {
+                // A validated sibling set has the same normalized parent.
+                // Compare native final components, preserving non-UTF8 names.
+                a.file_name().cmp(&b.file_name())
+            } else {
+                a.cmp(b)
+            }
+        };
+        cancellable_sort(&mut names, cancellation, compare_name)?;
+        let mut orders = [names.clone(), names.clone()];
         for (order, metric) in orders.iter_mut().zip([Metric::Logical, Metric::Allocated]) {
             check_cancelled(cancellation)?;
             cancellable_sort(order, cancellation, |a, b| {
-                self.size(*b, metric)
-                    .cmp(&self.size(*a, metric))
-                    .then_with(|| {
-                        self.entry(*a)
-                            .unwrap()
-                            .path
-                            .cmp(&self.entry(*b).unwrap().path)
-                    })
+                self.size_at(*b as usize, metric)
+                    .cmp(&self.size_at(*a as usize, metric))
+                    .then_with(|| compare_name(a, b))
             })?;
         }
-        check_cancelled(cancellation)?;
-        Ok(orders)
+        for order in std::iter::once(&mut names).chain(orders.iter_mut()) {
+            for position in order {
+                check_cancelled(cancellation)?;
+                *position = self.report.entries[*position as usize].id;
+            }
+        }
+        Ok((names, orders))
     }
+
+}
+
+#[cfg(debug_assertions)]
+fn log_index_phase(phase: &str, started: &mut std::time::Instant, entries: usize) {
+    eprintln!("[SayakaTraversal] event=index.phase phase={phase} entries={entries} elapsed_us={}", started.elapsed().as_micros());
+    *started = std::time::Instant::now();
 }
 
 fn cancellable_sort(
