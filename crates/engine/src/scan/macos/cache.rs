@@ -12,11 +12,18 @@ use std::sync::atomic::Ordering;
 #[derive(Default)]
 #[cfg_attr(not(debug_assertions), allow(dead_code))]
 struct Timing {
-    opens: AtomicU64, open_us: AtomicU64, checks: AtomicU64, check_us: AtomicU64,
+    opens: AtomicU64, open_us: AtomicU64, open_api_us: AtomicU64, max_open_api_us: AtomicU64, slow_opens: AtomicU64, capture_us: AtomicU64, volume_us: AtomicU64, checks: AtomicU64, check_us: AtomicU64,
     batches: AtomicU64, bulk_entries: AtomicU64, bulk_us: AtomicU64,
     allocated: AtomicU64, reused: AtomicU64, fallbacks: AtomicU64, stat_fallbacks: AtomicU64,
 }
 impl Timing {
+    #[cfg(debug_assertions)]
+    fn opened(&self, started: std::time::Instant) {
+        let elapsed = started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+        self.open_api_us.fetch_add(elapsed, Ordering::Relaxed);
+        self.max_open_api_us.fetch_max(elapsed, Ordering::Relaxed);
+        if elapsed >= 10_000 { self.slow_opens.fetch_add(1, Ordering::Relaxed); }
+    }
     fn bulk(&self, _reader: &BulkDirectory) {
         #[cfg(debug_assertions)]
         {
@@ -42,8 +49,8 @@ impl Drop for CacheBackend {
         {
             let t = &self.timing;
             let n = |v: &AtomicU64| v.load(Ordering::Relaxed);
-            eprintln!("[SayakaSizing] event=native_summary path={:?} wall_us={} opens={} open_us={} checks={} check_us={} batches={} bulk_entries={} bulk_us={} buffers_allocated={} buffers_reused={} legacy_fallbacks={} stat_fallbacks={}",
-                self.path, self.started.elapsed().as_micros(), n(&t.opens), n(&t.open_us), n(&t.checks), n(&t.check_us),
+            eprintln!("[SayakaSizing] event=native_summary path={:?} wall_us={} opens={} open_us={} open_api_us={} max_open_api_us={} opens_ge_10ms={} capture_us={} volume_us={} checks={} check_us={} batches={} bulk_entries={} bulk_us={} buffers_allocated={} buffers_reused={} legacy_fallbacks={} stat_fallbacks={}",
+                self.path, self.started.elapsed().as_micros(), n(&t.opens), n(&t.open_us), n(&t.open_api_us), n(&t.max_open_api_us), n(&t.slow_opens), n(&t.capture_us), n(&t.volume_us), n(&t.checks), n(&t.check_us),
                 n(&t.batches), n(&t.bulk_entries), n(&t.bulk_us), n(&t.allocated), n(&t.reused), n(&t.fallbacks), n(&t.stat_fallbacks));
         }
     }
@@ -58,8 +65,16 @@ impl Backend for CacheBackend {
         #[cfg(debug_assertions)]
         let started = std::time::Instant::now();
         let result = (|| {
-            let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error)?;
-            validate_local_internal_volume_fd(&fd)?;
+            let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error);
+            #[cfg(debug_assertions)]
+            self.timing.opened(started);
+            let fd = fd?;
+            #[cfg(debug_assertions)]
+            let volume_started = std::time::Instant::now();
+            let volume = validate_local_internal_volume_fd(&fd);
+            #[cfg(debug_assertions)]
+            self.timing.volume_us.fetch_add(volume_started.elapsed().as_micros() as u64, Ordering::Relaxed);
+            volume?;
             CacheDirectory::from_fd(fd, Arc::clone(&self.timing))
         })();
         #[cfg(debug_assertions)]
@@ -85,7 +100,12 @@ pub(super) struct CacheDirectory {
 }
 impl CacheDirectory {
     fn from_fd(fd: OwnedFd, timing: Arc<Timing>) -> Result<Self, ScanError> {
-        let stat = fs::fstat(&fd).map_err(native_error)?;
+        #[cfg(debug_assertions)]
+        let started = std::time::Instant::now();
+        let stat = fs::fstat(&fd).map_err(native_error);
+        #[cfg(debug_assertions)]
+        timing.capture_us.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        let stat = stat?;
         let original = from_stat(&stat);
         if original.dataless {
             return Err(ScanError::new(
@@ -188,7 +208,10 @@ impl Cursor for CacheDirectory {
         #[cfg(debug_assertions)]
         let started = std::time::Instant::now();
         let result = (|| {
-            let fd = fs::openat(self.fd()?, &item.name, directory_flags(), Mode::empty()).map_err(native_error)?;
+            let fd = fs::openat(self.fd()?, &item.name, directory_flags(), Mode::empty()).map_err(native_error);
+            #[cfg(debug_assertions)]
+            self.timing.opened(started);
+            let fd = fd?;
             Self::from_fd(fd, Arc::clone(&self.timing))
         })();
         #[cfg(debug_assertions)]

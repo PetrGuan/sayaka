@@ -27,6 +27,7 @@ type Hook = Arc<dyn Fn(&Path, usize) + Send + Sync>;
 struct Tree {
     directories: HashMap<PathBuf, Directory>,
     opened: Mutex<Vec<PathBuf>>,
+    checked: Mutex<Vec<PathBuf>>,
     hook: Option<Hook>,
     fail_enter: bool,
     fail_restore: bool,
@@ -190,6 +191,7 @@ impl Cursor for FakeCursor {
         open(&self.tree, &self.path.join(&item.name))
     }
     fn unchanged(&self) -> Result<bool, ScanError> {
+        self.tree.checked.lock().unwrap().push(self.path.clone());
         Ok(self.tree.directories[&self.path].unchanged)
     }
 }
@@ -232,6 +234,7 @@ fn tree() -> Tree {
     Tree {
         directories: HashMap::from([(root(), directory(1))]),
         opened: Mutex::new(Vec::new()),
+        checked: Mutex::new(Vec::new()),
         hook: None,
         fail_enter: false,
         fail_restore: false,
@@ -1306,4 +1309,90 @@ fn cache_lazy_paths_preserve_byte_limits_and_error_paths() {
         assert!(!result.complete);
         assert!(result.issues.iter().any(|issue| issue.code == ScanCode::Io && issue.path.as_deref() == Some(full.as_path())));
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_lending_preserves_wrapper_totals_and_ancestor_change_checks() {
+    for changed in [false, true] {
+        let mut fake = tree();
+        let version = add_directory(&mut fake, &root(), "version", 2);
+        let links = add_directory(&mut fake, &version, "links", 3);
+        let files = add_directory(&mut fake, &version, "files", 4);
+        add_file(&mut fake, &version, "index", 5, Some(11));
+        for (side, parent) in [&links, &files].into_iter().enumerate() {
+            for i in 0..16 {
+                let child = add_directory(&mut fake, parent, &format!("bucket-{i}"), 100 + side as u64 * 100 + i);
+                let mut linked = metadata(10, ResourceKind::File, Some(7));
+                linked.link_count = Some(32);
+                fake.directories.get_mut(&child).unwrap().items.push(Item { name: "shared".into(), metadata: Ok(linked) });
+                add_file(&mut fake, &child, "own", 1000 + side as u64 * 100 + i, Some(3));
+            }
+        }
+        fake.directories.get_mut(&version).unwrap().unchanged = !changed;
+        let backend = FakeBackend(Arc::new(fake));
+        let result = crate::scan::cache::summarize(&backend, &root(),
+            metadata(1, ResourceKind::Directory, None).identity, &ScanLimits::default(),
+            &Cancellation::default(), |_, _, _| {}).unwrap();
+        assert_eq!(result.complete, !changed);
+        assert_eq!(result.entries, 100); // 35 directories, index and 64 bucket entries.
+        assert_eq!(result.files, 34); // shared identity once, index and 32 own files.
+        assert_eq!(result.logical, Some(114));
+        let checks = backend.0.checked.lock().unwrap();
+        // Every directory is checked exactly once, including ancestors that
+        // may have delegated descendants. Completion ordering is covered by
+        // the deterministic scheduler checks in cache::parallel.
+        assert_eq!(checks.len(), 36);
+        assert_eq!(checks.iter().collect::<HashSet<_>>().len(), 36);
+        if changed { assert!(result.issues.iter().any(|i| i.code == ScanCode::ChangedEntry && i.path.as_deref() == Some(version.as_path()))); }
+        assert_eq!(backend.0.opened.lock().unwrap().len(), backend.0.closed.load(Ordering::Acquire));
+        assert_eq!(backend.0.policies_entered.load(Ordering::Acquire), backend.0.policies_restored.load(Ordering::Acquire));
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_lending_keeps_deep_wrappers_complete_and_resource_limited() {
+    for max_open_dirs in [8, 32] {
+        let mut fake = tree();
+        let mut parent = root();
+        for i in 0..12 { parent = add_directory(&mut fake, &parent, "wrapper", i + 2); }
+        add_file(&mut fake, &parent, "payload", 100, Some(9));
+        let backend = FakeBackend(Arc::new(fake));
+        let limits = ScanLimits { workers: 2, max_open_dirs, ..ScanLimits::default() };
+        let result = crate::scan::cache::summarize(&backend, &root(),
+            metadata(1, ResourceKind::Directory, None).identity, &limits,
+            &Cancellation::default(), |_, _, _| {}).unwrap();
+        if max_open_dirs == 32 {
+            assert!(result.complete);
+            assert_eq!(result.entries, 13);
+            assert_eq!(result.logical, Some(9));
+            assert_eq!(backend.0.checked.lock().unwrap().len(), 13);
+        } else {
+            assert!(!result.complete);
+            assert!(result.issues.iter().any(|i| i.code == ScanCode::OpenHandleLimit));
+        }
+        assert_eq!(backend.0.opened.lock().unwrap().len(), backend.0.closed.load(Ordering::Acquire));
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_lending_cancellation_in_wrapper_releases_all_handles() {
+    let mut fake = tree();
+    let version = add_directory(&mut fake, &root(), "version", 2);
+    for i in 0..16 { add_directory(&mut fake, &version, &format!("bucket-{i}"), i + 3); }
+    let cancellation = Cancellation::default();
+    let token = cancellation.clone();
+    fake.hook = Some(Arc::new(move |path, index| {
+        if path == version && index == 3 { token.cancel(); }
+    }));
+    let backend = FakeBackend(Arc::new(fake));
+    let result = crate::scan::cache::summarize(&backend, &root(),
+        metadata(1, ResourceKind::Directory, None).identity, &ScanLimits::default(),
+        &cancellation, |_, _, _| {}).unwrap();
+    assert!(result.cancelled && !result.complete);
+    assert!(result.issues.iter().any(|i| i.code == ScanCode::Cancelled));
+    assert_eq!(backend.0.opened.lock().unwrap().len(), backend.0.closed.load(Ordering::Acquire));
+    assert_eq!(backend.0.policies_entered.load(Ordering::Acquire), backend.0.policies_restored.load(Ordering::Acquire));
 }
