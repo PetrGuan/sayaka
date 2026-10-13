@@ -67,6 +67,26 @@ enum Event {
     Result(usize, Result<cache::Summary, ScanError>),
 }
 
+/// Lend only otherwise unused sizing slots. The outer artifact workers retain
+/// their own slots, so producers plus subtree workers never exceed the request.
+struct SpareWorkers<'a> {
+    available: &'a AtomicUsize,
+    count: usize,
+}
+impl<'a> SpareWorkers<'a> {
+    fn take(available: &'a AtomicUsize, max: usize) -> Self {
+        let previous = available
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| Some(n.saturating_sub(max)))
+            .expect("worker reservation always succeeds");
+        Self { available, count: previous.min(max) }
+    }
+}
+impl Drop for SpareWorkers<'_> {
+    fn drop(&mut self) {
+        self.available.fetch_add(self.count, Ordering::Release);
+    }
+}
+
 pub(super) fn measure(
     preview: &mut PurgePreview,
     index: &ScanTree,
@@ -131,11 +151,15 @@ pub(super) fn measure(
     // Publish discovery before any size is available; no unvisited artifact is zero.
     emit(&live, completed, preview.scan_issues.len(), progress);
     let next = AtomicUsize::new(0);
+    let active_workers = limits.active_workers(request, jobs.len());
+    let spare_workers = AtomicUsize::new(
+        limits.workers.min(request.workers).saturating_sub(active_workers),
+    );
     std::thread::scope(|scope| {
         let (sender, receiver) = mpsc::sync_channel(16);
         let mut workers = Vec::new();
-        let active_workers = limits.active_workers(request, jobs.len());
         for worker_index in 0..active_workers {
+            let spare_workers = &spare_workers;
             let sender = sender.clone();
             let jobs = &jobs;
             let next = &next;
@@ -164,10 +188,17 @@ pub(super) fn measure(
                                 "shared project sizing entry budget reached",
                             ))
                         } else if let Some(identity) = identity {
+                            let mut scan_limits =
+                                limits.scan(request, deadline, worker_index, active_workers);
+                            let spare = SpareWorkers::take(
+                                spare_workers,
+                                (scan_limits.max_open_dirs / 3).saturating_sub(1),
+                            );
+                            scan_limits.workers += spare.count;
                             cache::scan_project(
                                 path,
                                 *identity,
-                                &limits.scan(request, deadline, worker_index, active_workers),
+                                &scan_limits,
                                 budget,
                                 cancellation,
                                 |entries, files, bytes| {
@@ -344,6 +375,25 @@ pub(crate) fn verify_metadata(
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    #[test]
+    fn spare_worker_leases_share_one_cap_and_return_on_unwind() {
+        let available = AtomicUsize::new(3);
+        let first = SpareWorkers::take(&available, 2);
+        let second = SpareWorkers::take(&available, 2);
+        assert_eq!((first.count, second.count), (2, 1));
+        assert_eq!(SpareWorkers::take(&available, 4).count, 0);
+        drop(first);
+        assert_eq!(available.load(Ordering::Acquire), 2);
+        let _ = std::panic::catch_unwind(|| {
+            let _lease = SpareWorkers::take(&available, 2);
+            panic!("simulated sizing failure");
+        });
+        assert_eq!(available.load(Ordering::Acquire), 2);
+        drop(second);
+        assert_eq!(available.load(Ordering::Acquire), 3);
+        assert_eq!(SpareWorkers::take(&available, 0).count, 0);
+    }
+
     #[test]
     fn sizing_partitions_respect_caller_caps_and_actual_concurrency() {
         let limits = SizeLimits::default();

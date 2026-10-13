@@ -275,9 +275,8 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
             path: root.to_owned(),
             depth: 1,
         };
-        if project_budget.is_some() {
-            // Project-level scheduling already supplies bounded parallelism.
-            // A single streaming DFS per artifact avoids nested worker pools.
+        if project_budget.is_some() && limits.workers == 1 {
+            // With no spare project slot, retain the single streaming DFS.
             walk(&shared, frame, false, &mut progress)?;
         } else {
             std::thread::scope(|scope| -> Result<(), ScanError> {
@@ -287,7 +286,14 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                 };
                 let mut workers = Vec::new();
                 let mut failure = None;
-                for index in 0..limits.workers.min(4) {
+                // A project producer already owns one global sizing slot;
+                // remaining slots are lent by the outer artifact scheduler.
+                let worker_count = if project_budget.is_some() {
+                    limits.workers.saturating_sub(1)
+                } else {
+                    limits.workers.min(4)
+                };
+                for index in 0..worker_count {
                     let shared = &shared;
                     match backend.spawn_worker(scope, index, move || {
                         let mut guard = StopOnFailure {
