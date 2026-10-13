@@ -1264,3 +1264,46 @@ fn cache_worker_ceiling_preserves_full_totals_hardlinks_and_policy_restore() {
         assert_eq!(backend.0.policies_entered.load(Ordering::Acquire), backend.0.policies_restored.load(Ordering::Acquire));
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_lazy_paths_preserve_byte_limits_and_error_paths() {
+    use std::os::unix::ffi::OsStringExt;
+    for scan_root in [PathBuf::from("/"), root(), PathBuf::from("/scan-fixture/")] {
+        // Non-UTF8 names must use native bytes, not a lossy display length.
+        let name = OsString::from_vec(vec![b'f', 0xff, b'x']);
+        let full = scan_root.join(&name);
+        for allowance in [full.as_os_str().len() - 1, full.as_os_str().len()] {
+            let mut fake = tree();
+            fake.directories.clear();
+            let mut dir = directory(1);
+            dir.items.push(Item { name: name.clone(), metadata: Ok(metadata(2, ResourceKind::File, Some(7))) });
+            fake.directories.insert(scan_root.clone(), dir);
+            let backend = FakeBackend(Arc::new(fake));
+            let limits = ScanLimits { max_path_bytes: allowance, ..ScanLimits::default() };
+            let result = crate::scan::cache::summarize(&backend, &scan_root,
+                metadata(1, ResourceKind::Directory, None).identity, &limits,
+                &Cancellation::default(), |_, _, _| {}).unwrap();
+            if allowance < full.as_os_str().len() {
+                assert!(!result.complete);
+                assert_eq!(result.files, 0);
+                assert!(result.issues.iter().any(|issue| issue.code == ScanCode::PathBytesLimit && issue.path.as_deref() == Some(scan_root.as_path())));
+            } else {
+                assert!(result.complete);
+                assert_eq!(result.logical, Some(7));
+                assert_eq!(result.files, 1);
+            }
+        }
+        let mut fake = tree();
+        fake.directories.clear();
+        let mut dir = directory(1);
+        dir.items.push(Item { name: name.clone(), metadata: Err(ScanError::new(ScanCode::Io, "denied")) });
+        fake.directories.insert(scan_root.clone(), dir);
+        let backend = FakeBackend(Arc::new(fake));
+        let result = crate::scan::cache::summarize(&backend, &scan_root,
+            metadata(1, ResourceKind::Directory, None).identity, &ScanLimits::default(),
+            &Cancellation::default(), |_, _, _| {}).unwrap();
+        assert!(!result.complete);
+        assert!(result.issues.iter().any(|issue| issue.code == ScanCode::Io && issue.path.as_deref() == Some(full.as_path())));
+    }
+}

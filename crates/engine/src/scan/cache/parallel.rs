@@ -455,17 +455,23 @@ fn walk<D: Cursor>(
             );
             continue;
         }
-        let path = frame.path.join(&item.name);
-        if path.as_os_str().len() > shared.limits.max_path_bytes.min(65_536) {
+        // Ordinary file accounting needs a full path only on failure. Check
+        // the identical joined byte length before allocating that path.
+        let joined_bytes = frame.path.as_os_str().len()
+            .saturating_add(usize::from(!frame.path.as_os_str().as_encoded_bytes().ends_with(b"/")))
+            .saturating_add(item.name.len());
+        if joined_bytes > shared.limits.max_path_bytes.min(65_536) {
             shared.issue(
                 &frame.path,
                 ScanError::new(ScanCode::PathBytesLimit, "cache path budget reached"),
             );
             continue;
         }
+        let cached_path = std::cell::OnceCell::new();
+        let path = || cached_path.get_or_init(|| frame.path.join(&item.name));
         if shared.project_budget.is_some_and(|budget| !budget.admit()) {
             shared.issue(
-                &path,
+                path(),
                 ScanError::new(
                     ScanCode::EntryLimit,
                     "shared project sizing entry budget reached",
@@ -474,7 +480,7 @@ fn walk<D: Cursor>(
             shared.stop();
             break;
         }
-        if shared.project_budget.is_some() && crate::project_git::is_metadata_path(&path) {
+        if shared.project_budget.is_some() && crate::project_git::is_metadata_path(path()) {
             let mut totals = lock(&shared.totals);
             totals.vcs_metadata += 1;
             totals.complete = false;
@@ -490,13 +496,13 @@ fn walk<D: Cursor>(
         let metadata = match &item.metadata {
             Ok(metadata) => metadata,
             Err(error) => {
-                shared.issue(&path, error.clone());
+                shared.issue(path(), error.clone());
                 continue;
             }
         };
         if device(metadata.identity) != device(shared.expected) {
             shared.issue(
-                &path,
+                path(),
                 ScanError::new(
                     ScanCode::MountBoundary,
                     "cache mount boundary not traversed",
@@ -506,7 +512,7 @@ fn walk<D: Cursor>(
         }
         if metadata.dataless {
             shared.issue(
-                &path,
+                path(),
                 ScanError::new(
                     ScanCode::CloudDirectorySkipped,
                     "dataless cache contents not materialized",
@@ -523,7 +529,7 @@ fn walk<D: Cursor>(
                     if let Some(previous) = files.get(&metadata.identity) {
                         if previous != &sizes {
                             shared.issue(
-                                &path,
+                                path(),
                                 ScanError::new(
                                     ScanCode::ChangedEntry,
                                     "hard-linked cache file changed",
@@ -534,7 +540,7 @@ fn walk<D: Cursor>(
                     }
                     if files.len() >= shared.limits.max_entries {
                         shared.issue(
-                            &path,
+                            path(),
                             ScanError::new(
                                 ScanCode::EntryLimit,
                                 "cache hard-link identity budget reached",
@@ -555,7 +561,7 @@ fn walk<D: Cursor>(
                     let mut directories = lock(&shared.directories);
                     if directories.contains(&metadata.identity) {
                         shared.issue(
-                            &path,
+                            path(),
                             ScanError::new(
                                 ScanCode::ChangedEntry,
                                 "duplicate cache directory identity",
@@ -565,7 +571,7 @@ fn walk<D: Cursor>(
                     }
                     if directories.len() >= shared.limits.max_entries {
                         shared.issue(
-                            &path,
+                            path(),
                             ScanError::new(
                                 ScanCode::EntryLimit,
                                 "cache directory identity budget reached",
@@ -578,15 +584,15 @@ fn walk<D: Cursor>(
                 }
                 if frame.depth >= shared.limits.max_depth {
                     shared.issue(
-                        &path,
+                        path(),
                         ScanError::new(ScanCode::DepthLimit, "cache depth budget reached"),
                     );
                     continue;
                 }
-                let permit = match shared.reserve(&path) {
+                let permit = match shared.reserve(path()) {
                     Ok(permit) => permit,
                     Err(error) => {
-                        shared.issue(&path, error);
+                        shared.issue(path(), error);
                         continue;
                     }
                 };
@@ -596,7 +602,7 @@ fn walk<D: Cursor>(
                         if error.code == ScanCode::LinkSkipped {
                             error.code = ScanCode::ChangedEntry;
                         }
-                        shared.issue(&path, error);
+                        shared.issue(path(), error);
                         continue;
                     }
                 };
@@ -606,7 +612,7 @@ fn walk<D: Cursor>(
                     || opened.dataless
                 {
                     shared.issue(
-                        &path,
+                        path(),
                         ScanError::new(
                             ScanCode::ChangedEntry,
                             "cache directory replaced before opening",
@@ -624,15 +630,18 @@ fn walk<D: Cursor>(
                         }
                         Ok(false) => {}
                         Err(error) => {
-                            shared.issue(&path, error);
+                            shared.issue(path(), error);
                             continue;
                         }
                     }
                 }
+                // Directory admission above already constructed this path;
+                // transfer it to the child without a second allocation.
+                let child_path = cached_path.into_inner().expect("admitted directory path");
                 let child = Frame {
                     directory,
                     _permit: permit,
-                    path,
+                    path: child_path,
                     depth: frame.depth + 1,
                 };
                 if producer {
@@ -643,7 +652,7 @@ fn walk<D: Cursor>(
                 }
             }
             _ => shared.issue(
-                &path,
+                path(),
                 ScanError::new(ScanCode::Io, "unsupported cache entry kind"),
             ),
         }
