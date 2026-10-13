@@ -18,6 +18,7 @@ fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
 struct Resources {
     open: usize,
     paths: usize,
+    peak_open: usize,
 }
 struct Permit {
     resources: Arc<Mutex<Resources>>,
@@ -120,6 +121,7 @@ impl<D> Shared<'_, D> {
             ));
         }
         resources.open += 1;
+        resources.peak_open = resources.peak_open.max(resources.open);
         resources.paths += bytes;
         Ok(Permit {
             resources: Arc::clone(&self.resources),
@@ -148,7 +150,8 @@ impl<D> Shared<'_, D> {
         progress(snapshot.0, snapshot.1, snapshot.2);
     }
     fn submit(&self, frame: Frame<D>, progress: &mut impl FnMut(usize, u64, u64)) {
-        let capacity = self.limits.queue_capacity.min(self.limits.workers.min(4));
+        let ceiling = if self.project_budget.is_some() { 4 } else { 8 };
+        let capacity = self.limits.queue_capacity.min(self.limits.workers.min(ceiling));
         let mut queue = lock(&self.queue);
         while queue.jobs.len() >= capacity && !self.stopped.load(Ordering::Acquire) {
             queue = self
@@ -301,7 +304,7 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                 let worker_count = if project_budget.is_some() {
                     limits.workers.saturating_sub(1)
                 } else {
-                    limits.workers.min(4)
+                    limits.workers.min(8)
                 };
                 for index in 0..worker_count {
                     let shared = &shared;
@@ -383,6 +386,14 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
         }
         shared.interrupted();
         shared.report(&mut progress);
+        #[cfg(debug_assertions)]
+        {
+            let totals = lock(&shared.totals);
+            eprintln!("[SayakaSizing] event=summary path={root:?} wall_us={} entries={} files={} links={} directory_identities={} peak_open={} workers_limit={} complete={} cancelled={} issues={}",
+                shared.started.elapsed().as_micros(), totals.entries, totals.files, totals.links,
+                lock(&shared.directories).len(), lock(&shared.resources).peak_open, limits.workers,
+                totals.complete, totals.cancelled, totals.issues.len() + totals.omitted);
+        }
         Ok(shared
             .totals
             .into_inner()

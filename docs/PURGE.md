@@ -143,7 +143,9 @@ retained stack paths. Discovery still has the generic 100,000-entry/32 MiB index
 limits. Generic disk and project scans keep their existing limits.
 
 On macOS, cache measurement fetches native entry metadata in bounded
-`getattrlistbulk` batches (at most 64 KiB per open cursor). This avoids a separate
+`getattrlistbulk` batches (at most 64 KiB per open cursor, plus one initialized
+64 KiB spare buffer per enumerating thread). The spare reuses allocation only;
+no entries, cursor offsets or metadata observations are reused. This avoids a separate
 stat call for every ordinary entry. Only returned, validated attributes are used;
 missing file attributes can fall back to descriptor-relative no-follow stat.
 Directories with missing boundary attributes remain incomplete rather than
@@ -152,7 +154,10 @@ An unsupported first bulk call can rewind and use the original directory cursor;
 errors after iteration starts remain errors. Mount points/firmlinks are rejected
 before descent. Directory opens, identity checks, modification stamps and the
 thread's no-materialization policy are retained. No previously measured size or
-eligibility is reused. Up to four workers measure independent root children,
+eligibility is reused. Cache preview defaults use the available CPU count capped
+at eight workers (fallback four), retaining at least 32 default open-directory
+slots per worker, up to 256. Explicit caller worker/handle/path/depth limits still
+apply. Up to eight workers measure independent root children,
 with a bounded directory-only queue and shared identity, open-cursor and
 retained-path budgets. Each worker applies the no-materialization thread policy
 and walks its subtree without retaining file records. Hard links are deduplicated
@@ -257,3 +262,41 @@ Preview and native session admission refuse running/unknown builds; the final
 native guard repeats this observation. The existing last-check/path-replacement
 and process-start race remains: these checks are not an atomic exclusion lock on
 all build tools. Fresh metadata and an explicit Trash confirmation remain required.
+
+### Cache sizing diagnostics and complete-traversal tuning
+
+Debug cache sizing emits `[SayakaSizing]` summaries per candidate. The engine
+summary reports visited entries, unique regular files, links, directory identities,
+peak live directory handles, requested worker limit, completeness, cancellation
+and issue count. The native summary separates directory-open/admission time,
+post-traversal change checks, bulk-call count/time, returned entries, buffer
+allocation/reuse and legacy/stat fallbacks. Native operation durations are summed
+across workers and overlap; they must not be added as sequential wall time.
+Detailed clocks/logging are disabled in release builds.
+
+An owner App observation measured DerivedData in 48.372 s. A production CLI
+read-only preview reproduced 49.933 s sizing, complete with no issues. A short
+live-process sample found most active worker samples inside directory `openat`
+and `getattrlistbulk`, rather than size arithmetic. The existing safe opens and
+all enumeration/change checks remain. Cache preview defaults now allow up to
+eight workers as described above; project worker scheduling and generic limits
+are unchanged. A per-thread spare reuses initialized buffer storage without
+sharing a live buffer between cursors or caching any prior metadata result.
+
+Final single CLI observation: 42.968 s sizing, 4,202,640 entries, 3,820,712 unique
+regular files, 381,711 directories, 218 links not followed, peak 82 handles,
+complete and zero issues. Logical bytes (337,363,491,558), allocated bytes
+(305,931,964,416) and private bytes (259,929,829,376) exactly matched the baseline.
+There were 381,711 directory opens and completion checks, 760,197 bulk calls,
+55,955 fresh buffers and 325,756 reused buffers, with no legacy/stat fallback.
+This is about 14% less sizing time in these observations; an earlier modified
+run was 41.046 s. Filesystem cache and machine-load variation were not controlled,
+so these are not median/p95 benchmarks, a claimed per-change causal speedup, or
+full-App acceptance. No entries or safety checks were skipped to obtain the result.
+
+Engine/platform/bindings regression sources compile without execution, including
+buffer exclusivity/capacity and 1/8/32 requested-worker hard-link accounting,
+handle closure and policy-restoration checks. CLI build and release library check
+passed (the latter uses the repository's existing unstripped build-time proc-macro
+workaround on macOS 27). No unit/UI tests, test binaries, harnesses or benchmarks
+were executed. Full App scan and Stop acceptance remain manual owner validation.

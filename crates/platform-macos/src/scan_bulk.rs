@@ -3,6 +3,7 @@
 //! Bounded Darwin directory metadata batches. No file contents or link targets
 //! are opened. The caller must enter ReadOnlyPolicy and admit the directory.
 use std::ffi::OsString;
+use std::cell::RefCell;
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStringExt;
@@ -23,6 +24,35 @@ const DIRECTORY: u32 = libc::ATTR_DIR_MOUNTSTATUS;
 const PRIVATE: u32 = 0x0000_0008; // ATTR_CMNEXT_PRIVATESIZE
 const EXTENDED: u64 = 0x0000_0020; // FSOPT_ATTR_CMN_EXTENDED
 const BUFFER_BYTES: usize = 64 * 1024;
+
+thread_local! {
+    // One initialized 64 KiB spare per enumerating thread, not per directory.
+    static SPARE_BUFFER: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+struct Buffer(Vec<u64>);
+impl Default for Buffer {
+    fn default() -> Self {
+        Self(SPARE_BUFFER.try_with(|slot| std::mem::take(&mut *slot.borrow_mut())).unwrap_or_default())
+    }
+}
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        if self.0.len() == BUFFER_BYTES / 8 {
+            let _ = SPARE_BUFFER.try_with(|slot| {
+                let mut slot = slot.borrow_mut();
+                if slot.is_empty() { *slot = std::mem::take(&mut self.0); }
+            });
+        }
+    }
+}
+#[derive(Clone, Copy, Default)]
+pub struct BulkTimings {
+    pub calls: u64,
+    pub entries: u64,
+    pub syscall_us: u64,
+    pub buffers_allocated: u64,
+    pub buffers_reused: u64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BulkKind {
@@ -57,7 +87,8 @@ pub struct BulkEntry {
 /// permits the caller to rewind and fall back to its original cursor.
 pub struct BulkDirectory {
     fd: OwnedFd,
-    buffer: Vec<u64>,
+    buffer: Buffer,
+    timings: BulkTimings,
     offset: usize,
     remaining: usize,
     started: bool,
@@ -68,13 +99,15 @@ impl BulkDirectory {
     pub fn new(fd: OwnedFd) -> Self {
         Self {
             fd,
-            buffer: Vec::new(),
+            buffer: Buffer::default(),
+            timings: BulkTimings::default(),
             offset: 0,
             remaining: 0,
             started: false,
             ended: false,
         }
     }
+    pub fn timings(&self) -> BulkTimings { self.timings }
     pub fn fd(&self) -> BorrowedFd<'_> {
         self.fd.as_fd()
     }
@@ -105,7 +138,12 @@ impl BulkDirectory {
 
     fn read_entry(&mut self) -> io::Result<Option<BulkEntry>> {
         if self.remaining == 0 {
-            self.buffer.resize(BUFFER_BYTES / 8, 0);
+            #[cfg(debug_assertions)]
+            if !self.started {
+                if self.buffer.0.is_empty() { self.timings.buffers_allocated += 1; }
+                else { self.timings.buffers_reused += 1; }
+            }
+            self.buffer.0.resize(BUFFER_BYTES / 8, 0);
             let mut attrs = libc::attrlist {
                 bitmapcount: libc::ATTR_BIT_MAP_COUNT as u16,
                 reserved: 0,
@@ -117,17 +155,26 @@ impl BulkDirectory {
             };
             // SAFETY: live owned descriptor; initialized attrlist; aligned,
             // writable 64 KiB allocation alive for this synchronous call.
+            #[cfg(debug_assertions)]
+            let syscall_started = std::time::Instant::now();
             let count = unsafe {
                 libc::getattrlistbulk(
                     self.fd.as_raw_fd(),
                     (&mut attrs as *mut libc::attrlist).cast(),
-                    self.buffer.as_mut_ptr().cast(),
+                    self.buffer.0.as_mut_ptr().cast(),
                     BUFFER_BYTES,
                     EXTENDED,
                 )
             };
+            let error = (count < 0).then(io::Error::last_os_error);
+            #[cfg(debug_assertions)]
+            {
+                self.timings.calls += 1;
+                self.timings.entries += count.max(0) as u64;
+                self.timings.syscall_us += syscall_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+            }
             if count < 0 {
-                let error = io::Error::last_os_error();
+                let error = error.expect("negative native result");
                 if !self.started
                     && matches!(
                         error.raw_os_error(),
@@ -151,7 +198,7 @@ impl BulkDirectory {
         // SAFETY: u64 storage is fully initialized and has no padding; the
         // immutable byte view cannot outlive the buffer or overlap a mutation.
         let bytes =
-            unsafe { std::slice::from_raw_parts(self.buffer.as_ptr().cast::<u8>(), BUFFER_BYTES) };
+            unsafe { std::slice::from_raw_parts(self.buffer.0.as_ptr().cast::<u8>(), BUFFER_BYTES) };
         let tail = bytes.get(self.offset..).ok_or_else(invalid)?;
         let length = u32::from_ne_bytes(
             tail.get(..4)
@@ -304,6 +351,29 @@ fn parse(record: &[u8]) -> io::Result<BulkEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spare_buffer_is_initialized_exclusive_and_bounded() {
+        SPARE_BUFFER.with(|slot| slot.borrow_mut().clear());
+        let mut first = Buffer::default();
+        first.0.resize(BUFFER_BYTES / 8, 17);
+        let pointer = first.0.as_ptr();
+        drop(first);
+        let reused = Buffer::default();
+        assert_eq!(reused.0.as_ptr(), pointer);
+        assert!(reused.0.iter().all(|v| *v == 17));
+        let mut other = Buffer::default();
+        other.0.resize(BUFFER_BYTES / 8, 23);
+        assert_ne!(other.0.as_ptr(), pointer);
+        drop(reused);
+        drop(other);
+        SPARE_BUFFER.with(|slot| {
+            let buffer = slot.borrow();
+            assert_eq!(buffer.len(), BUFFER_BYTES / 8);
+            assert!(buffer.iter().all(|v| *v == 17));
+        });
+    }
+
 
     fn finish(mut record: Vec<u8>, name_reference: usize) -> Vec<u8> {
         let offset = i32::try_from(record.len() - name_reference).unwrap();

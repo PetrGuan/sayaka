@@ -1234,3 +1234,33 @@ fn project_discovery_prunes_artifacts_even_when_marker_is_listed_later() {
     assert!(!opened.contains(&modules));
     assert!(report.entries.iter().any(|e| e.path == modules));
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cache_worker_ceiling_preserves_full_totals_hardlinks_and_policy_restore() {
+    for requested in [1, 8, 32] {
+        let mut fake = tree();
+        for i in 0..16 {
+            let child = add_directory(&mut fake, &root(), &format!("child-{i}"), i + 2);
+            let mut shared = metadata(100, ResourceKind::File, Some(7));
+            shared.link_count = Some(16);
+            fake.directories.get_mut(&child).unwrap().items.push(Item {
+                name: "shared".into(), metadata: Ok(shared),
+            });
+            add_file(&mut fake, &child, "own", i + 200, Some(3));
+        }
+        let backend = FakeBackend(Arc::new(fake));
+        let limits = ScanLimits { workers: requested, ..ScanLimits::default() };
+        let result = crate::scan::cache::summarize(&backend, &root(),
+            metadata(1, ResourceKind::Directory, None).identity, &limits,
+            &Cancellation::default(), |_, _, _| {}).unwrap();
+        assert!(result.complete);
+        assert_eq!(result.entries, 48);
+        assert_eq!(result.files, 17);
+        assert_eq!(result.logical, Some(55));
+        assert_eq!(backend.0.opened.lock().unwrap().len(), 17);
+        assert_eq!(backend.0.closed.load(Ordering::Acquire), 17);
+        assert_eq!(backend.0.policies_entered.load(Ordering::Acquire), requested.min(8) + 1);
+        assert_eq!(backend.0.policies_entered.load(Ordering::Acquire), backend.0.policies_restored.load(Ordering::Acquire));
+    }
+}

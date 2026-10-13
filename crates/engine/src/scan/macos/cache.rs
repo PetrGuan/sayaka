@@ -5,8 +5,49 @@
 use super::*;
 use sayaka_platform_macos::scan_bulk::{BulkDirectory, BulkKind, BulkMetadata};
 use std::os::fd::BorrowedFd;
+use std::sync::{Arc, atomic::AtomicU64};
+#[cfg(debug_assertions)]
+use std::sync::atomic::Ordering;
 
-pub(super) struct CacheBackend;
+#[derive(Default)]
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+struct Timing {
+    opens: AtomicU64, open_us: AtomicU64, checks: AtomicU64, check_us: AtomicU64,
+    batches: AtomicU64, bulk_entries: AtomicU64, bulk_us: AtomicU64,
+    allocated: AtomicU64, reused: AtomicU64, fallbacks: AtomicU64, stat_fallbacks: AtomicU64,
+}
+impl Timing {
+    fn bulk(&self, _reader: &BulkDirectory) {
+        #[cfg(debug_assertions)]
+        {
+        let reader = _reader;
+        let t = reader.timings();
+        for (counter, value) in [(&self.batches, t.calls), (&self.bulk_entries, t.entries),
+            (&self.bulk_us, t.syscall_us), (&self.allocated, t.buffers_allocated), (&self.reused, t.buffers_reused)] {
+            counter.fetch_add(value, Ordering::Relaxed);
+        }
+        }
+    }
+}
+
+
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+pub(super) struct CacheBackend { timing: Arc<Timing>, path: PathBuf, started: std::time::Instant }
+impl CacheBackend {
+    pub fn new(path: &Path) -> Self { Self { timing: Arc::new(Timing::default()), path: path.to_owned(), started: std::time::Instant::now() } }
+}
+impl Drop for CacheBackend {
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            let t = &self.timing;
+            let n = |v: &AtomicU64| v.load(Ordering::Relaxed);
+            eprintln!("[SayakaSizing] event=native_summary path={:?} wall_us={} opens={} open_us={} checks={} check_us={} batches={} bulk_entries={} bulk_us={} buffers_allocated={} buffers_reused={} legacy_fallbacks={} stat_fallbacks={}",
+                self.path, self.started.elapsed().as_micros(), n(&t.opens), n(&t.open_us), n(&t.checks), n(&t.check_us),
+                n(&t.batches), n(&t.bulk_entries), n(&t.bulk_us), n(&t.allocated), n(&t.reused), n(&t.fallbacks), n(&t.stat_fallbacks));
+        }
+    }
+}
 impl Backend for CacheBackend {
     type Directory = CacheDirectory;
     type Policy = NativePolicy;
@@ -14,9 +55,19 @@ impl Backend for CacheBackend {
         MacBackend.enter_thread()
     }
     fn open_root(&self, path: &Path) -> Result<CacheDirectory, ScanError> {
-        let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error)?;
-        validate_local_internal_volume_fd(&fd)?;
-        CacheDirectory::from_fd(fd)
+        #[cfg(debug_assertions)]
+        let started = std::time::Instant::now();
+        let result = (|| {
+            let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error)?;
+            validate_local_internal_volume_fd(&fd)?;
+            CacheDirectory::from_fd(fd, Arc::clone(&self.timing))
+        })();
+        #[cfg(debug_assertions)]
+        {
+            self.timing.opens.fetch_add(1, Ordering::Relaxed);
+            self.timing.open_us.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        }
+        result
     }
 }
 
@@ -27,12 +78,13 @@ enum Reader {
 }
 
 pub(super) struct CacheDirectory {
+    timing: Arc<Timing>,
     reader: Reader,
     original: Metadata,
     stamp: Stamp,
 }
 impl CacheDirectory {
-    fn from_fd(fd: OwnedFd) -> Result<Self, ScanError> {
+    fn from_fd(fd: OwnedFd, timing: Arc<Timing>) -> Result<Self, ScanError> {
         let stat = fs::fstat(&fd).map_err(native_error)?;
         let original = from_stat(&stat);
         if original.dataless {
@@ -42,6 +94,7 @@ impl CacheDirectory {
             ));
         }
         Ok(Self {
+            timing,
             reader: Reader::Bulk(BulkDirectory::new(fd)),
             original,
             stamp: stamp(&stat),
@@ -61,6 +114,9 @@ impl CacheDirectory {
                 "invalid cache cursor fallback",
             ));
         };
+        self.timing.bulk(&reader);
+        #[cfg(debug_assertions)]
+        self.timing.fallbacks.fetch_add(1, Ordering::Relaxed);
         let fd = reader.into_fd();
         fs::seek(&fd, fs::SeekFrom::Start(0)).map_err(native_error)?;
         let reader = MacDirectory::from_fd(fd)?;
@@ -72,6 +128,11 @@ impl CacheDirectory {
         }
         self.reader = Reader::Legacy(reader);
         Ok(())
+    }
+}
+impl Drop for CacheDirectory {
+    fn drop(&mut self) {
+        if let Reader::Bulk(reader) = &self.reader { self.timing.bulk(reader); }
     }
 }
 impl Cursor for CacheDirectory {
@@ -101,6 +162,8 @@ impl Cursor for CacheDirectory {
         let metadata = match entry.metadata {
             Ok(Some(metadata)) => from_bulk(metadata),
             Ok(None) => self.fd().and_then(|fd| {
+                #[cfg(debug_assertions)]
+                self.timing.stat_fallbacks.fetch_add(1, Ordering::Relaxed);
                 let stat =
                     fs::statat(fd, &entry.name, AtFlags::SYMLINK_NOFOLLOW).map_err(native_error)?;
                 let metadata = from_stat(&stat);
@@ -122,13 +185,32 @@ impl Cursor for CacheDirectory {
         }))
     }
     fn open_child(&self, item: &DirItem) -> Result<Self, ScanError> {
-        let fd = fs::openat(self.fd()?, &item.name, directory_flags(), Mode::empty())
-            .map_err(native_error)?;
-        Self::from_fd(fd)
+        #[cfg(debug_assertions)]
+        let started = std::time::Instant::now();
+        let result = (|| {
+            let fd = fs::openat(self.fd()?, &item.name, directory_flags(), Mode::empty()).map_err(native_error)?;
+            Self::from_fd(fd, Arc::clone(&self.timing))
+        })();
+        #[cfg(debug_assertions)]
+        {
+            self.timing.opens.fetch_add(1, Ordering::Relaxed);
+            self.timing.open_us.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        }
+        result
     }
     fn unchanged(&self) -> Result<bool, ScanError> {
-        let stat = fs::fstat(self.fd()?).map_err(native_error)?;
-        Ok(stamp(&stat) == self.stamp && from_stat(&stat).identity == self.original.identity)
+        #[cfg(debug_assertions)]
+        let started = std::time::Instant::now();
+        let result = (|| {
+            let stat = fs::fstat(self.fd()?).map_err(native_error)?;
+            Ok(stamp(&stat) == self.stamp && from_stat(&stat).identity == self.original.identity)
+        })();
+        #[cfg(debug_assertions)]
+        {
+            self.timing.checks.fetch_add(1, Ordering::Relaxed);
+            self.timing.check_us.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        }
+        result
     }
 }
 

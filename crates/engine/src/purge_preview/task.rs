@@ -20,6 +20,12 @@ pub fn preview_limits(profile: PurgeProfile) -> ScanLimits {
     }
     if profile == PurgeProfile::DeveloperCaches {
         limits.time_budget = Duration::from_secs(300);
+        // Cache metadata work is I/O-heavy; keep concurrency bounded by the
+        // host and caller limits. Generic/project scan defaults are unchanged.
+        limits.workers = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
+        // Preserve the previous default descriptor allowance per worker; the
+        // scanner still honors any caller-supplied handle/path/depth limits.
+        limits.max_open_dirs = limits.max_open_dirs.max(limits.workers * 32);
         // This caps each numeric identity table during cache measurement, not
         // the number of files visited. Discovery retains the generic limits.
         limits.max_entries = 1_000_000;
