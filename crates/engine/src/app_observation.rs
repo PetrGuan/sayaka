@@ -15,6 +15,7 @@ use std::{
     time::Instant,
 };
 mod diagnostics;
+pub(crate) mod owner_budget;
 
 // Large SDK/documentation trees still receive complete alias inspection.
 pub(crate) const CACHE_INVENTORY_ENTRY_LIMIT: usize = 100_000;
@@ -300,48 +301,50 @@ pub(crate) fn copies_from_snapshot(
     id: &str, inventory: &[Bundle], deadline: Instant,
     remaining: &std::cell::Cell<usize>,
 ) -> io::Result<Copies> {
+    let control = owner_budget::Control::new(deadline, Path::new(id), Default::default());
+    copies_observed(id, inventory, remaining, &control, 256)
+}
+
+/// A lower limit may only reject an owner; it never permits an incomplete proof.
+pub(crate) fn copies_observed(
+    id: &str, inventory: &[Bundle], remaining: &std::cell::Cell<usize>,
+    control: &owner_budget::Control, max_copies: usize,
+) -> io::Result<Copies> {
     let mut paths = BTreeSet::new();
     let mut stale = Vec::new();
     for b in inventory {
-        if Instant::now() >= deadline {
-            return Err(error("copies_unknown: deadline"));
-        }
-        if b.id == id {
-            paths.insert(b.path.clone());
-        }
+        control.check()?;
+        if b.id == id { insert_copy(&mut paths, b.path.clone(), max_copies)?; }
     }
-    for p in related::registered_applications(id)? {
+    let registered = control.run("registry", Path::new(id), || related::registered_applications(id))?;
+    for p in registered {
         consume(remaining)?;
-        if Instant::now() >= deadline {
-            return Err(error("copies_unknown: deadline"));
-        }
-        let p = observed_application_path(&p, id, inventory)?;
-        if absent_without_links(&p)? {
-            stale.push(p);
+        let normalized = control.run("registry_link", &p, || observed_application_path(&p, id, inventory))?;
+        if control.run("registry_presence", &normalized, || absent_without_links(&normalized))? {
+            stale.push(normalized);
             continue;
         }
-        let bundle = Bundle::capture(&p)?;
-        if bundle.id != id {
-            return Err(error("copies_unknown: registry identity mismatch"));
-        }
-        paths.insert(p);
+        let bundle = control.run("registry_bundle", &normalized, || Bundle::capture(&normalized))?;
+        if bundle.id != id { return Err(error("copies_unknown: registry identity mismatch")); }
+        insert_copy(&mut paths, normalized, max_copies)?;
     }
-    let spotlight = orphans::spotlight(id, deadline)?;
-    for _ in &spotlight {
-        consume(remaining)?;
-    }
+    let spotlight = control.run("spotlight", Path::new(id), || orphans::spotlight(id, control.deadline))?;
     for p in &spotlight {
-        paths.insert(observed_application_path(p, id, inventory)?);
+        consume(remaining)?;
+        let normalized = control.run("spotlight_link", p, || observed_application_path(p, id, inventory))?;
+        insert_copy(&mut paths, normalized, max_copies)?;
     }
-    if paths.len() > 256 || Instant::now() >= deadline {
-        return Err(error("copies_unknown: limit"));
-    }
-    Ok(Copies {
-        paths: paths.into_iter().collect(),
-        spotlight,
-        stale,
-    })
+    control.check()?;
+    Ok(Copies { paths: paths.into_iter().collect(), spotlight, stale })
 }
+fn insert_copy(paths: &mut BTreeSet<PathBuf>, path: PathBuf, limit: usize) -> io::Result<()> {
+    paths.insert(path);
+    if paths.len() > limit {
+        return Err(error(if limit == 8 { "owner count exceeds eight" } else { "copies_unknown: limit" }));
+    }
+    Ok(())
+}
+
 /// Normalize only links already verified in this same inventory; a registry
 /// or Spotlight result alone never grants permission to follow a new link.
 fn observed_application_path(path: &Path, id: &str, inventory: &[Bundle]) -> io::Result<PathBuf> {
@@ -371,6 +374,14 @@ pub fn consume(remaining: &std::cell::Cell<usize>) -> io::Result<()> {
 #[cfg(test)]
 mod progress_tests {
     use super::*;
+    #[test]
+    fn owner_limit_counts_unique_paths_and_rejects_ninth() {
+        let mut paths = BTreeSet::new();
+        for i in 0..8 { insert_copy(&mut paths, PathBuf::from(format!("/Applications/{i}.app")), 8).unwrap(); }
+        insert_copy(&mut paths, PathBuf::from("/Applications/0.app"), 8).unwrap();
+        assert_eq!(paths.len(), 8);
+        assert!(insert_copy(&mut paths, PathBuf::from("/Applications/8.app"), 8).unwrap_err().to_string().contains("owner count exceeds eight"));
+    }
     #[test]
     fn inventory_progress_counts_captured_apps_and_obeys_cancellation() {
         let temp = tempfile::tempdir().unwrap();

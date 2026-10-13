@@ -236,26 +236,28 @@ fn capture(
     let inventory = Arc::new(crate::app_observation::inventory_with_progress(
         &roots, deadline, &std::cell::Cell::new(crate::app_observation::CACHE_INVENTORY_ENTRY_LIMIT), &mut |_| Ok(()),
     ).map_err(|e| e.to_string())?);
-    capture_with_inventory(path, home, policy, deadline, &inventory)
+    let control = crate::app_observation::owner_budget::Control::new(deadline, path, Default::default());
+    capture_with_inventory(path, home, policy, deadline, &inventory, &control)
 }
 
 fn capture_with_inventory(
     path: &Path, home: &Path, policy: &CachePolicy, deadline: Instant,
     inventory: &Arc<Vec<crate::app_observation::Bundle>>,
+    control: &crate::app_observation::owner_budget::Control,
 ) -> Result<Option<Arc<Proof>>, String> {
     if Instant::now() >= deadline {
         return Err("owner discovery budget exhausted".into());
     }
-    policy_guard(path, policy)?;
+    control.run("cache_policy", path, || policy_guard(path, policy).map_err(std::io::Error::other)).map_err(|e| e.to_string())?;
     let id = eligible_id(path, home)
         .ok_or("protected cache shape")?
         .to_owned();
-    let cache = PathWitness::capture(path).map_err(|e| e.to_string())?;
+    let cache = control.run("cache_witness", path, || PathWitness::capture(path)).map_err(|e| e.to_string())?;
     if !cache.is_directory() {
         return Err("cache is not a real directory".into());
     }
     let remaining = std::cell::Cell::new(10_000);
-    let observed = crate::app_observation::copies_from_snapshot(&id, inventory, deadline, &remaining).map_err(|e| e.to_string())?;
+    let observed = crate::app_observation::copies_observed(&id, inventory, &remaining, control, 8).map_err(|e| e.to_string())?;
     let mut paths = observed.paths;
     paths.sort();
     paths.dedup();
@@ -274,39 +276,42 @@ fn capture_with_inventory(
         if forbidden_bundle(&path) || Instant::now() >= deadline {
             return Err("owner path or discovery budget refused".into());
         }
-        let bundle = PathWitness::capture(&path).map_err(|e| e.to_string())?;
-        if !bundle.is_directory()
-            || forbidden_bundle(&live_path(
-                &bundle.physical_path().map_err(|e| e.to_string())?,
-            ))
-        {
-            return Err("owner is not an eligible app directory".into());
-        }
-        let manifest =
-            PathWitness::capture(&path.join("Contents/Info.plist")).map_err(|e| e.to_string())?;
-        let (field, digest, dev, ino) =
-            read_bundle_identifier_diagnostic(&path)?;
-        if field.state != StringState::Present
-            || field.value.as_deref() != Some(&id)
-            || manifest.identity() != (dev, ino)
-        {
-            return Err("owner manifest identity mismatch".into());
-        }
-        bundle.revalidate().map_err(|e| e.to_string())?;
-        manifest.revalidate().map_err(|e| e.to_string())?;
-        hash_path(&mut hash, &path);
-        for (a, b) in [bundle.identity(), manifest.identity()] {
-            hash.update(a.to_le_bytes());
-            hash.update(b.to_le_bytes());
-        }
-        hash.update(digest);
-        let physical = bundle.physical_path().map_err(|e| e.to_string())?;
-        hash_path(&mut hash, &physical);
-        owners.push(Owner {
-            bundle,
-            manifest,
-            physical,
-        });
+        let owner = control.run("owner_proof", &path, || (|| -> Result<Owner, String> {
+            let bundle = PathWitness::capture(&path).map_err(|e| e.to_string())?;
+            if !bundle.is_directory()
+                || forbidden_bundle(&live_path(
+                    &bundle.physical_path().map_err(|e| e.to_string())?,
+                ))
+            {
+                return Err("owner is not an eligible app directory".into());
+            }
+            let manifest =
+                PathWitness::capture(&path.join("Contents/Info.plist")).map_err(|e| e.to_string())?;
+            let (field, digest, dev, ino) =
+                read_bundle_identifier_diagnostic(&path)?;
+            if field.state != StringState::Present
+                || field.value.as_deref() != Some(&id)
+                || manifest.identity() != (dev, ino)
+            {
+                return Err("owner manifest identity mismatch".into());
+            }
+            bundle.revalidate().map_err(|e| e.to_string())?;
+            manifest.revalidate().map_err(|e| e.to_string())?;
+            hash_path(&mut hash, &path);
+            for (a, b) in [bundle.identity(), manifest.identity()] {
+                hash.update(a.to_le_bytes());
+                hash.update(b.to_le_bytes());
+            }
+            hash.update(digest);
+            let physical = bundle.physical_path().map_err(|e| e.to_string())?;
+            hash_path(&mut hash, &physical);
+            Ok(Owner {
+                bundle,
+                manifest,
+                physical,
+            })
+        })().map_err(std::io::Error::other)).map_err(|e| e.to_string())?;
+        owners.push(owner);
     }
     if Instant::now() >= deadline {
         return Err("owner discovery budget exhausted".into());
@@ -354,6 +359,7 @@ pub(super) fn append(
     let total = index.report().entries.iter().filter(|entry| entry.kind == ResourceKind::Directory
         && !entry.dataless && !policy.excludes(&entry.path) && eligible_id(&entry.path, home).is_some()).count() as u64;
     let mut completed = 0;
+    let diagnostic_logs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for entry in &index.report().entries {
         if entry.kind != ResourceKind::Directory
             || entry.dataless
@@ -382,10 +388,24 @@ pub(super) fn append(
             }
         }
         progress(2, completed, total)?;
-        let captured = capture_with_inventory(&entry.path, home, policy, deadline, inventory.as_ref().unwrap());
+        let owner_path = entry.path.clone();
+        let owner_home = home.to_owned();
+        let owner_policy = policy.clone();
+        let owner_inventory = Arc::clone(inventory.as_ref().unwrap());
+        let captured = crate::app_observation::owner_budget::observe(
+            &entry.path, deadline, Arc::clone(&diagnostic_logs),
+            || progress(2, completed, total), move |control| {
+                let proof = capture_with_inventory(&owner_path, &owner_home, &owner_policy,
+                    control.deadline, &owner_inventory, control)?;
+                let Some(proof) = proof else { return Ok(None); };
+                let idle = control.run("owner_activity", &owner_path,
+                    || proof.idle(control.deadline).map_err(std::io::Error::other)).map_err(|e| e.to_string());
+                Ok(Some((proof, idle)))
+            },
+        )?;
         completed += 1;
         progress(2, completed, total)?;
-        let proof = match captured {
+        let (proof, idle) = match captured {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -408,7 +428,7 @@ pub(super) fn append(
             ));
             continue;
         }
-        let idle = match proof.idle(deadline) {
+        let idle = match idle {
             Ok(idle) => idle,
             Err(e) => {
                 issues.push(issue(&entry.path, e));
