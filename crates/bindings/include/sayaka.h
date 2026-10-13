@@ -380,6 +380,18 @@ typedef struct SayakaPurgeSnapshotV1 {
     uint64_t elapsed_ms;
 } SayakaPurgeSnapshotV1;
 
+/* Additive V2 poll. V1 layout and meaning stay unchanged. */
+typedef struct SayakaPurgeSnapshotV2 {
+    uint32_t abi_version; /* 2 */
+    uint32_t struct_size;
+    SayakaPurgeSnapshotV1 snapshot;
+    uint32_t classification_phase; /* 0 none, 1 app inventory, 2 cache ownership */
+    uint32_t reserved; /* zero */
+    uint64_t classification_completed; /* applications read or cache attempts completed */
+    uint64_t classification_total; /* zero = unknown, never a percentage denominator */
+} SayakaPurgeSnapshotV2;
+
+
 /* Caller pointers must be valid, correctly aligned and non-overlapping.
  * Null/alignment checks cannot validate arbitrary foreign memory.
  * No Rust allocation is returned for the caller to free. */
@@ -504,6 +516,7 @@ SAYAKA_API int32_t sayaka_purge_preview_start_profile_v1(const SayakaPurgePrevie
 SAYAKA_API int32_t sayaka_purge_preview_start_policy_v1(const SayakaPurgePreviewPolicyRequestV1 *request,
                                                       uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_purge_poll_v1(uint64_t handle, SayakaPurgeSnapshotV1 *out_snapshot);
+SAYAKA_API int32_t sayaka_purge_poll_v2(uint64_t handle, SayakaPurgeSnapshotV2 *out_snapshot);
 SAYAKA_API int32_t sayaka_purge_cancel_v1(uint64_t handle);
 SAYAKA_API int32_t sayaka_purge_execute_start_v1(const SayakaPurgeExecuteRequestV1 *request,
                                                uint64_t *out_handle);

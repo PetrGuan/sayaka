@@ -388,8 +388,19 @@ pub struct ScanMetrics {
     pub accepted_roots: usize,
 }
 
+/// Classification metadata is separate from byte/entry accounting.
+#[derive(Clone, Debug)]
+pub struct ClassificationProgress {
+    /// 1 = reading application inventory, 2 = matching cache ownership.
+    pub phase: u32,
+    pub completed: u64,
+    /// Zero means not yet known, never a percentage denominator.
+    pub total: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct ScanProgress {
+    pub classification: Option<ClassificationProgress>,
     pub total_artifacts: usize,
     pub sized_artifacts: usize,
     pub task_id: ScanTaskId,

@@ -138,6 +138,7 @@ pub(super) fn measure(
                 issues: usize,
                 progress: &mut dyn FnMut(&ScanProgress)| {
         progress(&ScanProgress {
+            classification: None,
             task_id: index.report().task_id,
             total_artifacts: jobs.len(),
             sized_artifacts: completed,

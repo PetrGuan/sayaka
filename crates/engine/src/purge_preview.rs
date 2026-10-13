@@ -1717,6 +1717,13 @@ fn developer_cache_preview_with_home(
     options: &PurgeOptions,
     account_home: &Path,
 ) -> Result<PurgePreview, String> {
+    developer_cache_preview_with_progress(index, options, account_home, &mut |_, _, _| Ok(()))
+}
+
+fn developer_cache_preview_with_progress(
+    index: &ScanTree, options: &PurgeOptions, account_home: &Path,
+    _progress: &mut impl FnMut(u32, u64, u64) -> Result<(), String>,
+) -> Result<PurgePreview, String> {
     let report = index.report();
     let mut by_path = HashSet::new();
     for entry in &report.entries {
@@ -1819,6 +1826,7 @@ fn developer_cache_preview_with_home(
         options.cache_policy.as_deref(),
         options.cache_discovery_deadline,
         &mut candidates,
+        _progress,
     )?;
     #[cfg(not(target_os = "macos"))]
     let owner_issues: Vec<crate::scan::ScanIssue> = Vec::new();
