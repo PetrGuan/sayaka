@@ -94,8 +94,12 @@ an atomic snapshot nor reclaimable/free-space measurements.
 
 Indexing uses transient small-to-large identity-set merging. Completed descendant
 sets are not retained for every ancestor. Construction has checked arithmetic,
-cancellation, duplicate/invalid-input rejection, a 100,000-entry limit and a
-32 MiB native-path budget. Two size-order ID lists are retained per directory;
+cancellation and duplicate/invalid-input rejection. The default index retains a
+100,000-entry / 32 MiB native-path budget. Explicit scan profiles can use
+`build_with_limits` with matching validated traversal and index budgets; larger
+budgets never turn incomplete observations into complete coverage. Hash-based
+parent lookup and hierarchy postorder avoid globally sorting all paths. Sibling
+ordering uses cancellable bounded-chunk sorting. Two size-order ID lists are retained per directory;
 the native-path child order is reused rather than copied again for name sorting.
 Existing scanner worker, queue, descriptor, event,
 depth and timeout budgets remain in force.

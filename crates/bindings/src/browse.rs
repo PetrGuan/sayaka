@@ -59,6 +59,9 @@ impl SayakaPageRequestV1 {
 
 pub(crate) fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
     if job.tree.is_none() {
+        job.tree = job.task.take_prepared_tree().map(Ok);
+    }
+    if job.tree.is_none() {
         let report = job
             .task
             .result()
@@ -74,7 +77,7 @@ pub(crate) fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
         #[cfg(debug_assertions)]
         let (clone_us, entries) = (started.elapsed().as_micros(), report.entries.len());
         job.tree = Some(
-            ScanTree::build(report, &Cancellation::default()).map_err(|error| match error
+            ScanTree::build_shared(report, &Cancellation::default(), &ScanLimits::default()).map_err(|error| match error
                 .code
             {
                 ScanCode::EntryLimit | ScanCode::PathBytesLimit | ScanCode::Overflow => {

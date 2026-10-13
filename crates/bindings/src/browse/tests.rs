@@ -428,7 +428,7 @@ mod native {
         {
             let slot = get(refreshed.0).unwrap();
             let mut job = slot.lock().unwrap();
-            synthetic_query_contracts(job.task.result().unwrap().as_ref().unwrap().clone());
+            synthetic_query_contracts(job.task.result().unwrap().as_ref().unwrap().as_ref().clone());
         }
         {
             let slot = get(first.0).unwrap();

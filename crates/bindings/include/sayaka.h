@@ -398,6 +398,8 @@ typedef struct SayakaPurgeSnapshotV2 {
 SAYAKA_API uint32_t sayaka_abi_version_v1(void);
 SAYAKA_API const char *sayaka_status_message_v1(int32_t code); /* Static, do not free. */
 SAYAKA_API int32_t sayaka_scan_start_v1(const SayakaScanRequestV1 *request, uint64_t *out_handle);
+/* One AI root; bounded 1M entries/256MiB paths/120s; poll includes cancellable index. */
+SAYAKA_API int32_t sayaka_scan_ai_start_v1(const SayakaScanRequestV1 *request, uint64_t *out_handle);
 SAYAKA_API int32_t sayaka_scan_poll_v1(uint64_t handle, SayakaScanSnapshotV1 *out_snapshot);
 SAYAKA_API int32_t sayaka_scan_cancel_v1(uint64_t handle);
 /* Result serialization/copy may be expensive: use a host worker queue.

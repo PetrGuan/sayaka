@@ -110,6 +110,7 @@ struct Job {
     result: Option<Result<Vec<u8>, i32>>,
     tree: Option<Result<ScanTree, i32>>,
     largest_files: [Option<browse::LargestFilesOrder>; 2],
+    ai_footprints: HashMap<u32, Vec<u8>>,
     closed: bool,
 }
 
@@ -288,6 +289,22 @@ pub unsafe extern "C" fn sayaka_scan_start_v1(
     request: *const SayakaScanRequestV1,
     out_handle: *mut u64,
 ) -> i32 {
+    unsafe { start_scan(request, out_handle, false) }
+}
+
+/// Starts one explicit AI root with a 1M-entry / 256MiB-path / 120s scan budget
+/// and a matching background index. Existing no-follow and safety rules apply.
+/// Poll remains running through indexing; cancel/release interrupt both phases.
+/// # Safety
+/// Same pointer and lifetime contract as sayaka_scan_start_v1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_scan_ai_start_v1(
+    request: *const SayakaScanRequestV1, out_handle: *mut u64,
+) -> i32 {
+    unsafe { start_scan(request, out_handle, true) }
+}
+
+unsafe fn start_scan(request: *const SayakaScanRequestV1, out_handle: *mut u64, ai: bool) -> i32 {
     boundary(|| {
         pointer(out_handle)?;
         // SAFETY: The caller owns the aligned writable output slot.
@@ -305,7 +322,7 @@ pub unsafe extern "C" fn sayaka_scan_start_v1(
         if !cfg!(any(target_os = "macos", windows)) {
             return Err(UNSUPPORTED_PLATFORM);
         }
-        if request.root_count == 0 || request.root_count > 64 {
+        if request.root_count == 0 || request.root_count > 64 || (ai && request.root_count != 1) {
             return Err(INVALID_ARGUMENT);
         }
         pointer(request.roots)?;
@@ -318,7 +335,7 @@ pub unsafe extern "C" fn sayaka_scan_start_v1(
         let mut registry = registry().lock().map_err(|_| INTERNAL_ERROR)?;
         let handle = registry.allocate_handle()?;
         let task =
-            ScanTask::start(roots, ScanLimits::default()).map_err(|error| match error.code {
+            (if ai { ScanTask::start_ai(roots) } else { ScanTask::start(roots, ScanLimits::default()) }).map_err(|error| match error.code {
                 ScanCode::InvalidRoot | ScanCode::InvalidLimits => INVALID_ARGUMENT,
                 ScanCode::UnsupportedPlatform => UNSUPPORTED_PLATFORM,
                 _ => INTERNAL_ERROR,
@@ -330,6 +347,7 @@ pub unsafe extern "C" fn sayaka_scan_start_v1(
                 result: None,
                 tree: None,
                 largest_files: Default::default(),
+                ai_footprints: HashMap::new(),
                 closed: false,
             })),
         );

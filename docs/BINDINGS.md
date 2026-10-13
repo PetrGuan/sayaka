@@ -1301,3 +1301,26 @@ Neither environment variables nor imported JSON can enable production deletion.
 `sayaka devtools runtimes` emits a read-only JSON
 report from the selected Xcode, with no execute switch. See
 [SIMULATOR_RUNTIMES.md](SIMULATOR_RUNTIMES.md) for safety and evidence boundaries.
+
+### AI scan profile and index lifecycle
+
+`sayaka_scan_ai_start_v1` accepts exactly one explicit root with the existing
+request layout. It retains full traversal (no package pruning or sampling),
+with 1,000,000 entries, 256 MiB retained native paths and a 120-second traversal
+budget. Default worker, open-directory, depth and diagnostic bounds remain.
+The index uses the same entry/path limits. Larger roots or exhausted budgets
+remain partial; omitted diagnostics, links, unknown measurements and execution
+protections are unchanged. This is a bounded profile, not unlimited coverage.
+
+Poll remains running through background indexing. The same cancellation token
+reaches enumeration, index aggregation, ordering and AI projection. The terminal
+report and index share one immutable snapshot, without duplicating retained paths.
+Cloud-placeholder ancestry is computed during indexing, and AI projection is
+prepared on the worker. The small serialized footprint is cached between buffer
+probe/copy queries. The path budget bounds retained path payload, not total RSS;
+index structures require additional bounded O(entries) memory. Query
+calls consume the prepared tree instead of constructing it under the job mutex.
+Release cancels active work and returns BUSY until the worker exits; callers must
+retain the handle and folder grant until release succeeds. Existing default
+`scan_start_v1` behavior is unchanged. Debug builds emit `index.begin` and index
+completion timings; these are runtime diagnostics, not benchmark evidence.

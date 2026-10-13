@@ -49,7 +49,7 @@ struct Query<'a> {
 }
 
 fn page(
-    outcome: Option<&Result<ScanReport, ScanError>>,
+    outcome: Option<Result<&ScanReport, &ScanError>>,
     handle: u64,
     offset: usize,
     limit: u32,
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn sayaka_scan_issues_v1(
         let slot = get(handle)?;
         let mut job = lock_job(&slot)?;
         ensure_open(&job)?;
-        let bytes = page(job.task.result(), handle, offset, request.limit)?;
+        let bytes = page(job.task.result().map(|result| result.as_ref().map(AsRef::as_ref)), handle, offset, request.limit)?;
         // SAFETY: Output was validated above; bytes are privately owned.
         unsafe { copy_output(&bytes, buffer, capacity, required) }
     })

@@ -6,6 +6,8 @@ use super::{ScanCode, ScanError, ScanLimits, ScanProgress, ScanReport, ScanStatu
 use crate::model::{Cancellation, valid_absolute_path};
 use crate::readonly_task::ReadOnlyTask;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use super::index::ScanTree;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanTaskState {
@@ -25,7 +27,13 @@ pub struct ScanTaskSnapshot {
 }
 
 pub struct ScanTask {
-    inner: ReadOnlyTask<ScanReport, ScanProgress>,
+    inner: ReadOnlyTask<Arc<ScanReport>, ScanProgress>,
+    prepared_tree: Option<Arc<Mutex<Option<PreparedAI>>>>,
+}
+
+struct PreparedAI {
+    tree: Option<ScanTree>,
+    footprints: Vec<(crate::ai_footprint::Tool, crate::ai_footprint::Footprint)>,
 }
 
 impl ScanTask {
@@ -33,6 +41,61 @@ impl ScanTask {
         validate_roots(&roots, &limits)?;
         Self::spawn(move |cancel, progress| super::scan(&roots, &limits, cancel, progress))
     }
+
+    /// AI traversal and indexing share one owned, cancellable worker. Poll stays
+    /// Running until both finish; no query holds the host job lock to build it.
+    pub fn start_ai(roots: Vec<PathBuf>) -> Result<Self, ScanError> {
+        let limits = ScanLimits {
+            max_entries: 1_000_000,
+            max_path_bytes: 256 * 1024 * 1024,
+            time_budget: std::time::Duration::from_secs(120),
+            ..ScanLimits::default()
+        };
+        validate_roots(&roots, &limits)?;
+        let prepared = Arc::new(Mutex::new(None));
+        let output = Arc::clone(&prepared);
+        let inner = ReadOnlyTask::spawn("sayaka-ai-scan", move |cancel, progress| {
+            let report = Arc::new(super::scan(&roots, &limits, cancel, progress)?);
+            if report.status == ScanStatus::Cancelled || report.status == ScanStatus::Failed {
+                return Ok(report);
+            }
+            #[cfg(debug_assertions)]
+            let started = std::time::Instant::now();
+            #[cfg(debug_assertions)]
+            eprintln!("[SayakaTraversal] event=index.begin entries={} max_entries={} max_path_bytes={}", report.entries.len(), limits.max_entries, limits.max_path_bytes);
+            let tree = ScanTree::build_shared(Arc::clone(&report), cancel, &limits)?;
+            super::index::check_cancelled(cancel)?;
+            #[cfg(debug_assertions)]
+            eprintln!("[SayakaTraversal] event=index entries={} clone_us=0 total_us={} success=true background=true", report.entries.len(), started.elapsed().as_micros());
+            use crate::ai_footprint::{Tool, project_cancellable};
+            #[cfg(debug_assertions)]
+            let projection_started = std::time::Instant::now();
+            let mut footprints = Vec::new();
+            for tool in [Tool::Claude, Tool::Codex, Tool::Copilot, Tool::ComfyUI] {
+                if let Some(footprint) = project_cancellable(&tree, tool, cancel)? { footprints.push((tool, footprint)); }
+            }
+            super::index::check_cancelled(cancel)?;
+            #[cfg(debug_assertions)]
+            eprintln!("[SayakaTraversal] event=ai_projection.prepare entries={} total_us={} background=true", report.entries.len(), projection_started.elapsed().as_micros());
+            *output.lock().map_err(|_| ScanError::new(ScanCode::Internal, "index output poisoned"))? = Some(PreparedAI { tree: Some(tree), footprints });
+            Ok(report)
+        })?;
+        Ok(Self { inner, prepared_tree: Some(prepared) })
+    }
+
+    /// Called only after terminal poll. Transfers the prepared immutable index.
+    pub fn take_prepared_tree(&mut self) -> Option<ScanTree> {
+        if !self.is_finished() { return None; }
+        self.prepared_tree.as_ref()?.lock().ok()?.as_mut()?.tree.take()
+    }
+
+    /// Bounded projection prepared by the same cancellable worker as the tree.
+    pub fn prepared_footprint(&self, tool: crate::ai_footprint::Tool) -> Option<crate::ai_footprint::Footprint> {
+        self.prepared_tree.as_ref()?.lock().ok()?.as_ref()?.footprints.iter()
+            .find(|(candidate, _)| *candidate == tool).map(|(_, footprint)| footprint.clone())
+    }
+
+    pub fn has_prepared_profile(&self) -> bool { self.prepared_tree.is_some() }
 
     pub fn start_prune_native_packages(
         roots: Vec<PathBuf>,
@@ -63,7 +126,8 @@ impl ScanTask {
         + 'static,
     ) -> Result<Self, ScanError> {
         Ok(Self {
-            inner: ReadOnlyTask::spawn("sayaka-host-scan", operation)?,
+            inner: ReadOnlyTask::spawn("sayaka-host-scan", move |cancel, progress| operation(cancel, progress).map(Arc::new))?,
+            prepared_tree: None,
         })
     }
 
@@ -79,6 +143,7 @@ impl ScanTask {
         let slot = self.inner.poll()?;
         let state = match self.inner.outcome() {
             None => ScanTaskState::Running,
+            Some(Err(error)) if error.code == ScanCode::Cancelled => ScanTaskState::Cancelled,
             Some(Err(_)) => ScanTaskState::Failed,
             Some(Ok(report)) => match report.status {
                 ScanStatus::Complete => ScanTaskState::Complete,
@@ -96,7 +161,7 @@ impl ScanTask {
     }
 
     /// None until the owned worker has exited; polling never joins active work.
-    pub fn result(&mut self) -> Option<&Result<ScanReport, ScanError>> {
+    pub fn result(&mut self) -> Option<&Result<Arc<ScanReport>, ScanError>> {
         self.inner.result()
     }
 }
