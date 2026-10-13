@@ -144,8 +144,11 @@ limits. Generic disk and project scans keep their existing limits.
 
 On macOS, cache measurement fetches native entry metadata in bounded
 `getattrlistbulk` batches (at most 64 KiB per open cursor, plus one initialized
-64 KiB spare buffer per enumerating thread). The spare reuses allocation only;
-no entries, cursor offsets or metadata observations are reused. This avoids a separate
+64 KiB spare buffer per enumerating thread). Buffers are acquired lazily and
+returned as soon as a batch is consumed, including terminal EOF/error, while
+directory descriptors and cursor positions remain held. Undecoded records retain
+their buffer exclusively. The spare reuses allocation only; no entries, cursor
+offsets or metadata observations are reused. This avoids a separate
 stat call for every ordinary entry. Only returned, validated attributes are used;
 missing file attributes can fall back to descriptor-relative no-follow stat.
 Directories with missing boundary attributes remain incomplete rather than
@@ -342,3 +345,44 @@ single protected owner. Cache/machine load were uncontrolled; these are individu
 CLI observations, not full-App acceptance or proof that all native stalls are
 fixed. Engine/bindings regression sources compiled without execution and CLI
 build passed. No unit/UI tests, test binaries, harnesses or benchmarks were run.
+
+### Drained-batch recycling and lazy entry paths
+
+Further investigation of an owner App's 39.554-second complete DerivedData scan
+found the same native bottleneck. In a sampled production CLI preview (42.020 s
+sizing), all eight workers were active and roughly 94% of their stack samples
+were in directory open or bulk metadata syscalls, with little mutex waiting.
+It opened/checked 381,711 directories and made 760,197 bulk calls. Summed native
+operation durations overlap across workers and are not wall-clock stages.
+
+The scanner now returns an exhausted batch's initialized storage immediately,
+while keeping the directory FD, iteration state and end-of-subtree change check.
+It acquires storage only for the next read. Partially consumed batches remain
+exclusive; returned entries own their names and metadata. EOF and error also
+release storage without changing first-call fallback or terminal semantics.
+The one-spare-per-thread / 64 KiB-per-live-batch bounds remain unchanged.
+
+Successful file accounting also avoids constructing a temporary full path. The
+same native-byte path-length limit is checked first (including root/trailing
+separators), and a path is materialized once when descent, a project policy check
+or an error needs it. Directory paths move into the DFS frame without a duplicate
+allocation. No-follow/volume/dataless checks, hardlink deduplication, completeness,
+progress, cancellation, resource bounds and all sizing attributes are unchanged.
+
+Final actual production CLI sizing: 40.682 s, complete/zero issues/no effects;
+4,202,640 entries, 3,820,712 unique regular files, 381,711 directories and 218 links
+not followed. Logical 337,363,491,558 / allocated 305,931,964,416 / private
+259,929,829,376 bytes exactly matched the sampled baseline. Fresh buffer
+allocations fell from 55,955 to 39,152 (about 30%); reuse counters now count each
+batch reacquisition, including EOF reads, rather than only initial cursor reads.
+Directory opens and bulk calls stayed identical, with no legacy/stat fallback.
+
+This does not establish a wall-time improvement over the owner's prior 39-second
+App scan: filesystem caches/load were uncontrolled and the 42-second CLI baseline
+was sampled. The native I/O floor remains. A ten-worker observation took 43.619 s
+and was discarded; final worker and handle limits remain unchanged. CLI build and
+engine/platform/bindings regression-source compilation passed without execution.
+Regression sources cover unread/last-record buffer lifetime, terminal errors,
+owned entries/held descriptors and byte-exact path limits/error paths including
+non-UTF8 names. No unit/UI tests, test binaries, harnesses or benchmarks were run.
+A new owner App scan and manual Stop check remain runtime acceptance work.

@@ -99,7 +99,7 @@ impl BulkDirectory {
     pub fn new(fd: OwnedFd) -> Self {
         Self {
             fd,
-            buffer: Buffer::default(),
+            buffer: Buffer(Vec::new()),
             timings: BulkTimings::default(),
             offset: 0,
             remaining: 0,
@@ -127,23 +127,32 @@ impl BulkDirectory {
             Ok(Some(entry)) => Some(Ok(entry)),
             Ok(None) => {
                 self.ended = true;
+                self.release_buffer();
                 None
             }
             Err(error) => {
                 self.ended = true;
+                self.release_buffer();
                 Some(Err(error))
             }
         }
     }
 
+    fn release_buffer(&mut self) {
+        drop(Buffer(std::mem::take(&mut self.buffer.0)));
+    }
+
     fn read_entry(&mut self) -> io::Result<Option<BulkEntry>> {
         if self.remaining == 0 {
-            #[cfg(debug_assertions)]
-            if !self.started {
+            // A drained parent batch must not pin storage while its child is
+            // traversed. Borrow a thread-local spare only when reading a batch.
+            if self.buffer.0.is_empty() {
+                self.buffer = Buffer::default();
+                #[cfg(debug_assertions)]
                 if self.buffer.0.is_empty() { self.timings.buffers_allocated += 1; }
                 else { self.timings.buffers_reused += 1; }
+                self.buffer.0.resize(BUFFER_BYTES / 8, 0);
             }
-            self.buffer.0.resize(BUFFER_BYTES / 8, 0);
             let mut attrs = libc::attrlist {
                 bitmapcount: libc::ATTR_BIT_MAP_COUNT as u16,
                 reserved: 0,
@@ -213,6 +222,11 @@ impl BulkDirectory {
         let entry = parse(record)?;
         self.offset += length;
         self.remaining -= 1;
+        if self.remaining == 0 {
+            // BulkEntry owns its name/metadata, so no returned record borrows
+            // this allocation. Keep fd/cursor position and all EOF checks.
+            self.release_buffer();
+        }
         Ok(Some(entry))
     }
 }
@@ -404,6 +418,55 @@ mod tests {
         record.extend_from_slice(&8192u64.to_ne_bytes());
         record.extend_from_slice(&5u64.to_ne_bytes());
         finish(record, 28)
+    }
+
+    #[test]
+    fn drained_batch_recycles_storage_without_releasing_descriptor_or_entries() {
+        SPARE_BUFFER.with(|slot| slot.borrow_mut().clear());
+        let temp = tempfile::tempdir().unwrap();
+        let fd: OwnedFd = std::fs::File::open(temp.path()).unwrap().into();
+        let mut reader = BulkDirectory::new(fd);
+        assert!(reader.buffer.0.is_empty());
+        let record = file_record(true);
+        reader.buffer.0.resize(BUFFER_BYTES / 8, 0);
+        for (word, bytes) in reader.buffer.0.iter_mut().zip(record.chunks_exact(8).chain(record.chunks_exact(8))) {
+            *word = u64::from_ne_bytes(bytes.try_into().unwrap());
+        }
+        let pointer = reader.buffer.0.as_ptr();
+        reader.remaining = 2;
+        reader.started = true;
+        let first = reader.next_entry().unwrap().unwrap();
+        assert_eq!(reader.remaining, 1);
+        assert!(!reader.buffer.0.is_empty());
+        SPARE_BUFFER.with(|slot| assert!(slot.borrow().is_empty()));
+        let second = reader.next_entry().unwrap().unwrap();
+        assert_eq!(reader.remaining, 0);
+        assert!(reader.buffer.0.is_empty());
+        assert!(!reader.ended); // Draining a batch does not mean directory EOF.
+        assert!(!reader.can_fallback());
+        let mut spare = Buffer::default();
+        assert_eq!(spare.0.as_ptr(), pointer);
+        spare.0.fill(0); // Returned entries must own everything they expose.
+        assert_eq!(first.name, "item");
+        assert_eq!(second.metadata.unwrap().unwrap().logical_bytes, Some(5));
+        let file = std::fs::File::from(reader.into_fd());
+        assert!(file.metadata().unwrap().is_dir());
+    }
+
+    #[test]
+    fn malformed_batch_recycles_storage_and_stays_terminal() {
+        SPARE_BUFFER.with(|slot| slot.borrow_mut().clear());
+        let temp = tempfile::tempdir().unwrap();
+        let mut reader = BulkDirectory::new(std::fs::File::open(temp.path()).unwrap().into());
+        reader.buffer.0.resize(BUFFER_BYTES / 8, 0); // Invalid zero record length.
+        reader.remaining = 1;
+        reader.started = true;
+        assert!(reader.next_entry().unwrap().is_err());
+        assert!(reader.buffer.0.is_empty());
+        assert!(reader.ended);
+        assert!(!reader.can_fallback());
+        assert!(reader.next_entry().is_none());
+        SPARE_BUFFER.with(|slot| assert_eq!(slot.borrow().len(), BUFFER_BYTES / 8));
     }
 
     #[test]
