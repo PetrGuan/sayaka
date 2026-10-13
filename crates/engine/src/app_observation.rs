@@ -34,18 +34,24 @@ pub struct Bundle {
 }
 impl Bundle {
     pub fn capture(path: &Path) -> io::Result<Self> {
-        Self::capture_inner(path).map_err(|e| error(format!("application path={path:?}: {e}")))
+        Self::capture_inner(path, None).map_err(|e| error(format!("application path={path:?}: {e}")))
     }
-    fn capture_inner(path: &Path) -> io::Result<Self> {
+    fn capture_observed(path: &Path, control: &owner_budget::Control) -> io::Result<Self> {
+        Self::capture_inner(path, Some(control))
+            .map_err(|e| error(format!("application path={path:?}: {e}")))
+    }
+    fn capture_inner(path: &Path, control: Option<&owner_budget::Control>) -> io::Result<Self> {
         if path.extension().is_none_or(|e| e != "app") {
             return Err(error("copies_unknown: not an app"));
         }
-        let bundle = orphans::exact(path)?;
+        let bundle = bundle_operation(control, "bundle_witness", path, || orphans::exact(path))?;
         if !bundle.is_directory() {
             return Err(error("copies_unknown: not a directory"));
         }
-        let manifest = orphans::exact(&path.join("Contents/Info.plist"))?;
-        let (id, digest, dev, ino) = read_bundle_identifier_diagnostic(path).map_err(error)?;
+        let manifest_path = path.join("Contents/Info.plist");
+        let manifest = bundle_operation(control, "manifest_witness", &manifest_path, || orphans::exact(&manifest_path))?;
+        let (id, digest, dev, ino) = bundle_operation(control, "manifest_read", &manifest_path,
+            || read_bundle_identifier_diagnostic(path).map_err(error))?;
         let id = id
             .value
             .filter(|_| id.state == StringState::Present)
@@ -54,8 +60,8 @@ impl Bundle {
         if manifest.identity() != (dev, ino) {
             return Err(error("resource_changed"));
         }
-        bundle.revalidate()?;
-        manifest.revalidate()?;
+        bundle_operation(control, "bundle_revalidate", path, || bundle.revalidate())?;
+        bundle_operation(control, "manifest_revalidate", &manifest_path, || manifest.revalidate())?;
         Ok(Self {
             path: path.to_owned(),
             id,
@@ -117,6 +123,16 @@ impl Bundle {
         Ok(())
     }
 }
+fn bundle_operation<T>(
+    control: Option<&owner_budget::Control>, operation: &'static str, path: &Path,
+    action: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    match control {
+        Some(control) => control.run(operation, path, action),
+        None => action(),
+    }
+}
+
 /// Lexical single-hop target only; filesystem resolution remains no-follow.
 fn application_link_target(source: &Path, raw: &Path) -> io::Result<PathBuf> {
     use std::{os::unix::ffi::OsStrExt, path::Component};
@@ -317,6 +333,12 @@ pub(crate) fn copies_observed(
         if b.id == id { insert_copy(&mut paths, b.path.clone(), max_copies)?; }
     }
     let registered = control.run("registry", Path::new(id), || related::registered_applications(id))?;
+    // Preflight registration paths before expensive bundle capture. More than
+    // eight distinct present candidates cannot be established within the cache
+    // owner limit. This is a refusal only: their bundle IDs remain UNVERIFIED.
+    // Stale paths and duplicates do not consume this candidate allowance.
+    let mut candidates = paths.clone();
+    let mut present = Vec::new();
     for p in registered {
         consume(remaining)?;
         let normalized = control.run("registry_link", &p, || observed_application_path(&p, id, inventory))?;
@@ -324,7 +346,13 @@ pub(crate) fn copies_observed(
             stale.push(normalized);
             continue;
         }
-        let bundle = control.run("registry_bundle", &normalized, || Bundle::capture(&normalized))?;
+        if max_copies == 8 { insert_registered_candidate(&mut candidates, &normalized, max_copies)?; }
+        present.push(normalized);
+    }
+    for normalized in present {
+        // Every admitted candidate still receives fresh manifest and identity
+        // validation; preflight is never evidence that an owner is valid.
+        let bundle = control.run("registry_bundle", &normalized, || Bundle::capture_observed(&normalized, control))?;
         if bundle.id != id { return Err(error("copies_unknown: registry identity mismatch")); }
         insert_copy(&mut paths, normalized, max_copies)?;
     }
@@ -336,6 +364,13 @@ pub(crate) fn copies_observed(
     }
     control.check()?;
     Ok(Copies { paths: paths.into_iter().collect(), spotlight, stale })
+}
+fn insert_registered_candidate(paths: &mut BTreeSet<PathBuf>, path: &Path, limit: usize) -> io::Result<()> {
+    paths.insert(path.to_owned());
+    if paths.len() > limit {
+        return Err(error("copies_unknown: registered candidate limit exceeded; bundle identities unverified"));
+    }
+    Ok(())
 }
 fn insert_copy(paths: &mut BTreeSet<PathBuf>, path: PathBuf, limit: usize) -> io::Result<()> {
     paths.insert(path);
@@ -374,6 +409,35 @@ pub fn consume(remaining: &std::cell::Cell<usize>) -> io::Result<()> {
 #[cfg(test)]
 mod progress_tests {
     use super::*;
+    #[test]
+    fn registered_candidate_limit_is_a_refusal_not_a_copy_proof() {
+        let mut candidates = BTreeSet::from([PathBuf::from("/Applications/Installed.app")]);
+        insert_registered_candidate(&mut candidates, Path::new("/Applications/Installed.app"), 8).unwrap();
+        for i in 0..7 {
+            insert_registered_candidate(&mut candidates, &PathBuf::from(format!("/Build/{i}.app")), 8).unwrap();
+        }
+        assert_eq!(candidates.len(), 8);
+        let err = insert_registered_candidate(&mut candidates, Path::new("/Build/Ninth.app"), 8).unwrap_err();
+        assert!(err.to_string().contains("copies_unknown"));
+        assert!(err.to_string().contains("identities unverified"));
+    }
+    #[test]
+    fn observed_bundle_capture_binds_identity_and_obeys_expired_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        let app = base.join("Sample.app");
+        std::fs::create_dir_all(app.join("Contents")).unwrap();
+        std::fs::write(app.join("Contents/Info.plist"),
+            b"<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.example.sample</string></dict></plist>").unwrap();
+        let control = owner_budget::Control::new(Instant::now() + std::time::Duration::from_secs(5), &app, Default::default());
+        let bundle = Bundle::capture_observed(&app, &control).unwrap();
+        assert_eq!(bundle.id, "com.example.sample");
+        bundle.revalidate().unwrap();
+        std::fs::write(app.join("Contents/Info.plist"), b"changed").unwrap();
+        assert!(bundle.revalidate().is_err());
+        let expired = owner_budget::Control::new(Instant::now(), &app, Default::default());
+        assert!(Bundle::capture_observed(&app, &expired).err().unwrap().to_string().contains("deadline"));
+    }
     #[test]
     fn owner_limit_counts_unique_paths_and_rejects_ninth() {
         let mut paths = BTreeSet::new();

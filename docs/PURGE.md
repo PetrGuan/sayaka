@@ -300,3 +300,45 @@ handle closure and policy-restoration checks. CLI build and release library chec
 passed (the latter uses the repository's existing unstripped build-time proc-macro
 workaround on macOS 27). No unit/UI tests, test binaries, harnesses or benchmarks
 were executed. Full App scan and Stop acceptance remain manual owner validation.
+
+### Registered-owner preflight
+
+A later owner App scan completed classification at 53/53, but a development app's
+registered build copy spent the five-second per-owner budget inside
+`registry_bundle`. The timeout protected that cache and allowed classification to
+continue. A subsequent read-only CLI run did not reproduce that native stall, and
+a later sample of the original App showed no surviving owner worker. The specific
+blocking system call is not established by those observations.
+
+Cache ownership now preflights registered paths before expensive bundle capture.
+The existing no-follow presence check excludes absent registrations; normalized
+paths are deduplicated together with matching captured inventory paths. If their
+union exceeds eight present candidates, classification refuses with
+`copies_unknown: registered candidate limit exceeded; bundle identities unverified`.
+This is a conservative candidate-budget refusal, not a claim that those paths are
+verified owners. It prevents needless bundle reads for this already unsupported
+many-registration case. At or below the limit, every present registration still
+receives fresh bundle/manifest capture, bundle-ID comparison and identity
+revalidation, followed by the existing mandatory Spotlight and activity checks.
+Unknown, malformed or changed observations never become permission to clean.
+Generic copy discovery retains its 256-owner limit.
+
+Observed registry bundle capture now identifies `bundle_witness`,
+`manifest_witness`, `manifest_read`, `bundle_revalidate` and
+`manifest_revalidate`. Each boundary checks the same deadline/cancellation control;
+late results remain rejected. Debug details retain their shared 256-record bound,
+with up to 32 extra slow-completion records so early owners cannot hide all later
+slow stages. The five-second wait, two-worker process-wide bound, no-follow,
+no-materialization, parser/entity limits and fresh execution revalidation remain.
+An in-flight native call cannot be forcibly interrupted; a late worker can retain
+its slot until that call returns.
+
+Actual production CLI observation after this change: the many-registration owner
+was protected in 5.423 ms, classification processed 53/53 in 7.770 s including a
+6.751 s inventory, and engine preview took 9.627 s with no effects. The preceding
+CLI run protected that owner in 155.577 ms and classified in 10.151 s; it did not
+reproduce the five-second App timeout. Both previews remained partial due to the
+single protected owner. Cache/machine load were uncontrolled; these are individual
+CLI observations, not full-App acceptance or proof that all native stalls are
+fixed. Engine/bindings regression sources compiled without execution and CLI
+build passed. No unit/UI tests, test binaries, harnesses or benchmarks were run.
