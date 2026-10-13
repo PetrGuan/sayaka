@@ -3,12 +3,10 @@
 //! Immutable, task-local hierarchy over scan observations. Directory totals
 //! deduplicate within each subtree, so sibling totals are not additive.
 
-use super::{ScanCode, ScanEntry, ScanError, ScanReport, ScanStatus};
+use super::{ScanCode, ScanEntry, ScanError, ScanLimits, ScanReport, ScanStatus};
 use crate::model::{Cancellation, FileIdentity, ResourceKind, valid_absolute_path};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
-const MAX_ENTRIES: usize = 100_000;
-const MAX_PATH_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
@@ -58,8 +56,14 @@ impl ScanTree {
     /// Builds without filesystem access or changing M2's measurements/counting.
     /// The retained entry paths are bounded independently of reported metrics.
     pub fn build(report: ScanReport, cancellation: &Cancellation) -> Result<Self, ScanError> {
+        Self::build_with_limits(report, cancellation, &ScanLimits::default())
+    }
+
+    /// Index the same bounded observations accepted by the traversal profile.
+    pub fn build_with_limits(report: ScanReport, cancellation: &Cancellation, limits: &ScanLimits) -> Result<Self, ScanError> {
+        limits.validate()?;
         check_cancelled(cancellation)?;
-        if report.entries.len() > MAX_ENTRIES {
+        if report.entries.len() > limits.max_entries {
             return Err(ScanError::new(
                 ScanCode::EntryLimit,
                 "scan index entry limit",
@@ -73,23 +77,23 @@ impl ScanTree {
         for root in &report.roots {
             check_cancelled(cancellation)?;
             validate_path(root)?;
-            add_path_bytes(&mut root_bytes, root)?;
+            add_path_bytes(&mut root_bytes, root, limits.max_path_bytes)?;
             if !explicit_roots.insert(root.as_path()) {
                 return Err(invalid("duplicate explicit root path"));
             }
         }
 
         let mut positions = HashMap::with_capacity(report.entries.len());
-        // Path order also puts every ancestor before its descendants. Building
-        // this order incrementally allows cancellation between insertions.
-        let mut paths = BTreeMap::new();
+        // Hash paths once per lookup instead of reparsing their components on
+        // every B-tree comparison. Public ordering is restored per sibling set.
+        let mut paths = HashMap::with_capacity(report.entries.len());
         let mut measurements: HashMap<FileIdentity, Measurements> = HashMap::new();
         let mut path_bytes = 0;
         let mut nodes = Vec::with_capacity(report.entries.len());
         for (position, entry) in report.entries.iter().enumerate() {
             check_cancelled(cancellation)?;
             validate_path(&entry.path)?;
-            add_path_bytes(&mut path_bytes, &entry.path)?;
+            add_path_bytes(&mut path_bytes, &entry.path, limits.max_path_bytes)?;
             if positions.insert(entry.id, position).is_some() {
                 return Err(invalid("duplicate scan entry ID"));
             }
@@ -191,7 +195,20 @@ impl ScanTree {
         }
 
         let mut bags: Vec<Option<IdentityBag>> = (0..report.entries.len()).map(|_| None).collect();
-        for &position in paths.values().rev() {
+        // Explicit hierarchy postorder replaces global path sorting. Ancestors
+        // are processed after all descendants, independent of scan entry order.
+        let mut order = Vec::with_capacity(nodes.len());
+        let mut pending = roots.clone();
+        while let Some(id) = pending.pop() {
+            check_cancelled(cancellation)?;
+            let position = positions[&id];
+            order.push(position);
+            for &child in &nodes[position].children {
+                check_cancelled(cancellation)?;
+                pending.push(child);
+            }
+        }
+        for &position in order.iter().rev() {
             check_cancelled(cancellation)?;
             let entry = &report.entries[position];
             let parent = nodes[position].parent;
@@ -233,9 +250,15 @@ impl ScanTree {
         };
         for position in 0..tree.nodes.len() {
             check_cancelled(cancellation)?;
+            let mut names = std::mem::take(&mut tree.nodes[position].children);
+            cancellable_sort(&mut names, cancellation, |a, b| tree.entry(*a).unwrap().path.cmp(&tree.entry(*b).unwrap().path))?;
+            tree.nodes[position].children = names;
             tree.nodes[position].size_orders =
                 tree.size_orders(&tree.nodes[position].children, cancellation)?;
         }
+        let mut roots = std::mem::take(&mut tree.roots);
+        cancellable_sort(&mut roots, cancellation, |a, b| tree.entry(*a).unwrap().path.cmp(&tree.entry(*b).unwrap().path))?;
+        tree.roots = roots;
         tree.root_size_orders = tree.size_orders(&tree.roots, cancellation)?;
         Ok(tree)
     }
@@ -341,7 +364,7 @@ impl ScanTree {
         let mut orders = [ids.to_vec(), ids.to_vec()];
         for (order, metric) in orders.iter_mut().zip([Metric::Logical, Metric::Allocated]) {
             check_cancelled(cancellation)?;
-            order.sort_unstable_by(|a, b| {
+            cancellable_sort(order, cancellation, |a, b| {
                 self.size(*b, metric)
                     .cmp(&self.size(*a, metric))
                     .then_with(|| {
@@ -350,11 +373,44 @@ impl ScanTree {
                             .path
                             .cmp(&self.entry(*b).unwrap().path)
                     })
-            });
+            })?;
         }
         check_cancelled(cancellation)?;
         Ok(orders)
     }
+}
+
+fn cancellable_sort(
+    ids: &mut [u64], cancellation: &Cancellation,
+    compare: impl Fn(&u64, &u64) -> std::cmp::Ordering,
+) -> Result<(), ScanError> {
+    const CHUNK: usize = 256;
+    for chunk in ids.chunks_mut(CHUNK) {
+        check_cancelled(cancellation)?;
+        chunk.sort_unstable_by(&compare);
+    }
+    if ids.len() <= CHUNK { return check_cancelled(cancellation); }
+    let mut scratch = vec![0; ids.len()];
+    let mut width = CHUNK;
+    while width < ids.len() {
+        for start in (0..ids.len()).step_by(width * 2) {
+            let middle = (start + width).min(ids.len());
+            let end = (middle + width).min(ids.len());
+            let (mut left, mut right) = (start, middle);
+            for output in start..end {
+                if output % CHUNK == 0 { check_cancelled(cancellation)?; }
+                let take_left = left < middle && (right == end || !compare(&ids[left], &ids[right]).is_gt());
+                scratch[output] = if take_left { let value = ids[left]; left += 1; value }
+                    else { let value = ids[right]; right += 1; value };
+            }
+        }
+        for (target, source) in ids.chunks_mut(CHUNK).zip(scratch.chunks(CHUNK)) {
+            check_cancelled(cancellation)?;
+            target.copy_from_slice(source);
+        }
+        width *= 2;
+    }
+    check_cancelled(cancellation)
 }
 
 fn ordered<'a>(
@@ -473,10 +529,10 @@ fn validate_path(path: &std::path::Path) -> Result<(), ScanError> {
     }
 }
 
-fn add_path_bytes(total: &mut usize, path: &std::path::Path) -> Result<(), ScanError> {
+fn add_path_bytes(total: &mut usize, path: &std::path::Path, limit: usize) -> Result<(), ScanError> {
     *total = total
         .checked_add(path.as_os_str().len())
-        .filter(|&bytes| bytes <= MAX_PATH_BYTES)
+        .filter(|&bytes| bytes <= limit)
         .ok_or_else(|| ScanError::new(ScanCode::PathBytesLimit, "scan index path-byte limit"))?;
     Ok(())
 }

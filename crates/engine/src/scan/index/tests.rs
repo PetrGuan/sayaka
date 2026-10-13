@@ -689,22 +689,22 @@ fn checked_overflow_is_explicit_for_direct_files_and_subtree_merges() {
 #[test]
 fn limits_use_actual_entries_and_path_bytes_not_claimed_metrics() {
     assert_error(
-        report(vec![directory(1, ""); MAX_ENTRIES + 1]),
+        report(vec![directory(1, ""); ScanLimits::default().max_entries + 1]),
         ScanCode::EntryLimit,
     );
-    let mut entries = Vec::with_capacity(MAX_ENTRIES);
+    let mut entries = Vec::with_capacity(ScanLimits::default().max_entries);
     entries.push(directory(0, ""));
-    for id in 1..MAX_ENTRIES as u64 {
+    for id in 1..ScanLimits::default().max_entries as u64 {
         entries.push(entry(id, &format!("link-{id}"), ResourceKind::Link));
     }
     let tree = tree(entries);
-    assert_eq!(tree.children(0).unwrap().len(), MAX_ENTRIES - 1);
+    assert_eq!(tree.children(0).unwrap().len(), ScanLimits::default().max_entries - 1);
     assert_eq!(tree.summary(0), Some(&summary(0, 0, 0)));
     drop(tree);
 
     let root = directory(1, "");
     let mut huge = entry(2, "huge", ResourceKind::Link);
-    let remaining = MAX_PATH_BYTES - root.path.as_os_str().len();
+    let remaining = ScanLimits::default().max_path_bytes - root.path.as_os_str().len();
     let prefix = path("").as_os_str().len() + 1;
     huge.path = path(&"x".repeat(remaining - prefix));
     let mut at_limit = report(vec![root.clone(), huge.clone()]);
@@ -804,4 +804,56 @@ fn private_totals_require_every_measurement_and_complete_coverage() {
     input.status = ScanStatus::Partial; input.complete = false;
     input.issues.push(issue(ScanCode::EntryLimit));
     assert_eq!(ScanTree::build(input, &Cancellation::default()).unwrap().private_size(1), None);
+}
+
+#[test]
+fn larger_profile_indexes_all_observations_beyond_default_budget() {
+    let mut entries = vec![directory(0, "")];
+    for id in 1..=100_010 {
+        entries.push(file(id, &format!("file-{id:06}"), id, Some(7), Some(8)));
+    }
+    let input = report(entries);
+    assert_eq!(ScanTree::build(input.clone(), &Cancellation::default()).unwrap_err().code, ScanCode::EntryLimit);
+    let limits = ScanLimits { max_entries: 1_000_000, max_path_bytes: 256 * 1024 * 1024, ..ScanLimits::default() };
+    let tree = ScanTree::build_with_limits(input, &Cancellation::default(), &limits).unwrap();
+    assert!(tree.complete());
+    assert_eq!(tree.children(0).unwrap().len(), 100_010);
+    assert_eq!(tree.summary(0).unwrap().logical_bytes_known, 700_070);
+    assert_eq!(tree.ordered_children(0, Sort::Size, Metric::Logical).unwrap().len(), 100_010);
+}
+
+#[test]
+fn unordered_hierarchy_keeps_path_order_and_subtree_hardlink_accounting() {
+    let tree = tree(vec![file(6, "b/same", 90, Some(9), Some(12)), directory(3, "b"),
+        file(5, "a/same", 90, Some(9), Some(12)), directory(1, ""), directory(2, "a"),
+        directory(4, "a-")]);
+    assert_eq!(tree.children(1).unwrap(), &[2, 4, 3]);
+    assert_eq!(tree.summary(1).unwrap().unique_files, 1);
+    assert_eq!(tree.summary(2).unwrap().logical_bytes_known, 9);
+    assert_eq!(tree.summary(3).unwrap().logical_bytes_known, 9);
+}
+
+#[test]
+fn ordering_can_be_cancelled_during_a_large_sibling_set() {
+    let cancel = Cancellation::default();
+    let calls = std::cell::Cell::new(0);
+    let mut ids: Vec<u64> = (0..10_000).rev().collect();
+    let result = cancellable_sort(&mut ids, &cancel, |a, b| {
+        calls.set(calls.get() + 1);
+        if calls.get() == 600 { cancel.cancel(); }
+        a.cmp(b)
+    });
+    assert_eq!(result.unwrap_err().code, ScanCode::Cancelled);
+    assert!(calls.get() < 10_000);
+}
+
+#[test]
+fn cancellable_merge_order_matches_total_order_for_uneven_chunks() {
+    for count in [0, 1, 255, 256, 257, 511, 513, 1031] {
+        let mut ids: Vec<u64> = (0..count).map(|n| (n * 41) % 71).collect();
+        let mut expected = ids.clone();
+        expected.sort_unstable();
+        cancellable_sort(&mut ids, &Cancellation::default(), u64::cmp).unwrap();
+        assert_eq!(ids, expected);
+    }
 }

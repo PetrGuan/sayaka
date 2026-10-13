@@ -59,6 +59,9 @@ impl SayakaPageRequestV1 {
 
 pub(crate) fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
     if job.tree.is_none() {
+        job.tree = job.task.take_prepared_tree().map(Ok);
+    }
+    if job.tree.is_none() {
         let report = job
             .task
             .result()

@@ -6,6 +6,8 @@ use super::{ScanCode, ScanError, ScanLimits, ScanProgress, ScanReport, ScanStatu
 use crate::model::{Cancellation, valid_absolute_path};
 use crate::readonly_task::ReadOnlyTask;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use super::index::ScanTree;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanTaskState {
@@ -26,12 +28,59 @@ pub struct ScanTaskSnapshot {
 
 pub struct ScanTask {
     inner: ReadOnlyTask<ScanReport, ScanProgress>,
+    prepared_tree: Option<Arc<Mutex<Option<ScanTree>>>>,
 }
 
 impl ScanTask {
     pub fn start(roots: Vec<PathBuf>, limits: ScanLimits) -> Result<Self, ScanError> {
         validate_roots(&roots, &limits)?;
         Self::spawn(move |cancel, progress| super::scan(&roots, &limits, cancel, progress))
+    }
+
+    /// AI traversal and indexing share one owned, cancellable worker. Poll stays
+    /// Running until both finish; no query holds the host job lock to build it.
+    pub fn start_ai(roots: Vec<PathBuf>) -> Result<Self, ScanError> {
+        let limits = ScanLimits {
+            max_entries: 1_000_000,
+            max_path_bytes: 256 * 1024 * 1024,
+            time_budget: std::time::Duration::from_secs(120),
+            ..ScanLimits::default()
+        };
+        validate_roots(&roots, &limits)?;
+        let prepared = Arc::new(Mutex::new(None));
+        let output = Arc::clone(&prepared);
+        let mut task = Self::spawn(move |cancel, progress| {
+            let report = super::scan(&roots, &limits, cancel, progress)?;
+            if report.status == ScanStatus::Cancelled || report.status == ScanStatus::Failed {
+                return Ok(report);
+            }
+            #[cfg(debug_assertions)]
+            let started = std::time::Instant::now();
+            #[cfg(debug_assertions)]
+            eprintln!("[SayakaTraversal] event=index.begin entries={} max_entries={} max_path_bytes={}", report.entries.len(), limits.max_entries, limits.max_path_bytes);
+            // Clone retained observations in cancellable steps; never re-read disk.
+            let mut indexed = ScanReport { entries: Vec::with_capacity(report.entries.len()), ..report_without_entries(&report) };
+            for entry in &report.entries {
+                super::index::check_cancelled(cancel)?;
+                indexed.entries.push(entry.clone());
+            }
+            #[cfg(debug_assertions)]
+            let clone_us = started.elapsed().as_micros();
+            let tree = ScanTree::build_with_limits(indexed, cancel, &limits)?;
+            super::index::check_cancelled(cancel)?;
+            #[cfg(debug_assertions)]
+            eprintln!("[SayakaTraversal] event=index entries={} clone_us={} total_us={} success=true background=true", report.entries.len(), clone_us, started.elapsed().as_micros());
+            *output.lock().map_err(|_| ScanError::new(ScanCode::Internal, "index output poisoned"))? = Some(tree);
+            Ok(report)
+        })?;
+        task.prepared_tree = Some(prepared);
+        Ok(task)
+    }
+
+    /// Called only after terminal poll. Transfers the prepared immutable index.
+    pub fn take_prepared_tree(&mut self) -> Option<ScanTree> {
+        if !self.is_finished() { return None; }
+        self.prepared_tree.as_ref()?.lock().ok()?.take()
     }
 
     pub fn start_prune_native_packages(
@@ -64,6 +113,7 @@ impl ScanTask {
     ) -> Result<Self, ScanError> {
         Ok(Self {
             inner: ReadOnlyTask::spawn("sayaka-host-scan", operation)?,
+            prepared_tree: None,
         })
     }
 
@@ -79,6 +129,7 @@ impl ScanTask {
         let slot = self.inner.poll()?;
         let state = match self.inner.outcome() {
             None => ScanTaskState::Running,
+            Some(Err(error)) if error.code == ScanCode::Cancelled => ScanTaskState::Cancelled,
             Some(Err(_)) => ScanTaskState::Failed,
             Some(Ok(report)) => match report.status {
                 ScanStatus::Complete => ScanTaskState::Complete,
@@ -98,6 +149,15 @@ impl ScanTask {
     /// None until the owned worker has exited; polling never joins active work.
     pub fn result(&mut self) -> Option<&Result<ScanReport, ScanError>> {
         self.inner.result()
+    }
+}
+
+fn report_without_entries(report: &ScanReport) -> ScanReport {
+    ScanReport {
+        task_id: report.task_id, roots: report.roots.clone(), status: report.status,
+        complete: report.complete, entries: Vec::new(), issues: report.issues.clone(),
+        vcs_metadata: report.vcs_metadata.clone(), issues_omitted: report.issues_omitted,
+        totals: report.totals.clone(), metrics: report.metrics.clone(),
     }
 }
 
