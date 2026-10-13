@@ -1006,6 +1006,58 @@ fn cache_workers_share_hardlink_identity_and_unknown_size_accounting() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn project_subtree_workers_preserve_shared_identity_git_and_entry_budget() {
+    for workers in [1, 4] {
+        for max_entries in [3, 100] {
+            let mut fake = tree();
+            for (name, inode) in [("left", 2), ("right", 3)] {
+                let child = add_directory(&mut fake, &root(), name, inode);
+                let mut shared = metadata(4, ResourceKind::File, Some(7));
+                shared.link_count = Some(2);
+                fake.directories.get_mut(&child).unwrap().items.push(Item {
+                    name: "shared".into(),
+                    metadata: Ok(shared),
+                });
+                add_file(&mut fake, &child, "own", inode + 10, Some(3));
+            }
+            let git = add_directory(&mut fake, &root().join("left"), ".git", 30);
+            add_file(&mut fake, &git, "history", 31, Some(1000));
+            let backend = FakeBackend(Arc::new(fake));
+            let budget = crate::scan::cache::ProjectSizeBudget {
+                visited: AtomicUsize::new(0),
+                max_entries,
+                deadline: Instant::now() + Duration::from_secs(10),
+            };
+            let result = crate::scan::cache::summarize_with_project_budget(
+                &backend,
+                &root(),
+                metadata(1, ResourceKind::Directory, None).identity,
+                &ScanLimits { workers, ..ScanLimits::default() },
+                Some(&budget),
+                &Cancellation::default(),
+                |_, _, _| {},
+            ).unwrap();
+            assert!(!result.complete);
+            assert!(!backend.0.opened.lock().unwrap().contains(&git));
+            if max_entries == 100 {
+                assert_eq!(result.files, 3);
+                assert_eq!(result.logical, Some(13));
+                assert_eq!(result.vcs_metadata, 1);
+                assert_eq!(budget.visited.load(Ordering::Acquire), 7);
+            } else {
+                assert_eq!(budget.visited.load(Ordering::Acquire), max_entries);
+                assert!(result.issues.iter().any(|i| i.code == ScanCode::EntryLimit));
+            }
+            assert_eq!(backend.0.opened.lock().unwrap().len(), backend.0.closed.load(Ordering::Acquire));
+            let entered = backend.0.policies_entered.load(Ordering::Acquire);
+            assert!(entered <= workers);
+            assert_eq!(entered, backend.0.policies_restored.load(Ordering::Acquire));
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn cache_worker_start_failure_and_child_panic_return_without_stranding_queue() {
     for fail_spawn in [true, false] {
         let mut fake = tree();

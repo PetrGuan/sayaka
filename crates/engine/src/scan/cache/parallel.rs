@@ -200,6 +200,15 @@ impl<D> Drop for StopOnFailure<'_, '_, D> {
     }
 }
 
+// Wake the coordinator after policy restoration, including during unwinding.
+// Joining still owns worker completion; this only avoids a polling tail.
+struct WorkerFinished(std::sync::mpsc::Sender<()>);
+impl Drop for WorkerFinished {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
 pub(in crate::scan) fn summarize<B: Backend>(
     backend: &B,
     root: &Path,
@@ -275,9 +284,8 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
             path: root.to_owned(),
             depth: 1,
         };
-        if project_budget.is_some() {
-            // Project-level scheduling already supplies bounded parallelism.
-            // A single streaming DFS per artifact avoids nested worker pools.
+        if project_budget.is_some() && limits.workers == 1 {
+            // With no spare project slot, retain the single streaming DFS.
             walk(&shared, frame, false, &mut progress)?;
         } else {
             std::thread::scope(|scope| -> Result<(), ScanError> {
@@ -287,9 +295,19 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                 };
                 let mut workers = Vec::new();
                 let mut failure = None;
-                for index in 0..limits.workers.min(4) {
+                let (finished, completions) = std::sync::mpsc::channel();
+                // A project producer already owns one global sizing slot;
+                // remaining slots are lent by the outer artifact scheduler.
+                let worker_count = if project_budget.is_some() {
+                    limits.workers.saturating_sub(1)
+                } else {
+                    limits.workers.min(4)
+                };
+                for index in 0..worker_count {
                     let shared = &shared;
+                    let finished = finished.clone();
                     match backend.spawn_worker(scope, index, move || {
+                        let _finished = WorkerFinished(finished);
                         let mut guard = StopOnFailure {
                             shared,
                             success: false,
@@ -334,10 +352,16 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                     queue.producer_done = true;
                     shared.wake.notify_all();
                 }
-                while workers.iter().any(|worker| !worker.is_finished()) {
-                    shared.interrupted();
-                    shared.report(&mut progress);
-                    std::thread::sleep(Duration::from_millis(50));
+                drop(finished);
+                for _ in 0..workers.len() {
+                    loop {
+                        shared.interrupted();
+                        shared.report(&mut progress);
+                        match completions.recv_timeout(Duration::from_millis(50)) {
+                            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        }
+                    }
                 }
                 for worker in workers {
                     let result = worker.join().unwrap_or_else(|_| {
