@@ -50,6 +50,8 @@ pub struct BulkTimings {
     pub calls: u64,
     pub entries: u64,
     pub syscall_us: u64,
+    pub max_syscall_us: u64,
+    pub calls_ge_10ms: u64,
     pub buffers_allocated: u64,
     pub buffers_reused: u64,
 }
@@ -73,6 +75,7 @@ pub struct BulkMetadata {
     pub logical_bytes: Option<u64>,
     pub allocated_bytes: Option<u64>,
     pub private_bytes: Option<u64>,
+    pub modified_unix_ms: Option<i64>,
 }
 
 pub struct BulkEntry {
@@ -86,6 +89,7 @@ pub struct BulkEntry {
 /// with this descriptor's bulk iteration. Only an unsupported *first* call
 /// permits the caller to rewind and fall back to its original cursor.
 pub struct BulkDirectory {
+    include_modified: bool,
     fd: OwnedFd,
     buffer: Buffer,
     timings: BulkTimings,
@@ -98,6 +102,7 @@ pub struct BulkDirectory {
 impl BulkDirectory {
     pub fn new(fd: OwnedFd) -> Self {
         Self {
+            include_modified: false,
             fd,
             buffer: Buffer(Vec::new()),
             timings: BulkTimings::default(),
@@ -106,6 +111,13 @@ impl BulkDirectory {
             started: false,
             ended: false,
         }
+    }
+    /// Full scans retain modification time for age-based review. Cache sizing
+    /// keeps its smaller existing attribute request.
+    pub fn with_modified_times(fd: OwnedFd) -> Self {
+        let mut reader = Self::new(fd);
+        reader.include_modified = true;
+        reader
     }
     pub fn timings(&self) -> BulkTimings { self.timings }
     pub fn fd(&self) -> BorrowedFd<'_> {
@@ -156,7 +168,7 @@ impl BulkDirectory {
             let mut attrs = libc::attrlist {
                 bitmapcount: libc::ATTR_BIT_MAP_COUNT as u16,
                 reserved: 0,
-                commonattr: COMMON,
+                commonattr: COMMON | if self.include_modified { libc::ATTR_CMN_MODTIME } else { 0 },
                 volattr: 0,
                 dirattr: DIRECTORY,
                 fileattr: FILE,
@@ -180,7 +192,10 @@ impl BulkDirectory {
             {
                 self.timings.calls += 1;
                 self.timings.entries += count.max(0) as u64;
-                self.timings.syscall_us += syscall_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+                let elapsed = syscall_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+                self.timings.syscall_us += elapsed;
+                self.timings.max_syscall_us = self.timings.max_syscall_us.max(elapsed);
+                self.timings.calls_ge_10ms += u64::from(elapsed >= 10_000);
             }
             if count < 0 {
                 let error = error.expect("negative native result");
@@ -280,7 +295,7 @@ fn parse(record: &[u8]) -> io::Result<BulkEntry> {
     let directory = f.u32()?;
     let file = f.u32()?;
     let fork = f.u32()?;
-    if common & !COMMON != 0
+    if common & !(COMMON | libc::ATTR_CMN_MODTIME) != 0
         || volume != 0
         || directory & !DIRECTORY != 0
         || file & !FILE != 0
@@ -297,6 +312,13 @@ fn parse(record: &[u8]) -> io::Result<BulkEntry> {
     let name_length = f.u32()? as usize;
     let device = f.optional32(common & libc::ATTR_CMN_DEVID != 0)?;
     let kind = f.optional32(common & libc::ATTR_CMN_OBJTYPE != 0)?;
+    // Darwin's packed 64-bit timespec precedes ATTR_CMN_FLAGS.
+    let modified_unix_ms = if common & libc::ATTR_CMN_MODTIME != 0 {
+        let seconds = i64::from_ne_bytes(f.read()?);
+        let nanos = i64::from_ne_bytes(f.read()?);
+        if !(0..1_000_000_000).contains(&nanos) { return Err(invalid()); }
+        seconds.checked_mul(1000).and_then(|v| v.checked_add(nanos / 1_000_000))
+    } else { None };
     let flags = f.optional32(common & libc::ATTR_CMN_FLAGS != 0)?;
     let inode = f.optional64(common & libc::ATTR_CMN_FILEID != 0)?;
     let mount = f.optional32(directory & DIRECTORY != 0)?;
@@ -341,6 +363,7 @@ fn parse(record: &[u8]) -> io::Result<BulkEntry> {
                 None
             } else {
                 Some(BulkMetadata {
+                    modified_unix_ms: (kind == BulkKind::File).then_some(modified_unix_ms).flatten(),
                     private_bytes: private.filter(|v| *v <= i64::MAX as u64 && kind == BulkKind::File && links == Some(1) && flags & 0x4000_0000 == 0),
                     device: u64::from(device),
                     inode,
@@ -418,6 +441,45 @@ mod tests {
         record.extend_from_slice(&8192u64.to_ne_bytes());
         record.extend_from_slice(&5u64.to_ne_bytes());
         finish(record, 28)
+    }
+
+    fn timed_file_record(seconds: i64, nanos: i64) -> Vec<u8> {
+        let mut record = file_record(true);
+        record[4..8].copy_from_slice(&(COMMON | libc::ATTR_CMN_MODTIME).to_ne_bytes());
+        let mut time = seconds.to_ne_bytes().to_vec();
+        time.extend_from_slice(&nanos.to_ne_bytes());
+        record.splice(44..44, time);
+        let offset = i32::from_ne_bytes(record[28..32].try_into().unwrap()) + 16;
+        record[28..32].copy_from_slice(&offset.to_ne_bytes());
+        let length = record.len() as u32;
+        record[..4].copy_from_slice(&length.to_ne_bytes());
+        record
+    }
+
+    #[test]
+    fn full_scan_time_preserves_packed_identity_and_sizes() {
+        let entry = parse(&timed_file_record(123, 456_789_000)).unwrap();
+        assert_eq!(entry.name, "item");
+        let metadata = entry.metadata.unwrap().unwrap();
+        assert_eq!(metadata.modified_unix_ms, Some(123456));
+        assert_eq!((metadata.device, metadata.inode), (7, 11));
+        assert_eq!(metadata.logical_bytes, Some(5));
+        assert_eq!(metadata.allocated_bytes, Some(8192));
+        assert_eq!(metadata.link_count, Some(2));
+        assert_eq!(parse(&file_record(true)).unwrap().metadata.unwrap().unwrap().modified_unix_ms, None);
+    }
+
+    #[test]
+    fn invalid_or_unrepresentable_times_never_become_a_valid_age() {
+        assert!(parse(&timed_file_record(123, 1_000_000_000)).is_err());
+        assert!(parse(&timed_file_record(123, -1)).is_err());
+        assert_eq!(parse(&timed_file_record(-1, 500_000_000)).unwrap().metadata.unwrap().unwrap().modified_unix_ms, Some(-500));
+        for seconds in [i64::MIN, i64::MAX] {
+            assert_eq!(parse(&timed_file_record(seconds, 0)).unwrap().metadata.unwrap().unwrap().modified_unix_ms, None);
+        }
+        let mut truncated = timed_file_record(123, 0);
+        truncated.truncate(50);
+        assert!(parse(&truncated).is_err());
     }
 
     #[test]

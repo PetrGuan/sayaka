@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Bulk metadata for cache measurement only. Directory admission, open flags,
+//! Bulk metadata for cache measurement and unrestricted full scans. Directory admission, open flags,
 //! identity checks and modification stamps match the generic macOS cursor.
 use super::*;
 use sayaka_platform_macos::scan_bulk::{BulkDirectory, BulkKind, BulkMetadata};
@@ -12,10 +12,22 @@ use std::sync::atomic::Ordering;
 #[derive(Default)]
 #[cfg_attr(not(debug_assertions), allow(dead_code))]
 struct Timing {
+    full_scan: Option<(PathBuf, std::time::Instant)>,
     opens: AtomicU64, open_us: AtomicU64, open_api_us: AtomicU64, max_open_api_us: AtomicU64, slow_opens: AtomicU64, capture_us: AtomicU64, volume_us: AtomicU64, checks: AtomicU64, check_us: AtomicU64,
-    batches: AtomicU64, bulk_entries: AtomicU64, bulk_us: AtomicU64,
+    max_bulk_us: AtomicU64, slow_batches: AtomicU64, batches: AtomicU64, bulk_entries: AtomicU64, bulk_us: AtomicU64,
     allocated: AtomicU64, reused: AtomicU64, fallbacks: AtomicU64, stat_fallbacks: AtomicU64,
 }
+impl Drop for Timing {
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        if let Some((path, started)) = &self.full_scan {
+            let n = |v: &AtomicU64| v.load(Ordering::Relaxed);
+            eprintln!("[SayakaTraversal] event=native_summary path={:?} wall_us={} child_opens={} child_open_api_us={} max_open_api_us={} opens_ge_10ms={} capture_us={} checks={} check_us={} batches={} bulk_entries={} bulk_us={} max_bulk_us={} batches_ge_10ms={} legacy_fallbacks={} stat_fallbacks={}",
+                path, started.elapsed().as_micros(), n(&self.opens), n(&self.open_api_us), n(&self.max_open_api_us), n(&self.slow_opens), n(&self.capture_us), n(&self.checks), n(&self.check_us), n(&self.batches), n(&self.bulk_entries), n(&self.bulk_us), n(&self.max_bulk_us), n(&self.slow_batches), n(&self.fallbacks), n(&self.stat_fallbacks));
+        }
+    }
+}
+
 impl Timing {
     #[cfg(debug_assertions)]
     fn opened(&self, started: std::time::Instant) {
@@ -29,6 +41,8 @@ impl Timing {
         {
         let reader = _reader;
         let t = reader.timings();
+        self.max_bulk_us.fetch_max(t.max_syscall_us, Ordering::Relaxed);
+        self.slow_batches.fetch_add(t.calls_ge_10ms, Ordering::Relaxed);
         for (counter, value) in [(&self.batches, t.calls), (&self.bulk_entries, t.entries),
             (&self.bulk_us, t.syscall_us), (&self.allocated, t.buffers_allocated), (&self.reused, t.buffers_reused)] {
             counter.fetch_add(value, Ordering::Relaxed);
@@ -49,9 +63,9 @@ impl Drop for CacheBackend {
         {
             let t = &self.timing;
             let n = |v: &AtomicU64| v.load(Ordering::Relaxed);
-            eprintln!("[SayakaSizing] event=native_summary path={:?} wall_us={} opens={} open_us={} open_api_us={} max_open_api_us={} opens_ge_10ms={} capture_us={} volume_us={} checks={} check_us={} batches={} bulk_entries={} bulk_us={} buffers_allocated={} buffers_reused={} legacy_fallbacks={} stat_fallbacks={}",
+            eprintln!("[SayakaSizing] event=native_summary path={:?} wall_us={} opens={} open_us={} open_api_us={} max_open_api_us={} opens_ge_10ms={} capture_us={} volume_us={} checks={} check_us={} batches={} bulk_entries={} bulk_us={} max_bulk_us={} batches_ge_10ms={} buffers_allocated={} buffers_reused={} legacy_fallbacks={} stat_fallbacks={}",
                 self.path, self.started.elapsed().as_micros(), n(&t.opens), n(&t.open_us), n(&t.open_api_us), n(&t.max_open_api_us), n(&t.slow_opens), n(&t.capture_us), n(&t.volume_us), n(&t.checks), n(&t.check_us),
-                n(&t.batches), n(&t.bulk_entries), n(&t.bulk_us), n(&t.allocated), n(&t.reused), n(&t.fallbacks), n(&t.stat_fallbacks));
+                n(&t.batches), n(&t.bulk_entries), n(&t.bulk_us), n(&t.max_bulk_us), n(&t.slow_batches), n(&t.allocated), n(&t.reused), n(&t.fallbacks), n(&t.stat_fallbacks));
         }
     }
 }
@@ -98,7 +112,19 @@ pub(super) struct CacheDirectory {
     original: Metadata,
     stamp: Stamp,
 }
+// Held by the calling backend until all traversal workers have joined. Never
+// print from a worker destructor: the CLI can hold stderr on its caller thread.
+pub(super) struct FullScanTiming { _timing: Arc<Timing> }
+
 impl CacheDirectory {
+    pub(super) fn for_full_scan(fd: OwnedFd, path: &Path) -> Result<(Self, FullScanTiming), ScanError> {
+        let mut timing = Timing::default();
+        timing.full_scan = Some((path.to_owned(), std::time::Instant::now()));
+        let timing = Arc::new(timing);
+        let directory = Self::from_fd(fd, Arc::clone(&timing))?;
+        Ok((directory, FullScanTiming { _timing: timing }))
+    }
+
     fn from_fd(fd: OwnedFd, timing: Arc<Timing>) -> Result<Self, ScanError> {
         #[cfg(debug_assertions)]
         let started = std::time::Instant::now();
@@ -114,8 +140,8 @@ impl CacheDirectory {
             ));
         }
         Ok(Self {
-            timing,
-            reader: Reader::Bulk(BulkDirectory::new(fd)),
+            timing: Arc::clone(&timing),
+            reader: Reader::Bulk(if timing.full_scan.is_some() { BulkDirectory::with_modified_times(fd) } else { BulkDirectory::new(fd) }),
             original,
             stamp: stamp(&stat),
         })
@@ -263,7 +289,7 @@ fn from_bulk(value: BulkMetadata) -> Result<Metadata, ScanError> {
         logical_bytes: regular.then_some(value.logical_bytes).flatten(),
         allocated_bytes: regular.then_some(value.allocated_bytes).flatten(),
         link_count: value.link_count,
-        modified_unix_ms: None,
+        modified_unix_ms: value.modified_unix_ms,
         dataless: value.flags & 0x4000_0000 != 0,
     })
 }

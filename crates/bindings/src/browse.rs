@@ -68,8 +68,13 @@ pub(crate) fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
         if report.status == ScanStatus::Failed {
             return Err(QUERY_UNAVAILABLE);
         }
+        #[cfg(debug_assertions)]
+        let started = std::time::Instant::now();
+        let report = report.clone();
+        #[cfg(debug_assertions)]
+        let (clone_us, entries) = (started.elapsed().as_micros(), report.entries.len());
         job.tree = Some(
-            ScanTree::build(report.clone(), &Cancellation::default()).map_err(|error| match error
+            ScanTree::build(report, &Cancellation::default()).map_err(|error| match error
                 .code
             {
                 ScanCode::EntryLimit | ScanCode::PathBytesLimit | ScanCode::Overflow => {
@@ -78,6 +83,8 @@ pub(crate) fn tree(job: &mut Job) -> Result<&ScanTree, i32> {
                 _ => INTERNAL_ERROR,
             }),
         );
+        #[cfg(debug_assertions)]
+        eprintln!("[SayakaTraversal] event=index entries={} clone_us={} total_us={} success={}", entries, clone_us, started.elapsed().as_micros(), job.tree.as_ref().is_some_and(|tree| tree.is_ok()));
     }
     job.tree
         .as_ref()

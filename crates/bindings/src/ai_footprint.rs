@@ -46,9 +46,17 @@ pub unsafe extern "C" fn sayaka_scan_ai_footprint_v1(
         let slot = get(handle)?;
         let mut job = lock_job(&slot)?;
         ensure_open(&job)?;
+        #[cfg(debug_assertions)]
+        let started = std::time::Instant::now();
         let tree = browse::tree(&mut job)?;
+        #[cfg(debug_assertions)]
+        let tree_us = started.elapsed().as_micros();
         let footprint = project(tree, tool).ok_or(QUERY_UNAVAILABLE)?;
+        #[cfg(debug_assertions)]
+        let project_us = started.elapsed().as_micros() - tree_us;
         let bytes = bounded_json(&footprint, MAX_QUERY_BYTES)?;
+        #[cfg(debug_assertions)]
+        eprintln!("[SayakaTraversal] event=ai_projection handle={} tool={} entries={} tree_us={} project_us={} total_us={} bytes={} probe={}", handle, request.tool, tree.report().entries.len(), tree_us, project_us, started.elapsed().as_micros(), bytes.len(), capacity == 0);
         // SAFETY: Output was validated above; bytes are privately owned.
         unsafe { copy_output(&bytes, buffer, capacity, required) }
     })

@@ -238,3 +238,41 @@ millisecond zero means less than one millisecond, not instantaneous work.
 Fixture creation precedes timing and warms filesystem caches. This is a local
 regression gate, not an OS-cold benchmark, a universal latency promise, or a
 comparison establishing superiority over Mole.
+
+### Full-scan metadata and AI phase diagnostics
+
+On macOS, unrestricted full scans now reuse the bounded bulk metadata cursor.
+Project discovery and package-pruning policies keep their existing native cursor.
+The full-scan attribute request additionally retains modification time; ordinary
+cache sizing keeps its previous attribute set. Identity, logical/allocated/private
+size, hard-link counting, no-follow opens, mount/firmlink boundaries, dataless
+policy, directory revalidation and scan resource budgets remain enforced. Missing
+or unrepresentable evidence remains unknown; it never becomes cleanup authority.
+An unsupported first bulk call may rewind into the original native cursor; later
+errors remain coverage gaps. Full scan still retains every admitted entry.
+
+Debug logs distinguish traversal native operations, index clone/build cost and
+AI projection/JSON cost. Native totals overlap across workers and are not wall
+latency. Root admission stays in the existing scan profile; full-scan
+`child_opens` excludes that root open. Bulk diagnostics include maximum syscall
+duration and counts of calls at least 10 ms, alongside the existing open latency
+counters. Full-scan diagnostic owners stay on the calling backend until workers
+join, preventing a worker destructor from waiting on a caller-held stderr lock.
+
+In one production read-only CLI comparison on a live AI data root with equal
+explicit budgets, both revisions completed 755,673 entries (679,555 regular-file
+paths, 76,050 directories, 68 links). Traversal was 12.925 -> 11.611 seconds.
+Entry-by-entry path, identity, allocation, private size and dataless values
+matched; one concurrently growing file changed length and modification time.
+This is a single observation, not a controlled benchmark or stable App speedup.
+The CLI's full JSON output cost is separate from the App's bounded queries.
+A pip sizing observation was 0.255 -> 0.163 seconds with unchanged 7,563 entries;
+the earlier slow sample was not reproduced. No pip scheduler or safety budget
+was changed on that evidence. Slow-operation diagnostics support further owner
+acceptance. The App's existing default entry/path/time limits remain unchanged;
+a budget-limited report must still be presented as partial.
+
+Validation for this change: production CLI build, Debug regression-source
+compilation and Release compilation; unit/UI tests were not executed. Packed
+modification-time parsing and native legacy/bulk evidence comparison have
+regression sources for owner-run validation. Fresh App acceptance is still needed.
