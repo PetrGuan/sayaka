@@ -100,3 +100,57 @@ processed 53/53 candidates in about 7.506 s including inventory. Cache preview
 engine time was 9.275 s, with 32 cache candidates and no effects. One owner-count
 issue remained protected, so overall coverage correctly stayed partial. This
 single run does not establish a percentile or a full App scan duration.
+
+## Bounded preview ownership observations
+
+An owner App observation completed application inventory in 11.332 s but then
+stalled at candidate 29/53. Classification returned after 327.279 s with an owner
+copy deadline and only 30/53 processed; full App request time was 392.179 s. The
+previous deadline was checked between operations and could not bound a synchronous
+native registry query or filesystem validation already in progress. The terminal
+error did not identify which primitive blocked; a later CLI observation did not
+reproduce the long stall. Do not label a specific macOS API as proven responsible.
+
+A development application's registered copies (32) and Spotlight results (161)
+exposed unnecessary work: the eight-owner protection used to run after all source
+queries and copy validations. Cache ownership now rejects as soon as the union
+exceeds eight paths. Inventory and registry positives keep their existing identity
+checks; Spotlight positives retain their conservative refusal semantics. Duplicate
+paths do not increase the count, and a stale registry entry is not a positive.
+This early exit only refuses cleanup; it never produces an incomplete valid proof.
+The generic orphan copy limit remains 256 and mandatory-source checks remain on
+all successful observations. Execution still rebuilds/revalidates its evidence.
+
+Only preview candidate capture and activity observation use bounded waits:
+
+- Each candidate waits at most five seconds or the remaining global 30-second
+  discovery deadline, whichever is shorter. The caller polls progress/cancellation
+  every 25 ms and checks the deadline again before accepting a returned result.
+- At most two read-only ownership workers exist process-wide. There is no queued
+  backlog. A timeout/cancellation abandons its receiver, signals the worker to
+  stop between operations, and discards late evidence. A saturated pool reports
+  ownership unknown immediately, rather than spawning replacement workers.
+- A synchronous macOS/filesystem call cannot be forcibly interrupted. An in-flight
+  worker may outlive scan result/release, retaining its finite inventory/evidence
+  until it returns. It retains its slot throughout that lifetime. This is bounded
+  caller responsiveness, not a claim of kernel-call termination or all-resource
+  settlement. No worker executes cleanup or returns late evidence to another scan.
+- Every worker installs/restores its own thread-local read-only I/O policy.
+  Unknown, timeout, worker failure, saturation and activity failure never admit
+  a candidate to cleanup. Execution-side fresh capture remains synchronous.
+
+Debug records distinguish registry, registry-link/presence/bundle, Spotlight,
+owner-proof and activity operations, with paths, operation/owner duration and
+remaining budget. Detail logs share a 256-record cap per classification. Timeout
+errors retain the current operation/path even after this cap; slow/error candidate
+summaries and the terminal processed/total summary remain separate. A processed
+candidate can still be protected; completed classification is not complete safety
+coverage.
+
+Validation: engine/bindings regression sources compile with `cargo check --tests`
+without executing tests. Actual read-only CLI preview processed 53/53, classification
+including inventory was 6.028 s, cache preview engine time 7.913 s, and the
+many-copy owner was refused in 84 ms. One owner-limit issue remained, with no
+cleanup effects or deadline error. These single-run CLI numbers do not certify
+full-App wall time, runtime timeout/cancel behavior, or native blockage recovery.
+No unit/UI tests, test binaries, harnesses or benchmarks were executed.
