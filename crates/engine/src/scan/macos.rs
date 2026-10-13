@@ -201,10 +201,41 @@ impl Backend for ProfiledMacBackend {
     }
 }
 
+// Only unrestricted full scans use bulk metadata here. Project discovery and
+// package pruning keep their existing signature-aware native cursor.
+#[derive(Default)]
+struct FullScanBackend {
+    roots: Mutex<Vec<RootAdmissionDiagnostics>>,
+    timings: Mutex<Vec<cache::FullScanTiming>>,
+}
+impl Backend for FullScanBackend {
+    type Directory = cache::CacheDirectory;
+    type Policy = NativePolicy;
+    fn enter_thread(&self) -> Result<Self::Policy, ScanError> { MacBackend.enter_thread() }
+    fn open_root(&self, path: &Path) -> Result<Self::Directory, ScanError> {
+        let mut record = RootAdmissionDiagnostics::default();
+        let result = open_root_with(path, Some(&mut record), |fd| cache::CacheDirectory::for_full_scan(fd, path));
+        record.error_code = result.as_ref().err().map(|error| error.code.as_str());
+        self.roots.lock().expect("root diagnostics poisoned").push(record);
+        result.map(|(directory, timing)| {
+            self.timings.lock().expect("scan diagnostics poisoned").push(timing);
+            directory
+        })
+    }
+}
+
 fn open_root(
     path: &Path,
-    mut diagnostics: Option<&mut RootAdmissionDiagnostics>,
+    diagnostics: Option<&mut RootAdmissionDiagnostics>,
 ) -> Result<MacDirectory, ScanError> {
+    open_root_with(path, diagnostics, MacDirectory::from_fd)
+}
+
+fn open_root_with<D>(
+    path: &Path,
+    mut diagnostics: Option<&mut RootAdmissionDiagnostics>,
+    capture: impl FnOnce(OwnedFd) -> Result<D, ScanError>,
+) -> Result<D, ScanError> {
     let start = diagnostics.as_ref().map(|_| Instant::now());
     let fd = fs::open(path, directory_flags(), Mode::empty()).map_err(native_error);
     if let (Some(record), Some(start)) = (diagnostics.as_deref_mut(), start) {
@@ -226,7 +257,7 @@ fn open_root(
         validate_local_internal_volume_fd(&fd)?;
     }
     let start = diagnostics.as_ref().map(|_| Instant::now());
-    let result = MacDirectory::from_fd(fd);
+    let result = capture(fd);
     if let (Some(record), Some(start)) = (diagnostics, start) {
         record.directory_setup_ms = Some(as_ms(start.elapsed()));
     }
@@ -436,6 +467,7 @@ pub(super) fn scan_native(
         record.caller_policy_enter_ms = Some(as_ms(started.elapsed()));
     }
     let policy = policy?;
+    let full_scan = traversal_policy == TraversalPolicy::Default;
     let options = walk::RunOptions {
         limits,
         cancellation,
@@ -443,7 +475,16 @@ pub(super) fn scan_native(
         traversal_policy,
         started,
     };
-    let result = if let Some(record) = diagnostics.as_deref_mut() {
+    let result = if full_scan {
+        let backend = FullScanBackend::default();
+        let start = Instant::now();
+        let result = walk::run_with_policy(&backend, roots, options, progress);
+        if let Some(record) = diagnostics.as_deref_mut() {
+            record.native_walk_ms = Some(as_ms(start.elapsed()));
+            record.roots = backend.roots.into_inner().expect("root diagnostics poisoned");
+        }
+        result
+    } else if let Some(record) = diagnostics.as_deref_mut() {
         let backend = ProfiledMacBackend(Mutex::default());
         let start = Instant::now();
         let result = walk::run_with_policy(&backend, roots, options, progress);
@@ -569,4 +610,46 @@ pub(crate) fn project_root_identity(path: &Path) -> Result<FileIdentity, ScanErr
         .open_root(path)
         .map(|directory| directory.metadata().identity);
     policy.restore().and(result)
+}
+
+#[cfg(test)]
+mod full_scan_tests {
+    use super::*;
+
+    #[test]
+    fn bulk_full_scan_retains_legacy_file_evidence_and_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("nested")).unwrap();
+        std::fs::write(root.join("nested/file"), b"metadata fixture").unwrap();
+        std::fs::hard_link(root.join("nested/file"), root.join("hardlink")).unwrap();
+        std::os::unix::fs::symlink("nested/file", root.join("link")).unwrap();
+        let limits = ScanLimits::default();
+        let cancellation = Cancellation::default();
+        let policy = ReadOnlyPolicy::enter().unwrap();
+        let legacy = walk::run_with_policy(&MacBackend, vec![root.clone()], walk::RunOptions {
+            limits: &limits, cancellation: &cancellation, task_id: ScanTaskId::synthetic(1),
+            traversal_policy: TraversalPolicy::Default, started: Instant::now(),
+        }, |_| {}).unwrap();
+        policy.restore().unwrap();
+        let bulk = scan_native(vec![root.clone()], &limits, &cancellation,
+            ScanTaskId::synthetic(2), TraversalPolicy::Default, |_| {}, None).unwrap();
+        assert_eq!(bulk.status, legacy.status);
+        assert_eq!(bulk.entries.len(), legacy.entries.len());
+        for (a, b) in bulk.entries.iter().zip(&legacy.entries) {
+            assert_eq!((&a.path, a.identity, a.kind, a.logical_bytes, a.allocated_bytes,
+                a.modified_unix_ms, a.dataless, a.private_bytes),
+                (&b.path, b.identity, b.kind, b.logical_bytes, b.allocated_bytes,
+                b.modified_unix_ms, b.dataless, b.private_bytes));
+        }
+        assert_eq!(bulk.totals.unique_files, legacy.totals.unique_files);
+        assert_eq!(bulk.totals.logical_bytes_known, legacy.totals.logical_bytes_known);
+        assert_eq!(bulk.issues.iter().map(|i| i.code).collect::<Vec<_>>(),
+            legacy.issues.iter().map(|i| i.code).collect::<Vec<_>>());
+        let limited = ScanLimits { max_entries: 2, ..limits };
+        let partial = scan_native(vec![root], &limited, &cancellation,
+            ScanTaskId::synthetic(3), TraversalPolicy::Default, |_| {}, None).unwrap();
+        assert!(!partial.complete);
+        assert!(partial.issues.iter().any(|i| i.code == ScanCode::EntryLimit));
+    }
 }
