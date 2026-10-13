@@ -386,3 +386,63 @@ Regression sources cover unread/last-record buffer lifetime, terminal errors,
 owned entries/held descriptors and byte-exact path limits/error paths including
 non-UTF8 names. No unit/UI tests, test binaries, harnesses or benchmarks were run.
 A new owner App scan and manual Stop check remain runtime acceptance work.
+
+### Idle-worker subtree lending and native-open attribution
+
+A pnpm store can have one version wrapper above both a content tree and a
+package-link tree. Root-only dispatch gave that wrapper to one worker, leaving
+peers idle regardless of the deeper fan-out. A fixed initial frontier was
+insufficient: a later heavy subtree still monopolized one worker. The scanner
+now lends admitted child directories only to already idle peers, using the
+existing bounded queue. A full queue stays local (workers never wait to submit).
+Root EOF no longer retires idle peers while another job can still lend work;
+queue termination requires no queued or active jobs.
+
+Every ancestor of a lent child keeps its descriptor, original stamp and counted
+path/handle permit until all worker jobs join. Only then are final change checks
+made and handles released. Retention is capped at one eighth of the existing
+open-handle budget, at most 16 ancestors across the scan. At the cap, traversal
+continues locally. No-follow flags, mount/dataless checks, directory and hardlink
+identity sets, size attributes, entry/depth/path/time bounds and cancellation
+remain; project artifact sizing keeps its existing outer scheduler.
+
+Debug native summaries split aggregate `open_us` into `open_api_us` (native
+open/openat boundary including its path argument conversion), `capture_us`
+(fstat), and root `volume_us`, with maximum native-open latency and a count of
+opens at least 10 ms. They also report bounded per-worker job counts, active
+traversal time and the slowest job path. These are overlapping worker wall times,
+not CPU time or additive end-to-end stages. They are not a per-file log.
+
+2026-10-13 production read-only observations on the same existing host trees:
+
+- Separate target directories identified the pre-allocation-change revision
+  `033e604` and current revision `0542355`; their pnpm sizing was 1.179 s and
+  0.950 s respectively. The same current code also ranged from about 0.98 to
+  2.62 s in other observations, so the preceding owner App's 9.81 s pnpm result
+  did not reproduce as a stable code regression. Cache/load were not controlled.
+- Pre-change DerivedData sizing was 47.161 s, current was 40.773 s, and another
+  pre-change observation was 45.761 s. Native-open aggregate time varied widely
+  while bulk-reading time was close. These observations do not isolate an OS
+  cause or establish statistical performance percentiles.
+- Final lending observation: pnpm sizing 0.654 s, complete with 62,715 entries,
+  58,126 regular-file identities and 4,590 directories. All eight workers took
+  jobs; peak handles were 57. Logical/allocated/private bytes matched the
+  comparison revisions exactly. This is a measured improvement in this CLI
+  observation, not an App latency guarantee.
+- DerivedData sizing was 39.587 s, complete with 4,202,783 entries, 3,820,855
+  regular-file identities, 381,711 directories and 218 unfollowed links. All
+  size totals matched; peak handles were 87, below the unchanged 128 allowance.
+  The 381,711 native opens took 52.316 s in aggregate, initial fstat only 0.109 s,
+  and bulk reads 240.462 s across workers. 51 opens exceeded 10 ms, maximum
+  146.509 ms. Native I/O still dominates; a durable DerivedData speedup over
+  current's 40.773 s is not established by one run.
+- Final full previews had zero issues, no legacy/stat fallback and no effects.
+  A real CLI Ctrl-C during DerivedData exited 130 with cancelled/partial status
+  and no effects. It is not a new GUI Stop-latency measurement.
+
+CLI build and engine/bindings regression-source compilation without execution
+passed. Added regression sources cover bounded delegation/idle-job completion,
+ancestor accounting/change checks, hardlink totals, cancellation, descriptor
+closure, policy restoration, resource limits, full queues and the project
+scheduler boundary. No unit/UI tests, test binaries, harnesses, benchmarks or
+UI automation were executed. New owner App timing/Stop acceptance is pending.

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Parallelize independent children of a cache root; each worker keeps a
-//! streaming DFS. The root stays open until all children finish, so its change
-//! check still covers the entire measurement. No per-file records are queued.
+//! streaming DFS, lending subtrees to idle peers with bounded retained ancestors.
+//! All lending ancestors stay open until every worker finishes, so change checks
+//! cover their descendants. No per-file records are queued.
 use super::*;
 use crate::scan::walk::{Backend, Cursor, ThreadPolicy};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -37,10 +38,14 @@ struct Frame<D> {
     _permit: Permit,
     path: PathBuf,
     depth: usize,
+    deferred_check: bool,
 }
 struct Queue<D> {
     jobs: VecDeque<Frame<D>>,
     producer_done: bool,
+    active: usize,
+    waiting: usize,
+    deferred_slots: usize,
 }
 type Sizes = (Option<u64>, Option<u64>, Option<u64>);
 struct Shared<'a, D> {
@@ -56,6 +61,7 @@ struct Shared<'a, D> {
     resources: Arc<Mutex<Resources>>,
     directories: Mutex<HashSet<FileIdentity>>,
     linked_files: Mutex<HashMap<FileIdentity, Sizes>>,
+    deferred: Mutex<Vec<Frame<D>>>,
     totals: Mutex<Summary>,
 }
 impl<D> Shared<'_, D> {
@@ -169,6 +175,29 @@ impl<D> Shared<'_, D> {
             self.wake.notify_all();
         }
     }
+    fn lend(&self, child: Frame<D>, ancestors: &mut [Frame<D>]) -> Option<Frame<D>> {
+        // Never wait while owning worker work: a full queue simply keeps DFS
+        // local. Projects retain their separately budgeted outer scheduler.
+        if self.project_budget.is_some() { return Some(child); }
+        let mut queue = lock(&self.queue);
+        let needed = ancestors.iter().filter(|f| !f.deferred_check).count();
+        // At most one eighth of the existing descriptor budget, capped at
+        // two ancestors per default worker. No extra resource allowance.
+        if queue.waiting == 0 || queue.jobs.len() >= self.limits.queue_capacity.min(self.limits.workers.min(8))
+            || queue.deferred_slots + needed > self.limits.max_open_dirs.saturating_div(8).min(16) || self.stopped.load(Ordering::Acquire) {
+            return Some(child);
+        }
+        queue.deferred_slots += needed;
+        for frame in ancestors { frame.deferred_check = true; }
+        queue.jobs.push_back(child);
+        self.wake.notify_all();
+        None
+    }
+    fn job_finished(&self) {
+        let mut queue = lock(&self.queue);
+        queue.active -= 1;
+        self.wake.notify_all();
+    }
     fn take(&self) -> Option<Frame<D>> {
         let mut queue = lock(&self.queue);
         loop {
@@ -176,16 +205,19 @@ impl<D> Shared<'_, D> {
                 return None;
             }
             if let Some(frame) = queue.jobs.pop_front() {
+                queue.active += 1;
                 self.wake.notify_all();
                 return Some(frame);
             }
-            if queue.producer_done {
+            if queue.producer_done && queue.active == 0 {
                 return None;
             }
+            queue.waiting += 1;
             queue = self
                 .wake
                 .wait(queue)
                 .unwrap_or_else(|error| error.into_inner());
+            queue.waiting -= 1;
         }
     }
 }
@@ -254,11 +286,15 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
             queue: Mutex::new(Queue {
                 jobs: VecDeque::new(),
                 producer_done: false,
+                active: 0,
+                waiting: 0,
+                deferred_slots: 0,
             }),
             wake: Condvar::new(),
             resources: Arc::new(Mutex::new(Resources::default())),
             directories: Mutex::new(HashSet::from([expected])),
             linked_files: Mutex::new(HashMap::new()),
+            deferred: Mutex::new(Vec::new()),
             totals: Mutex::new(empty_totals()),
         };
         let permit = shared.reserve(root)?;
@@ -286,6 +322,7 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
             _permit: permit,
             path: root.to_owned(),
             depth: 1,
+            deferred_check: false,
         };
         if project_budget.is_some() && limits.workers == 1 {
             // With no spare project slot, retain the single streaming DFS.
@@ -317,8 +354,24 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                         };
                         let policy = backend.enter_thread()?;
                         let result = (|| {
+                            #[cfg(debug_assertions)]
+                            let (mut jobs, mut active_us, mut slowest_us, mut slowest_path) = (0usize, 0u128, 0u128, PathBuf::new());
                             while let Some(frame) = shared.take() {
+                                #[cfg(debug_assertions)]
+                                let (job_started, job_path) = (Instant::now(), frame.path.clone());
                                 walk(shared, frame, false, &mut |_, _, _| {})?;
+                                shared.job_finished();
+                                #[cfg(debug_assertions)]
+                                {
+                                    jobs += 1;
+                                    let elapsed = job_started.elapsed().as_micros();
+                                    active_us += elapsed;
+                                    if elapsed > slowest_us { slowest_us = elapsed; slowest_path = job_path; }
+                                }
+                            }
+                            #[cfg(debug_assertions)]
+                            if jobs != 0 {
+                                eprintln!("[SayakaSizing] event=worker path={:?} index={index} jobs={jobs} active_us={active_us} slowest_job_us={slowest_us} slowest_path={slowest_path:?}", shared.root);
                             }
                             Ok(())
                         })();
@@ -377,6 +430,11 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                         failure.get_or_insert(error);
                     }
                 }
+                // All dynamically lent descendants are finished before any
+                // lending ancestor's final check or descriptor release.
+                for frame in lock(&shared.deferred).drain(..) {
+                    check_unchanged(&shared, &frame);
+                }
                 if let Some(frame) = retained_root {
                     check_unchanged(&shared, &frame);
                 }
@@ -389,9 +447,9 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
         #[cfg(debug_assertions)]
         {
             let totals = lock(&shared.totals);
-            eprintln!("[SayakaSizing] event=summary path={root:?} wall_us={} entries={} files={} links={} directory_identities={} peak_open={} workers_limit={} complete={} cancelled={} issues={}",
+            eprintln!("[SayakaSizing] event=summary path={root:?} wall_us={} entries={} files={} links={} directory_identities={} peak_open={} workers_limit={} deferred_ancestors={} complete={} cancelled={} issues={}",
                 shared.started.elapsed().as_micros(), totals.entries, totals.files, totals.links,
-                lock(&shared.directories).len(), lock(&shared.resources).peak_open, limits.workers,
+                lock(&shared.directories).len(), lock(&shared.resources).peak_open, limits.workers, lock(&shared.queue).deferred_slots,
                 totals.complete, totals.cancelled, totals.issues.len() + totals.omitted);
         }
         Ok(shared
@@ -432,13 +490,13 @@ fn walk<D: Cursor>(
                     shared.flush(&mut local)?;
                     return Ok(stack.pop());
                 }
-                check_unchanged(shared, frame);
-                stack.pop();
+                finish_frame(shared, stack.pop().expect("finished frame"));
                 continue;
             }
             Some(Err(error)) => {
                 shared.issue(&frame.path, error);
-                stack.pop();
+                let frame = stack.pop().expect("failed frame");
+                if frame.deferred_check { lock(&shared.deferred).push(frame); }
                 continue;
             }
             Some(Ok(item)) => item,
@@ -643,11 +701,12 @@ fn walk<D: Cursor>(
                     _permit: permit,
                     path: child_path,
                     depth: frame.depth + 1,
+                    deferred_check: false,
                 };
                 if producer {
                     shared.flush(&mut local)?;
                     shared.submit(child, progress);
-                } else {
+                } else if let Some(child) = shared.lend(child, &mut stack) {
                     stack.push(child);
                 }
             }
@@ -657,8 +716,17 @@ fn walk<D: Cursor>(
             ),
         }
     }
+    // Cancellation may stop a lender before EOF; keep its descriptors alive
+    // until the already dispatched work has also stopped and joined.
+    for frame in stack.into_iter().rev() {
+        if frame.deferred_check { lock(&shared.deferred).push(frame); }
+    }
     shared.flush(&mut local)?;
     Ok(None)
+}
+fn finish_frame<D: Cursor>(shared: &Shared<'_, D>, frame: Frame<D>) {
+    if frame.deferred_check { lock(&shared.deferred).push(frame); }
+    else { check_unchanged(shared, &frame); }
 }
 fn empty_totals() -> Summary {
     Summary {
@@ -682,5 +750,87 @@ fn device(identity: FileIdentity) -> u64 {
     match identity {
         FileIdentity::Unix { device, .. } => device,
         FileIdentity::Windows { volume_serial, .. } => volume_serial,
+    }
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::*;
+
+    fn shared<'a>(limits: &'a ScanLimits, cancellation: &'a Cancellation) -> Shared<'a, ()> {
+        Shared {
+            root: Path::new("/cache"), expected: FileIdentity::Unix { device: 1, inode: 1 },
+            limits, cancellation, started: Instant::now(), project_budget: None,
+            stopped: AtomicBool::new(false),
+            queue: Mutex::new(Queue { jobs: VecDeque::new(), producer_done: true, active: 1, waiting: 0, deferred_slots: 0 }),
+            wake: Condvar::new(), resources: Arc::new(Mutex::new(Resources::default())),
+            directories: Mutex::new(HashSet::new()), linked_files: Mutex::new(HashMap::new()),
+            deferred: Mutex::new(Vec::new()), totals: Mutex::new(empty_totals()),
+        }
+    }
+    fn frame(shared: &Shared<'_, ()>, name: &str) -> Frame<()> {
+        let path = shared.root.join(name);
+        Frame { directory: (), _permit: shared.reserve(&path).unwrap(), path, depth: 1, deferred_check: false }
+    }
+
+    #[test]
+    fn lending_requires_idle_capacity_and_reserves_every_ancestor_once() {
+        let limits = ScanLimits::default();
+        let cancellation = Cancellation::default();
+        let shared = shared(&limits, &cancellation);
+        let mut ancestors = vec![frame(&shared, "version"), frame(&shared, "version/files")];
+        assert!(shared.lend(frame(&shared, "local"), &mut ancestors).is_some());
+        assert!(ancestors.iter().all(|f| !f.deferred_check));
+        lock(&shared.queue).waiting = 1;
+        assert!(shared.lend(frame(&shared, "lent"), &mut ancestors).is_none());
+        assert!(ancestors.iter().all(|f| f.deferred_check));
+        assert_eq!(lock(&shared.queue).deferred_slots, 2);
+        assert!(shared.lend(frame(&shared, "also-lent"), &mut ancestors).is_none());
+        assert_eq!(lock(&shared.queue).deferred_slots, 2);
+        lock(&shared.queue).deferred_slots = 16;
+        let mut other = vec![frame(&shared, "other")];
+        assert!(shared.lend(frame(&shared, "over-cap"), &mut other).is_some());
+        assert!(!other[0].deferred_check);
+        lock(&shared.queue).jobs.clear();
+        drop(ancestors);
+        drop(other);
+        assert_eq!(lock(&shared.resources).open, 0);
+    }
+
+    #[test]
+    fn idle_worker_waits_for_active_lender_after_root_producer_finishes() {
+        let limits = ScanLimits::default();
+        let cancellation = Cancellation::default();
+        let shared = shared(&limits, &cancellation);
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| shared.take());
+            let until = Instant::now() + Duration::from_secs(2);
+            while lock(&shared.queue).waiting == 0 && Instant::now() < until {
+                std::thread::yield_now();
+            }
+            let waiting = lock(&shared.queue).waiting == 1;
+            if !waiting { shared.stop(); }
+            // Always release the waiter before assertions, even on failure.
+            shared.job_finished();
+            assert!(waiter.join().unwrap().is_none());
+            assert!(waiting, "root EOF must not retire workers while a lender is active");
+            assert_eq!(lock(&shared.queue).active, 0);
+        });
+    }
+
+    #[test]
+    fn lending_keeps_projects_and_full_queues_local() {
+        let limits = ScanLimits { queue_capacity: 1, ..ScanLimits::default() };
+        let cancellation = Cancellation::default();
+        let mut shared = shared(&limits, &cancellation);
+        lock(&shared.queue).waiting = 1;
+        let mut ancestors = vec![frame(&shared, "parent")];
+        lock(&shared.queue).jobs.push_back(frame(&shared, "queued"));
+        assert!(shared.lend(frame(&shared, "full"), &mut ancestors).is_some());
+        lock(&shared.queue).jobs.clear();
+        let budget = ProjectSizeBudget { visited: std::sync::atomic::AtomicUsize::new(0), max_entries: 100, deadline: Instant::now() + Duration::from_secs(1) };
+        shared.project_budget = Some(&budget);
+        assert!(shared.lend(frame(&shared, "project"), &mut ancestors).is_some());
+        assert!(!ancestors[0].deferred_check);
     }
 }
