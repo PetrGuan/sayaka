@@ -147,8 +147,22 @@ pub fn scan_preview(
     let index = ScanTree::build(report, cancellation)?;
     timings.index_us = micros(phase_started);
     let phase_started = Instant::now();
-    let mut preview = purge_preview(&index, &options, SystemTime::now())
-        .map_err(|s| ScanError::new(ScanCode::InvalidLimits, s))?;
+    let classified = if options.profile == PurgeProfile::DeveloperCaches {
+        let home = effective_account_home().map_err(|s| ScanError::new(ScanCode::InvalidRoot, s))?;
+        developer_cache_preview_with_progress(&index, &options, &home, &mut |phase, completed, total| {
+            if cancellation.is_cancelled() { return Err("classification cancelled".into()); }
+            progress(&ScanProgress {
+                classification: Some(crate::scan::ClassificationProgress { phase, completed, total }),
+                total_artifacts: 0, sized_artifacts: 0, task_id,
+                entries: observed, unique_files: index.report().totals.unique_files,
+                logical_bytes_known: index.report().totals.logical_bytes_known,
+                issues: index.report().issues.len(), elapsed_ms: started.elapsed().as_millis() as u64,
+            });
+            Ok(())
+        })
+    } else { purge_preview(&index, &options, SystemTime::now()) };
+    if cancellation.is_cancelled() { return Err(ScanError::new(ScanCode::Cancelled, "classification cancelled")); }
+    let mut preview = classified.map_err(|s| ScanError::new(ScanCode::InvalidLimits, s))?;
     timings.classification_us = micros(phase_started);
     let git_started = Instant::now();
     if options.profile == PurgeProfile::Projects {
@@ -257,6 +271,7 @@ pub fn scan_preview(
                 cancellation,
                 |entries, unique, bytes| {
                     progress(&ScanProgress {
+                        classification: None,
                         total_artifacts: 0,
                         sized_artifacts: 0,
                         task_id,

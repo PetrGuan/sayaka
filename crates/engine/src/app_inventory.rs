@@ -805,6 +805,23 @@ pub fn read_bundle_metadata_with_digest(
 pub fn read_bundle_metadata_before(
     bundle: &Path, deadline: Instant,
 ) -> Result<(StringField, StringField, [u8; 32], u64, u64), &'static str> {
+    read_bundle_metadata_before_diagnostic(bundle, deadline, &mut None)
+}
+
+/// Same bounded no-follow reader; adds context without changing legacy errors.
+pub(crate) fn read_bundle_identifier_diagnostic(
+    bundle: &Path,
+) -> Result<(StringField, [u8; 32], u64, u64), String> {
+    let mut detail = None;
+    read_bundle_metadata_before_diagnostic(
+        bundle, wall_clock_now() + Duration::from_secs(SINGLE_PLIST_SECONDS), &mut detail,
+    ).map(|(id, _, hash, dev, ino)| (id, hash, dev, ino))
+     .map_err(|stage| format!("manifest {:?}: {}", bundle.join("Contents/Info.plist"), detail.unwrap_or_else(|| stage.to_owned())))
+}
+
+fn read_bundle_metadata_before_diagnostic(
+    bundle: &Path, deadline: Instant, detail: &mut Option<String>,
+) -> Result<(StringField, StringField, [u8; 32], u64, u64), &'static str> {
     if wall_clock_now() >= deadline { return Err("plist budget"); }
     use sha2::{Digest, Sha256};
     use std::io::Read;
@@ -837,7 +854,10 @@ pub fn read_bundle_metadata_before(
     };
     let mut budget = ProbeBudget::default();
     let parsed = parse_info_plist(&bytes, context, &mut budget)
-        .map_err(|_| "Info.plist cannot be parsed")?;
+        .map_err(|error| {
+            *detail = Some(format!("{}: {}", error.code.as_str(), error.message));
+            "Info.plist cannot be parsed"
+        })?;
     if wall_clock_now() >= deadline { return Err("plist budget"); }
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
     #[cfg(unix)]
@@ -3020,6 +3040,19 @@ mod tests {
             read_bundle_identifier(&bare),
             BundleIdentifierRead::Unreadable(_)
         ));
+    }
+
+    #[test]
+    fn identifier_diagnostic_names_manifest_and_parser_category() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("Malformed.app");
+        std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+        std::fs::write(bundle.join("Contents/Info.plist"), b"not a plist: private sentinel").unwrap();
+        let error = read_bundle_identifier_diagnostic(&bundle).unwrap_err();
+        assert!(error.contains("Malformed.app/Contents/Info.plist"));
+        assert!(error.contains("unsupported_plist_format"));
+        assert!(!error.contains("private sentinel"));
+        assert!(matches!(read_bundle_identifier(&bundle), BundleIdentifierRead::Unreadable("Info.plist cannot be parsed")));
     }
 
     #[test]

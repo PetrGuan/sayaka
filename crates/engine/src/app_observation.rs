@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Shared bounded copy observations for installed-cache and orphan contracts.
 use crate::{
-    app_inventory::{StringState, read_bundle_identifier_with_digest},
+    app_inventory::{StringState, read_bundle_identifier_diagnostic},
     related_uninstall::absent_without_links,
 };
 use sayaka_platform_macos::{
@@ -35,7 +35,7 @@ impl Bundle {
             return Err(error("copies_unknown: not a directory"));
         }
         let manifest = orphans::exact(&path.join("Contents/Info.plist"))?;
-        let (id, digest, dev, ino) = read_bundle_identifier_with_digest(path).map_err(error)?;
+        let (id, digest, dev, ino) = read_bundle_identifier_diagnostic(path).map_err(error)?;
         let id = id
             .value
             .filter(|_| id.state == StringState::Present)
@@ -69,7 +69,7 @@ impl Bundle {
         self.bundle.revalidate()?;
         self.manifest.revalidate()?;
         let (id, digest, dev, ino) =
-            read_bundle_identifier_with_digest(&self.path).map_err(error)?;
+            read_bundle_identifier_diagnostic(&self.path).map_err(error)?;
         if id.state != StringState::Present
             || id.value.as_deref() != Some(&self.id)
             || digest != self.digest
@@ -132,6 +132,16 @@ pub fn inventory(
     deadline: Instant,
     remaining: &std::cell::Cell<usize>,
 ) -> io::Result<Vec<Bundle>> {
+    inventory_with_progress(roots, deadline, remaining, &mut |_| Ok(()))
+}
+
+/// Called before traversal and after each captured application. Zero total is
+/// intentional: enumeration has not yet established a trustworthy denominator.
+pub(crate) fn inventory_with_progress(
+    roots: &[Root], deadline: Instant, remaining: &std::cell::Cell<usize>,
+    progress: &mut impl FnMut(usize) -> io::Result<()>,
+) -> io::Result<Vec<Bundle>> {
+    progress(0)?;
     let mut result = Vec::new();
     let mut count = 0;
     for root in roots {
@@ -141,12 +151,14 @@ pub fn inventory(
         }
         let mut stack = vec![(root.path.clone(), 0)];
         while let Some((p, depth)) = stack.pop() {
+            progress(result.len())?;
             if Instant::now() >= deadline || depth > 32 {
                 return Err(error("copies_unknown: budget"));
             }
             let w = orphans::exact(&p)?;
             if p.extension().is_some_and(|e| e == "app") {
                 result.push(Bundle::capture(&p)?);
+                progress(result.len())?;
                 continue;
             }
             for entry in std::fs::read_dir(&p)? {
@@ -160,6 +172,7 @@ pub fn inventory(
                 if ty.is_symlink() {
                     if entry.path() == Path::new(platform::system_safari::ENTRY) {
                         result.push(Bundle::capture_system_safari()?);
+                        progress(result.len())?;
                         continue;
                     }
                     return Err(error("copies_unknown: symlink"));
@@ -196,13 +209,26 @@ pub fn copies(
     deadline: Instant,
     remaining: &std::cell::Cell<usize>,
 ) -> io::Result<Copies> {
+    for bundle in inventory {
+        if Instant::now() >= deadline { return Err(error("copies_unknown: deadline")); }
+        bundle.revalidate()?;
+    }
+    copies_from_snapshot(id, inventory, deadline, remaining)
+}
+
+/// Preview-only use of an inventory captured in this same classification.
+/// Matching owners are still captured/revalidated by the caller; execution
+/// always rebuilds the inventory through the ordinary capture path.
+pub(crate) fn copies_from_snapshot(
+    id: &str, inventory: &[Bundle], deadline: Instant,
+    remaining: &std::cell::Cell<usize>,
+) -> io::Result<Copies> {
     let mut paths = BTreeSet::new();
     let mut stale = Vec::new();
     for b in inventory {
         if Instant::now() >= deadline {
             return Err(error("copies_unknown: deadline"));
         }
-        b.revalidate()?;
         if b.id == id {
             paths.insert(b.path.clone());
         }
@@ -249,4 +275,28 @@ pub fn consume(remaining: &std::cell::Cell<usize>) -> io::Result<()> {
         .ok_or_else(|| error("discovery_entry_budget_exhausted"))?;
     remaining.set(next);
     Ok(())
+}
+
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    #[test]
+    fn inventory_progress_counts_captured_apps_and_obeys_cancellation() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        let bundle = base.join("Sample.app/Contents");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("Info.plist"), b"<plist><dict><key>CFBundleIdentifier</key><string>org.example.sample</string></dict></plist>").unwrap();
+        let roots = vec![Root::capture(base, false).unwrap()];
+        let mut seen = Vec::new();
+        let inventory = inventory_with_progress(&roots, Instant::now() + std::time::Duration::from_secs(5),
+            &std::cell::Cell::new(100), &mut |n| { seen.push(n); Ok(()) }).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(seen.first(), Some(&0));
+        assert_eq!(seen.last(), Some(&1));
+        let error = inventory_with_progress(&roots, Instant::now() + std::time::Duration::from_secs(5),
+            &std::cell::Cell::new(100), &mut |_| Err(io::Error::other("cancelled"))).err().unwrap();
+        assert_eq!(error.to_string(), "cancelled");
+    }
 }

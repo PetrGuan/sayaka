@@ -1398,6 +1398,7 @@ pub(super) fn run_with_policy<B: Backend>(
 
 fn progress_state(report: &ScanReport, started: Instant) -> ScanProgress {
     ScanProgress {
+        classification: None,
         total_artifacts: 0,
         sized_artifacts: 0,
         task_id: report.task_id,

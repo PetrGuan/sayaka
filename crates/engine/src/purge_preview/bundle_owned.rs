@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Retained, independently revalidated ownership evidence. No filesystem effects.
 use super::*;
-use crate::app_inventory::{StringState, read_bundle_identifier_with_digest};
+use crate::app_inventory::{StringState, read_bundle_identifier_diagnostic};
 use sayaka_platform_macos::related::{self, PathWitness};
 use std::sync::Arc;
 use std::time::Instant;
@@ -94,7 +94,7 @@ pub struct Proof {
     id: String,
     cache: PathWitness,
     owners: Vec<Owner>,
-    system_inventory: Vec<crate::app_observation::Bundle>,
+    system_inventory: Arc<Vec<crate::app_observation::Bundle>>,
     digest: [u8; 32],
     policy: CachePolicy,
 }
@@ -131,7 +131,7 @@ impl Proof {
         self.cache
             .revalidate()
             .map_err(|_| "resource_changed: cache identity".to_owned())?;
-        for bundle in &self.system_inventory { bundle.revalidate().map_err(|e| e.to_string())?; }
+        for bundle in self.system_inventory.iter().filter(|b| b.is_system_safari()) { bundle.revalidate().map_err(|e| e.to_string())?; }
         for owner in &self.owners {
             owner
                 .bundle
@@ -150,7 +150,7 @@ impl Proof {
         let deadline = Instant::now() + Duration::from_secs(30);
         let fresh = capture(path, home, &self.policy, deadline)?
             .ok_or("resource_changed: owner removed")?;
-        if fresh.digest != self.digest || fresh.system_inventory.len() != self.system_inventory.len() {
+        if fresh.digest != self.digest || fresh.system_inventory.iter().filter(|b| b.is_system_safari()).count() != self.system_inventory.iter().filter(|b| b.is_system_safari()).count() {
             return Err("resource_changed: owner evidence".into());
         }
         if fresh.idle(deadline)? {
@@ -232,6 +232,17 @@ fn capture(
     policy: &CachePolicy,
     deadline: Instant,
 ) -> Result<Option<Arc<Proof>>, String> {
+    let roots = crate::app_observation::roots(home, &[]).map_err(|e| e.to_string())?;
+    let inventory = Arc::new(crate::app_observation::inventory(
+        &roots, deadline, &std::cell::Cell::new(10_000),
+    ).map_err(|e| e.to_string())?);
+    capture_with_inventory(path, home, policy, deadline, &inventory)
+}
+
+fn capture_with_inventory(
+    path: &Path, home: &Path, policy: &CachePolicy, deadline: Instant,
+    inventory: &Arc<Vec<crate::app_observation::Bundle>>,
+) -> Result<Option<Arc<Proof>>, String> {
     if Instant::now() >= deadline {
         return Err("owner discovery budget exhausted".into());
     }
@@ -243,10 +254,8 @@ fn capture(
     if !cache.is_directory() {
         return Err("cache is not a real directory".into());
     }
-    let roots = crate::app_observation::roots(home, &[]).map_err(|e| e.to_string())?;
     let remaining = std::cell::Cell::new(10_000);
-    let inventory = crate::app_observation::inventory(&roots, deadline, &remaining).map_err(|e| e.to_string())?;
-    let observed = crate::app_observation::copies(&id, &inventory, deadline, &remaining).map_err(|e| e.to_string())?;
+    let observed = crate::app_observation::copies_from_snapshot(&id, inventory, deadline, &remaining).map_err(|e| e.to_string())?;
     let mut paths = observed.paths;
     paths.sort();
     paths.dedup();
@@ -276,7 +285,7 @@ fn capture(
         let manifest =
             PathWitness::capture(&path.join("Contents/Info.plist")).map_err(|e| e.to_string())?;
         let (field, digest, dev, ino) =
-            read_bundle_identifier_with_digest(&path).map_err(str::to_owned)?;
+            read_bundle_identifier_diagnostic(&path)?;
         if field.state != StringState::Present
             || field.value.as_deref() != Some(&id)
             || manifest.identity() != (dev, ino)
@@ -307,7 +316,7 @@ fn capture(
         id,
         cache,
         owners,
-        system_inventory: inventory.into_iter().filter(crate::app_observation::Bundle::is_system_safari).collect(),
+        system_inventory: Arc::clone(inventory),
         digest: hash.finalize().into(),
         policy: policy.clone(),
     })))
@@ -319,6 +328,7 @@ pub(super) fn append(
     policy: Option<&CachePolicy>,
     deadline: Option<Instant>,
     candidates: &mut Vec<DeveloperCacheCandidate>,
+    progress: &mut impl FnMut(u32, u64, u64) -> Result<(), String>,
 ) -> Result<Vec<crate::scan::ScanIssue>, String> {
     let deadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(30));
     let mut issues = Vec::new();
@@ -339,6 +349,10 @@ pub(super) fn append(
             &default
         }
     };
+    let mut inventory = None;
+    let total = index.report().entries.iter().filter(|entry| entry.kind == ResourceKind::Directory
+        && !entry.dataless && !policy.excludes(&entry.path) && eligible_id(&entry.path, home).is_some()).count() as u64;
+    let mut completed = 0;
     for entry in &index.report().entries {
         if entry.kind != ResourceKind::Directory
             || entry.dataless
@@ -354,7 +368,23 @@ pub(super) fn append(
             ));
             break;
         }
-        let proof = match capture(&entry.path, home, policy, deadline) {
+        if inventory.is_none() {
+            let observed = (|| {
+                let roots = crate::app_observation::roots(home, &[]).map_err(|e| e.to_string())?;
+                crate::app_observation::inventory_with_progress(&roots, deadline, &std::cell::Cell::new(10_000),
+                    &mut |count| progress(1, count as u64, 0).map_err(std::io::Error::other))
+                    .map(Arc::new).map_err(|e| e.to_string())
+            })();
+            match observed {
+                Ok(value) => inventory = Some(value),
+                Err(error) => { issues.push(issue(&entry.path, error)); break; }
+            }
+        }
+        progress(2, completed, total)?;
+        let captured = capture_with_inventory(&entry.path, home, policy, deadline, inventory.as_ref().unwrap());
+        completed += 1;
+        progress(2, completed, total)?;
+        let proof = match captured {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {

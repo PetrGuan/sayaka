@@ -119,6 +119,20 @@ pub struct SayakaPurgeSnapshotV1 {
     pub elapsed_ms: u64,
 }
 
+/// Additive poll layout; legacy V1 storage and reserved fields are unchanged.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SayakaPurgeSnapshotV2 {
+    pub abi_version: u32,
+    pub struct_size: u32,
+    pub snapshot: SayakaPurgeSnapshotV1,
+    /// 0 = ordinary progress, 1 = application inventory, 2 = cache owners.
+    pub classification_phase: u32,
+    pub reserved: u32,
+    pub classification_completed: u64,
+    pub classification_total: u64,
+}
+
 pub(super) struct PurgePreviewJob {
     task: PurgePreviewTask,
     policy: Option<PurgePolicy>,
@@ -1322,52 +1336,82 @@ pub unsafe extern "C" fn sayaka_purge_poll_v1(
         pointer(out_snapshot)?;
         // SAFETY: Caller supplies aligned writable snapshot storage.
         unsafe { out_snapshot.write(SayakaPurgeSnapshotV1::default()) };
-        let slot = get_purge(handle)?;
-        let mut job = lock_job(&slot)?;
-        job.ensure_open()?;
-        let mut out = SayakaPurgeSnapshotV1 {
-            abi_version: ABI_VERSION,
-            struct_size: size_of::<SayakaPurgeSnapshotV1>() as u32,
-            ..Default::default()
-        };
-        match &mut *job {
-            PurgeJob::Preview(job) => {
-                out.kind = 1;
-                let snapshot = job.task.poll().map_err(|_| INTERNAL_ERROR)?;
-                out.state = match snapshot.state {
-                    ScanTaskState::Running => 1,
-                    ScanTaskState::Complete => 2,
-                    ScanTaskState::Partial => 3,
-                    ScanTaskState::Cancelled => 4,
-                    ScanTaskState::Failed => 5,
-                };
-                out.cancellation_requested = u32::from(snapshot.cancellation_requested);
-                out.progress_sequence = snapshot.progress_sequence;
-                if let Some(progress) = snapshot.progress {
-                    out.has_progress = 1;
-                    out.total_items = progress.total_artifacts as u64;
-                    out.completed_items = progress.sized_artifacts as u64;
-                    out.observed_entries = progress.entries as u64;
-                    out.unique_files = progress.unique_files;
-                    out.logical_bytes_known = progress.logical_bytes_known;
-                    out.elapsed_ms = progress.elapsed_ms;
-                }
-            }
-            PurgeJob::Execution(job) => {
-                collect_execution(job);
-                out.kind = 2;
-                out.state = match &job.result {
-                    None => 1,
-                    Some(Ok(_)) => 2,
-                    Some(Err(_)) => 5,
-                };
-                out.cancellation_requested = u32::from(job.cancel.is_cancelled());
-            }
-        }
+        let (out, _) = poll_snapshot(handle)?;
         // SAFETY: Caller owns writable output for this call.
         unsafe { out_snapshot.write(out) };
         Ok(())
     })
+}
+
+/// Same atomic task observation with separate classification counters.
+/// # Safety
+/// out_snapshot is aligned writable V2 storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sayaka_purge_poll_v2(handle: u64, out_snapshot: *mut SayakaPurgeSnapshotV2) -> i32 {
+    boundary(|| {
+        pointer(out_snapshot)?;
+        // SAFETY: caller supplies aligned writable V2 storage.
+        unsafe { out_snapshot.write(SayakaPurgeSnapshotV2::default()) };
+        let (snapshot, classification) = poll_snapshot(handle)?;
+        let mut out = SayakaPurgeSnapshotV2 { abi_version: 2,
+            struct_size: size_of::<SayakaPurgeSnapshotV2>() as u32, snapshot, ..Default::default() };
+        if let Some(c) = classification {
+            out.classification_phase = c.phase;
+            out.classification_completed = c.completed;
+            out.classification_total = c.total;
+        }
+        // SAFETY: caller owns writable output for this call.
+        unsafe { out_snapshot.write(out) };
+        Ok(())
+    })
+}
+
+fn poll_snapshot(handle: u64) -> Result<(SayakaPurgeSnapshotV1, Option<sayaka_engine::scan::ClassificationProgress>), i32> {
+    let slot = get_purge(handle)?;
+    let mut job = lock_job(&slot)?;
+    job.ensure_open()?;
+    let mut classification = None;
+    let mut out = SayakaPurgeSnapshotV1 {
+        abi_version: ABI_VERSION,
+        struct_size: size_of::<SayakaPurgeSnapshotV1>() as u32,
+        ..Default::default()
+    };
+    match &mut *job {
+        PurgeJob::Preview(job) => {
+            out.kind = 1;
+            let snapshot = job.task.poll().map_err(|_| INTERNAL_ERROR)?;
+            out.state = match snapshot.state {
+                ScanTaskState::Running => 1,
+                ScanTaskState::Complete => 2,
+                ScanTaskState::Partial => 3,
+                ScanTaskState::Cancelled => 4,
+                ScanTaskState::Failed => 5,
+            };
+            out.cancellation_requested = u32::from(snapshot.cancellation_requested);
+            out.progress_sequence = snapshot.progress_sequence;
+            if let Some(progress) = snapshot.progress {
+                classification = progress.classification;
+                out.has_progress = 1;
+                out.total_items = progress.total_artifacts as u64;
+                out.completed_items = progress.sized_artifacts as u64;
+                out.observed_entries = progress.entries as u64;
+                out.unique_files = progress.unique_files;
+                out.logical_bytes_known = progress.logical_bytes_known;
+                out.elapsed_ms = progress.elapsed_ms;
+            }
+        }
+        PurgeJob::Execution(job) => {
+            collect_execution(job);
+            out.kind = 2;
+            out.state = match &job.result {
+                None => 1,
+                Some(Ok(_)) => 2,
+                Some(Err(_)) => 5,
+            };
+            out.cancellation_requested = u32::from(job.cancel.is_cancelled());
+        }
+    }
+    Ok((out, classification))
 }
 
 #[unsafe(no_mangle)]
