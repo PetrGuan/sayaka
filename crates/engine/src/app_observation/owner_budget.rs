@@ -14,6 +14,7 @@ const CAPACITY: usize = 2;
 const OWNER_BUDGET: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(25);
 const LOG_LIMIT: usize = 256;
+const SLOW_LOG_LIMIT: usize = 32;
 
 struct Slot(Arc<AtomicUsize>);
 impl Slot {
@@ -65,9 +66,11 @@ impl Control {
             "copies_unknown: operation={operation} path={path:?} operation_us={}: {e}", started.elapsed().as_micros())))
     }
     fn log(&self, event: &str, operation: &str, path: &Path, operation_us: u128) {
-        // One shared cap for all candidate workers in this classification.
+        // Reserve a bounded tail for slow completed operations even after early
+        // owners exhaust routine detail. Both limits share one classification counter.
+        let limit = if event == "end" && operation_us >= 50_000 { LOG_LIMIT + SLOW_LOG_LIMIT } else { LOG_LIMIT };
         if self.logs.fetch_update(Ordering::Relaxed, Ordering::Relaxed,
-            |n| (n < LOG_LIMIT).then_some(n + 1)).is_ok() {
+            |n| (n < limit).then_some(n + 1)).is_ok() {
             super::diagnostics::debug_line(format_args!(
                 "event=owner_{event} operation={operation} path={path:?} operation_us={operation_us} elapsed_us={} remaining_ms={}",
                 self.started.elapsed().as_micros(), self.deadline.saturating_duration_since(Instant::now()).as_millis()));
