@@ -24,9 +24,13 @@ pub struct Bundle {
     pub manifest: PathWitness,
     pub digest: [u8; 32],
     system_safari: Option<platform::system_safari::Observation>,
+    application_link: Option<platform::application_link::Link>,
 }
 impl Bundle {
     pub fn capture(path: &Path) -> io::Result<Self> {
+        Self::capture_inner(path).map_err(|e| error(format!("application path={path:?}: {e}")))
+    }
+    fn capture_inner(path: &Path) -> io::Result<Self> {
         if path.extension().is_none_or(|e| e != "app") {
             return Err(error("copies_unknown: not an app"));
         }
@@ -53,6 +57,7 @@ impl Bundle {
             manifest,
             digest,
             system_safari: None,
+            application_link: None,
         })
     }
     fn capture_system_safari() -> io::Result<Self> {
@@ -63,9 +68,34 @@ impl Bundle {
         bundle.revalidate()?;
         Ok(bundle)
     }
+    fn capture_application_link(path: &Path, roots: &[Root]) -> io::Result<Self> {
+        let link = platform::application_link::Link::capture(path).map_err(|e|
+            error(format!("copies_unknown: application link source={path:?} target=unavailable: {e}")))?;
+        let target = application_link_target(path, link.target());
+        let result = (|| {
+            let target = target.as_ref().map_err(error)?;
+            let root = roots.iter().find(|r| !r.absent && target != &r.path && target.starts_with(&r.path))
+                .ok_or_else(|| error("target outside application roots"))?;
+            root.revalidate()?;
+            // Bundle::capture refuses ALL further links, including ancestors.
+            let bundle = Self::capture(target)?;
+            link.revalidate()?;
+            root.revalidate()?;
+            bundle.revalidate()?;
+            Ok(bundle)
+        })();
+        let mut bundle: Self = result.map_err(|e: io::Error| error(format!(
+            "copies_unknown: application link source={path:?} target={:?} resolved={target:?}: {e}", link.target())))?;
+        bundle.application_link = Some(link);
+        Ok(bundle)
+    }
+    pub fn has_indirection(&self) -> bool {
+        self.is_system_safari() || self.application_link.is_some()
+    }
     pub fn is_system_safari(&self) -> bool { self.system_safari.is_some() }
     pub fn revalidate(&self) -> io::Result<()> {
         if let Some(observation) = &self.system_safari { observation.revalidate()?; }
+        if let Some(link) = &self.application_link { link.revalidate()?; }
         self.bundle.revalidate()?;
         self.manifest.revalidate()?;
         let (id, digest, dev, ino) =
@@ -77,9 +107,36 @@ impl Bundle {
         {
             return Err(error("resource_changed"));
         }
+        if let Some(link) = &self.application_link { link.revalidate()?; }
         Ok(())
     }
 }
+/// Lexical single-hop target only; filesystem resolution remains no-follow.
+fn application_link_target(source: &Path, raw: &Path) -> io::Result<PathBuf> {
+    use std::{os::unix::ffi::OsStrExt, path::Component};
+    if raw.as_os_str().is_empty() || raw.as_os_str().as_bytes().len() >= 4096 {
+        return Err(error("invalid link target"));
+    }
+    let joined = if raw.is_absolute() { raw.to_owned() } else {
+        source.parent().ok_or_else(|| error("invalid link parent"))?.join(raw)
+    };
+    let mut target = PathBuf::new();
+    for part in joined.components() {
+        match part {
+            Component::RootDir => target.push("/"),
+            Component::Normal(p) => target.push(p),
+            Component::CurDir => (),
+            // Refuse ambiguous traversal through a link before '..'. Supporting
+            // sibling/child shortcuts needs no parent traversal on this path.
+            Component::ParentDir | Component::Prefix(_) => return Err(error("unsupported parent traversal")),
+        }
+    }
+    if !target.is_absolute() || target.as_os_str().as_bytes().len() >= 4096 {
+        return Err(error("invalid resolved target"));
+    }
+    Ok(target)
+}
+
 pub struct Root {
     pub path: PathBuf,
     pub witness: PathWitness,
@@ -132,7 +189,7 @@ pub fn inventory(
     deadline: Instant,
     remaining: &std::cell::Cell<usize>,
 ) -> io::Result<Vec<Bundle>> {
-    inventory_with_progress(roots, deadline, remaining, &mut |_| Ok(()))
+    inventory_observed(roots, deadline, remaining, &mut |_| Ok(()), false)
 }
 
 /// Called before traversal and after each captured application. Zero total is
@@ -140,6 +197,12 @@ pub fn inventory(
 pub(crate) fn inventory_with_progress(
     roots: &[Root], deadline: Instant, remaining: &std::cell::Cell<usize>,
     progress: &mut impl FnMut(usize) -> io::Result<()>,
+) -> io::Result<Vec<Bundle>> {
+    inventory_observed(roots, deadline, remaining, progress, true)
+}
+fn inventory_observed(
+    roots: &[Root], deadline: Instant, remaining: &std::cell::Cell<usize>,
+    progress: &mut impl FnMut(usize) -> io::Result<()>, allow_application_links: bool,
 ) -> io::Result<Vec<Bundle>> {
     progress(0)?;
     let mut result = Vec::new();
@@ -175,14 +238,19 @@ pub(crate) fn inventory_with_progress(
                         progress(result.len())?;
                         continue;
                     }
-                    return Err(error("copies_unknown: symlink"));
+                    if allow_application_links {
+                        result.push(Bundle::capture_application_link(&entry.path(), roots)?);
+                        progress(result.len())?;
+                        continue;
+                    }
+                    return Err(error(format!("copies_unknown: symlink source={:?} target={:?}", entry.path(), std::fs::read_link(entry.path()))));
                 }
                 if !ty.is_dir()
                     && (!ty.is_file()
                         || entry.path().extension().is_some_and(|e| e == "app")
                         || orphans::is_finder_alias(&entry.path())?)
                 {
-                    return Err(error("copies_unknown: alias or unsupported entry"));
+                    return Err(error(format!("copies_unknown: alias or unsupported entry path={:?}", entry.path())));
                 }
                 if ty.is_dir() {
                     let p = entry.path();
@@ -238,6 +306,7 @@ pub(crate) fn copies_from_snapshot(
         if Instant::now() >= deadline {
             return Err(error("copies_unknown: deadline"));
         }
+        let p = observed_application_path(&p, id, inventory)?;
         if absent_without_links(&p)? {
             stale.push(p);
             continue;
@@ -252,7 +321,9 @@ pub(crate) fn copies_from_snapshot(
     for _ in &spotlight {
         consume(remaining)?;
     }
-    paths.extend(spotlight.iter().cloned());
+    for p in &spotlight {
+        paths.insert(observed_application_path(p, id, inventory)?);
+    }
     if paths.len() > 256 || Instant::now() >= deadline {
         return Err(error("copies_unknown: limit"));
     }
@@ -261,6 +332,16 @@ pub(crate) fn copies_from_snapshot(
         spotlight,
         stale,
     })
+}
+/// Normalize only links already verified in this same inventory; a registry
+/// or Spotlight result alone never grants permission to follow a new link.
+fn observed_application_path(path: &Path, id: &str, inventory: &[Bundle]) -> io::Result<PathBuf> {
+    if let Some(bundle) = inventory.iter().find(|b| b.application_link.as_ref().is_some_and(|l| l.path() == path)) {
+        bundle.revalidate()?;
+        if bundle.id != id { return Err(error("copies_unknown: linked application identity mismatch")); }
+        return Ok(bundle.path.clone());
+    }
+    Ok(path.to_owned())
 }
 pub fn live_path(path: &Path) -> PathBuf {
     path.strip_prefix("/System/Volumes/Data")
@@ -298,5 +379,69 @@ mod progress_tests {
         let error = inventory_with_progress(&roots, Instant::now() + std::time::Duration::from_secs(5),
             &std::cell::Cell::new(100), &mut |_| Err(io::Error::other("cancelled"))).err().unwrap();
         assert_eq!(error.to_string(), "cancelled");
+    }
+}
+
+#[cfg(test)]
+mod application_link_tests {
+    use super::*;
+    use std::{cell::Cell, os::unix::fs::symlink, time::Duration};
+    fn app(base: &Path, name: &str) -> PathBuf {
+        let p = base.join(name);
+        std::fs::create_dir_all(p.join("Contents")).unwrap();
+        std::fs::write(p.join("Contents/Info.plist"), b"<plist><dict><key>CFBundleIdentifier</key><string>org.example.fixture</string></dict></plist>").unwrap();
+        p
+    }
+    fn observed(roots: &[Root]) -> io::Result<Vec<Bundle>> {
+        inventory_with_progress(roots, Instant::now() + Duration::from_secs(10), &Cell::new(100), &mut |_| Ok(()))
+    }
+    #[test]
+    fn accepts_absolute_and_relative_helper_shortcuts_but_not_orphan_inventory() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        let target = app(&base, "Main.app/Contents/Helpers/Helper.app");
+        app(&base, "Main.app");
+        symlink("Main.app/Contents/Helpers/Helper.app", base.join("Helper.app")).unwrap();
+        symlink(&target, base.join("Uninstall helper")).unwrap();
+        let roots = vec![Root::capture(base.clone(), false).unwrap()];
+        let bundles = observed(&roots).unwrap();
+        assert_eq!(bundles.iter().filter(|b| b.application_link.is_some()).count(), 2);
+        assert_eq!(observed_application_path(&base.join("Helper.app"), "org.example.fixture", &bundles).unwrap(), target);
+        assert!(observed_application_path(&base.join("Helper.app"), "org.example.other", &bundles).is_err());
+        assert!(inventory(&roots, Instant::now() + Duration::from_secs(10), &Cell::new(100)).is_err());
+    }
+    #[test]
+    fn replacing_a_link_invalidates_retained_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        app(&base, "First.app"); app(&base, "Other.app");
+        let source = base.join("Shortcut.app");
+        symlink("First.app", &source).unwrap();
+        let roots = vec![Root::capture(base, false).unwrap()];
+        let bundle = Bundle::capture_application_link(&source, &roots).unwrap();
+        std::fs::remove_file(&source).unwrap();
+        symlink("Other.app", &source).unwrap();
+        assert!(bundle.revalidate().is_err());
+    }
+    #[test]
+    fn unsupported_targets_remain_unknown_with_source_and_target_diagnostics() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let external = app(&std::fs::canonicalize(outside.path()).unwrap(), "External.app");
+        app(&base, "Real.app");
+        std::fs::create_dir(base.join("Folder")).unwrap();
+        symlink("Real.app", base.join("Chain.app")).unwrap();
+        let roots = vec![Root::capture(base.clone(), false).unwrap()];
+        let source = base.join("Shortcut.app");
+        for target in [PathBuf::from("Missing.app"), PathBuf::from("Folder"), PathBuf::from("Chain.app"), PathBuf::from("Shortcut.app"), PathBuf::from("../External.app"), external] {
+            symlink(&target, &source).unwrap();
+            let message = Bundle::capture_application_link(&source, &roots).err().unwrap().to_string();
+            assert!(message.contains("copies_unknown"));
+            assert!(message.contains("Shortcut.app"));
+            assert!(message.contains(&format!("target={target:?}")));
+            assert!(message.contains("resolved="));
+            std::fs::remove_file(&source).unwrap();
+        }
     }
 }

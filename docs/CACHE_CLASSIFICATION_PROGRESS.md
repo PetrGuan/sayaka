@@ -15,3 +15,30 @@ Validation plan: compile engine/bindings and regression sources only; do not exe
 The bounded XML plist reader also accepts the exact `-//Apple Computer//DTD PLIST 1.0//EN` public identifier paired with the existing `http://www.apple.com/DTDs/PropertyList-1.0.dtd` URI. The existing `-//Apple//DTD PLIST 1.0//EN` declaration remains accepted. These two declarations are inert whitelisted text: no DTD is downloaded or resolved. Other identifiers/locations, internal subsets (including entity declarations), and unknown general entities remain rejected; predefined XML and valid numeric character references retain their existing handling and budgets. No permissive DTD parser or resolver is introduced.
 
 Regression sources cover both accepted declarations, predefined/numeric references, unknown entities, internal/general/parameter entity subsets, alternate public IDs and network/file/SYSTEM declarations. Engine/bindings and test sources passed `cargo check --locked -p sayaka-engine -p sayaka-bindings --tests`; no tests or harnesses executed. Full application inventory completion and real scan timing remain owner acceptance work.
+
+## Application shortcut observations (#158)
+
+Installed-cache classification accepts a single application shortcut link only
+when its absolute or child-relative target remains inside an already captured
+application root and ends in a real `.app` bundle with a readable, valid bundle
+identifier. Extensionless shortcut names are supported (for example an
+uninstaller pointing into an application's `Contents/Helpers`). Parent (`..`)
+traversal, intermediate/target links, dangling links, non-app targets, and targets
+outside these roots remain unknown. The existing signed system Safari exception
+is unchanged. Generic orphan inventory retains its previous stricter policy.
+
+The platform holds the shortcut inode and no-follow parent descriptors and checks
+identity, metadata, ACL and raw target text. The engine captures the destination
+with the existing no-follow bundle/manifest witnesses. Registry and Spotlight
+paths normalize only aliases already verified in this inventory; they cannot
+introduce another link-following permission. Execution revalidates retained link
+evidence and rebuilds inventory. This observation does not admit links or app
+bundles as cleanup targets or bypass running/unknown-owner protection.
+
+A rejected shortcut reports its source, raw target (or unavailable), lexically
+resolved candidate and failure reason. `resolved` is not a claim that the target
+was successfully opened. Paths are quoted to distinguish embedded newlines.
+Regression sources cover accepted helper shortcuts, replacement, unknown targets
+and preservation of strict orphan inventory; agent validation compiles but does
+not execute them. Native end-to-end classification completion still requires a
+manual scan with the built application.
