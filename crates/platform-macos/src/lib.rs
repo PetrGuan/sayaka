@@ -342,3 +342,6 @@ pub mod project_rules;
 
 #[cfg(target_os = "macos")]
 pub mod known_owner;
+
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub mod process_resources;
