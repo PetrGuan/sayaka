@@ -1518,8 +1518,12 @@ fn parse_xml_plist(
                         AppError::new(AppIssueCode::MalformedPlist, "invalid XML doctype")
                     })?
                     .trim();
-                let allowed = text
-                    == "plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"";
+                // Accept only the two known Apple public identifiers. The URI
+                // is matched as inert declaration text; no DTD is fetched.
+                let allowed = matches!(text,
+                    "plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\""
+                    | "plist PUBLIC \"-//Apple Computer//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\""
+                );
                 if !allowed || text.contains('[') {
                     return Err(AppError::new(
                         AppIssueCode::MalformedPlist,
@@ -3154,6 +3158,43 @@ mod tests {
             parsed.bundle_name.value.as_deref(),
             Some("Left <>\"'Ω Right")
         );
+    }
+
+    #[test]
+    fn xml_parser_accepts_both_apple_doctypes_without_changing_entity_rules() {
+        for public_id in ["-//Apple//DTD PLIST 1.0//EN", "-//Apple Computer//DTD PLIST 1.0//EN"] {
+            let declaration = format!(r#"<!DOCTYPE plist PUBLIC "{public_id}" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#);
+            let xml = format!(r#"<?xml version="1.0"?>{declaration}<plist><dict>
+                <key>CFBundleIdentifier</key><string>org.example.legacy</string>
+                <key>CFBundleName</key><string>A &amp; B &#169;</string>
+                </dict></plist>"#);
+            let parsed = parse_xml_for_test(xml.as_bytes());
+            assert_eq!(parsed.bundle_id.value.as_deref(), Some("org.example.legacy"));
+            assert_eq!(parsed.bundle_name.value.as_deref(), Some("A & B ©"));
+            let custom = xml.replace("A &amp; B &#169;", "&custom;");
+            assert_eq!(parse_xml_error_for_test(custom.as_bytes()).code, AppIssueCode::MalformedPlist);
+
+            for subset in ["[]", r#"[<!ENTITY custom "value">]"#,
+                r#"[<!ENTITY custom SYSTEM "file:///nonexistent-sayaka-entity">]"#,
+                r#"[<!ENTITY % external SYSTEM "https://example.invalid/entity.dtd">%external;]"#] {
+                let with_subset = xml.replacen(".dtd\">", &format!(".dtd\" {subset}>"), 1);
+                assert_ne!(with_subset, xml);
+                assert_eq!(parse_xml_error_for_test(with_subset.as_bytes()).code, AppIssueCode::MalformedPlist);
+            }
+        }
+    }
+
+    #[test]
+    fn xml_parser_rejects_other_doctype_identifiers_and_locations() {
+        for declaration in [
+            r#"<!DOCTYPE plist PUBLIC "-//Other//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#,
+            r#"<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "https://example.invalid/plist.dtd">"#,
+            r#"<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "file:///nonexistent-sayaka.dtd">"#,
+            r#"<!DOCTYPE plist SYSTEM "http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#,
+        ] {
+            let xml = format!("{declaration}<plist><dict><key>CFBundleName</key><string>Example</string></dict></plist>");
+            assert_eq!(parse_xml_error_for_test(xml.as_bytes()).code, AppIssueCode::MalformedPlist);
+        }
     }
 
     #[test]
