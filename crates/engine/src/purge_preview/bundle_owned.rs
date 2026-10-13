@@ -131,7 +131,7 @@ impl Proof {
         self.cache
             .revalidate()
             .map_err(|_| "resource_changed: cache identity".to_owned())?;
-        for bundle in self.system_inventory.iter().filter(|b| b.is_system_safari()) { bundle.revalidate().map_err(|e| e.to_string())?; }
+        for bundle in self.system_inventory.iter().filter(|b| b.has_indirection()) { bundle.revalidate().map_err(|e| e.to_string())?; }
         for owner in &self.owners {
             owner
                 .bundle
@@ -150,7 +150,7 @@ impl Proof {
         let deadline = Instant::now() + Duration::from_secs(30);
         let fresh = capture(path, home, &self.policy, deadline)?
             .ok_or("resource_changed: owner removed")?;
-        if fresh.digest != self.digest || fresh.system_inventory.iter().filter(|b| b.is_system_safari()).count() != self.system_inventory.iter().filter(|b| b.is_system_safari()).count() {
+        if fresh.digest != self.digest || fresh.system_inventory.iter().filter(|b| b.has_indirection()).count() != self.system_inventory.iter().filter(|b| b.has_indirection()).count() {
             return Err("resource_changed: owner evidence".into());
         }
         if fresh.idle(deadline)? {
@@ -233,8 +233,8 @@ fn capture(
     deadline: Instant,
 ) -> Result<Option<Arc<Proof>>, String> {
     let roots = crate::app_observation::roots(home, &[]).map_err(|e| e.to_string())?;
-    let inventory = Arc::new(crate::app_observation::inventory(
-        &roots, deadline, &std::cell::Cell::new(10_000),
+    let inventory = Arc::new(crate::app_observation::inventory_with_progress(
+        &roots, deadline, &std::cell::Cell::new(10_000), &mut |_| Ok(()),
     ).map_err(|e| e.to_string())?);
     capture_with_inventory(path, home, policy, deadline, &inventory)
 }

@@ -42,6 +42,8 @@ pub mod system_storage;
 pub mod related;
 
 #[cfg(target_os = "macos")]
+pub mod application_link;
+#[cfg(target_os = "macos")]
 pub mod system_safari;
 
 #[cfg(target_os = "macos")]
