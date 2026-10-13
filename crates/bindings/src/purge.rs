@@ -281,6 +281,7 @@ fn preview_json(preview: &PurgePreview, handle: u64, policy: Option<&PurgePolicy
         "roots": preview.roots.iter().map(|path| wire::NativePath(path)).collect::<Vec<_>>(),
         "stale_days": preview.stale_days,
         "scan_metrics": preview.scan_metrics,
+        "timings": preview.timings,
         "totals": {
             "projects": preview.counts.projects,
             "items": preview.counts.artifacts,
@@ -1791,6 +1792,20 @@ mod tests {
     }
 
     #[test]
+    fn preview_timings_are_advisory_and_do_not_change_approval_digest() {
+        let mut preview = purge_preview_fixture();
+        let digest = preview.plan_digest();
+        preview.timings = Some(purge_preview::PreviewTimings {
+            discovery_us: 123, total_us: 200, ..Default::default()
+        });
+        assert_eq!(preview.plan_digest(), digest);
+        let value = preview_json(&preview, 7, None);
+        assert_eq!(value["timings"]["discovery_us"], 123);
+        assert_eq!(value["timings"]["total_us"], 200);
+        assert_eq!(value["effects_performed"], false);
+    }
+
+    #[test]
     fn private_aggregate_preserves_unknown_zero_and_overflow() {
         let mut p = purge_preview_fixture();
         assert_eq!(sum_private(&p), None);
@@ -1809,6 +1824,7 @@ mod tests {
 
     fn purge_preview_fixture() -> PurgePreview {
         PurgePreview {
+            timings: None,
             worktrees: Default::default(),
             schema_version: 1,
             kind: purge_preview::PURGE_KIND,

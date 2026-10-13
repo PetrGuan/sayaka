@@ -91,6 +91,7 @@ pub fn scan_preview(
         .validate()
         .map_err(|s| ScanError::new(ScanCode::InvalidLimits, s))?;
     let started = Instant::now();
+    let mut timings = PreviewTimings::default();
     let mut options = options.clone();
     options.cache_discovery_deadline = Some(started + Duration::from_secs(30));
     let mut discovery_limits = ClassifyLimits::from_request(limits).scan;
@@ -139,11 +140,17 @@ pub fn scan_preview(
             },
         )?,
     };
+    timings.discovery_us = micros(started);
+    let phase_started = Instant::now();
     let task_id = report.task_id;
     let mut observed = report.entries.len();
     let index = ScanTree::build(report, cancellation)?;
+    timings.index_us = micros(phase_started);
+    let phase_started = Instant::now();
     let mut preview = purge_preview(&index, &options, SystemTime::now())
         .map_err(|s| ScanError::new(ScanCode::InvalidLimits, s))?;
+    timings.classification_us = micros(phase_started);
+    let git_started = Instant::now();
     if options.profile == PurgeProfile::Projects {
         let paths = preview
             .projects
@@ -178,8 +185,16 @@ pub fn scan_preview(
             }
         }
     }
+    timings.git_us = if options.profile == PurgeProfile::Projects {
+        micros(git_started)
+    } else {
+        0
+    };
     if options.profile == PurgeProfile::Projects {
+        let phase_started = Instant::now();
         crate::project_activity::observe(&mut preview, cancellation, started + limits.time_budget);
+        timings.activity_us = micros(phase_started);
+        let phase_started = Instant::now();
         projects::measure(
             &mut preview,
             &index,
@@ -188,9 +203,12 @@ pub fn scan_preview(
             cancellation,
             &mut progress,
         );
+        timings.sizing_us = micros(phase_started);
     }
     if options.profile == PurgeProfile::Worktrees {
+        let phase_started = Instant::now();
         preview.worktrees = crate::worktrees::observe(&index, cancellation, started + limits.time_budget);
+        timings.worktrees_us = micros(phase_started);
         // Discovery is only the first phase. Stop during Git or sizing must
         // remain cancelled at the task/FFI/CLI boundary too.
         if cancellation.is_cancelled() {
@@ -203,8 +221,11 @@ pub fn scan_preview(
         }
     }
     if options.profile != PurgeProfile::DeveloperCaches {
+        timings.total_us = micros(started);
+        preview.timings = Some(timings);
         return Ok(preview);
     }
+    let sizing_started = Instant::now();
     let mut files = 0u64;
     let mut logical = 0u64;
     let count = preview.developer_caches.len();
@@ -299,5 +320,12 @@ pub fn scan_preview(
     if !preview.complete && preview.status == PurgeStatus::Complete {
         preview.status = PurgeStatus::Partial;
     }
+    timings.sizing_us = micros(sizing_started);
+    timings.total_us = micros(started);
+    preview.timings = Some(timings);
     Ok(preview)
+}
+
+fn micros(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
