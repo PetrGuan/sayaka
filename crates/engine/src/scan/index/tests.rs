@@ -906,3 +906,63 @@ fn explicit_roots_keep_full_path_order_instead_of_final_component_order() {
     assert_eq!(tree.ordered_roots(Sort::Size, Metric::Logical), &[18, 93]);
     assert_eq!(tree.ordered_roots(Sort::Size, Metric::Allocated), &[18, 93]);
 }
+
+
+#[test]
+fn singleton_totals_and_shared_identity_unions_preserve_mixed_subtrees() {
+    let mut entries = vec![
+        directory(1, ""), directory(2, "a"), directory(3, "b"), directory(4, "b/deep"),
+        file(10, "a/shared", 42, Some(11), Some(4096)),
+        file(11, "a/shared-alias", 42, Some(11), Some(4096)),
+        file(12, "b/deep/shared", 42, None, Some(4096)),
+        file(13, "a/single", 43, Some(5), Some(512)),
+        file(14, "b/deep/single", 44, Some(7), Some(1024)),
+    ];
+    for entry in &mut entries { entry.private_bytes = Some(3); }
+    entries[6].private_bytes = None;
+    for reverse in [false, true] {
+        for offset in 0..entries.len() {
+            let mut shuffled = entries.clone();
+            shuffled.rotate_left(offset);
+            if reverse { shuffled.reverse(); }
+            let tree = tree(shuffled);
+            for (id, unique, logical, allocated) in [(1, 3, 12, 5632), (2, 2, 5, 4608), (3, 2, 7, 5120), (4, 2, 7, 5120)] {
+                assert_eq!(tree.summary(id), Some(&DirectorySummary {
+                    private_bytes: None, unique_files: unique,
+                    logical_bytes_known: logical, logical_bytes_unknown_files: 1,
+                    allocated_bytes_known: allocated, complete: true,
+                    ..Default::default()
+                }));
+            }
+            // Global conflict normalization affects summaries, not raw observations.
+            assert_eq!(tree.entry(10).unwrap().logical_bytes, Some(11));
+            assert_eq!(tree.entry(10).unwrap().private_bytes, Some(3));
+        }
+    }
+}
+
+#[test]
+fn nested_explicit_roots_must_be_directories_after_batched_validation() {
+    let mut input = report(vec![directory(1, ""), file(2, "nested", 2, Some(1), Some(1))]);
+    input.roots.push(path("nested"));
+    assert_error(input, ScanCode::InvalidRoot);
+    let mut input = report(vec![directory(1, ""), directory(2, "nested")]);
+    input.roots.push(path("./nested"));
+    let tree = ScanTree::build(input, &Cancellation::default()).unwrap();
+    assert_eq!(tree.parent(2), Some(1));
+    assert_eq!(tree.roots(), &[1]);
+}
+
+#[test]
+fn singleton_private_overflow_remains_unknown_without_hiding_logical_totals() {
+    let mut entries = vec![directory(1, ""), directory(2, "a"), directory(3, "b"),
+        file(4, "a/file", 4, Some(1), Some(2)), file(5, "b/file", 5, Some(3), Some(4))];
+    entries[3].private_bytes = Some(u64::MAX);
+    entries[4].private_bytes = Some(1);
+    let tree = tree(entries);
+    assert_eq!(tree.summary(2).unwrap().private_bytes, Some(u64::MAX));
+    assert_eq!(tree.summary(3).unwrap().private_bytes, Some(1));
+    assert_eq!(tree.summary(1).unwrap().private_bytes, None);
+    assert_eq!(tree.summary(1).unwrap().logical_bytes_known, 4);
+    assert_eq!(tree.summary(1).unwrap().allocated_bytes_known, 6);
+}

@@ -96,7 +96,15 @@ impl ScanTree {
         // Hash paths once per lookup instead of reparsing their components on
         // every B-tree comparison. Public ordering is restored per sibling set.
         let mut paths = HashMap::with_capacity(report.entries.len());
-        let mut measurements: HashMap<FileIdentity, Measurements> = HashMap::new();
+        // Bound the reservation by actual file observations, not claimed metrics.
+        // Reserving once avoids repeatedly rehashing every retained identity.
+        let mut file_observations = 0;
+        for entry in &report.entries {
+            check_cancelled(cancellation)?;
+            file_observations += usize::from(entry.kind == ResourceKind::File);
+        }
+        let mut measurements: HashMap<FileIdentity, IdentityMeasurement> =
+            HashMap::with_capacity(file_observations);
         let mut path_bytes = 0;
         let mut nodes = Vec::with_capacity(report.entries.len());
         for (position, entry) in report.entries.iter().enumerate() {
@@ -109,11 +117,6 @@ impl ScanTree {
             if paths.insert(entry.path.as_path(), position).is_some() {
                 return Err(invalid("duplicate scan entry path"));
             }
-            if explicit_roots.contains(entry.path.as_path())
-                && entry.kind != ResourceKind::Directory
-            {
-                return Err(invalid("explicit root entry is not a directory"));
-            }
             if entry.kind == ResourceKind::File {
                 let observation = Measurements {
                     private: entry.private_bytes,
@@ -122,8 +125,11 @@ impl ScanTree {
                 };
                 measurements
                     .entry(entry.identity)
-                    .and_modify(|known| known.observe(observation))
-                    .or_insert(observation);
+                    .and_modify(|known| {
+                        known.measurement.observe(observation);
+                        known.repeated = true;
+                    })
+                    .or_insert(IdentityMeasurement { measurement: observation, repeated: false });
             }
             nodes.push(Node {
                 parent: None,
@@ -134,6 +140,16 @@ impl ScanTree {
             });
         }
 
+        // Validate explicit roots once (at most 64), rather than hashing every
+        // long entry path against the root set. Native Path equality is retained.
+        for root in &report.roots {
+            check_cancelled(cancellation)?;
+            if paths.get(root.as_path()).is_some_and(|&position| {
+                report.entries[position].kind != ResourceKind::Directory
+            }) {
+                return Err(invalid("explicit root entry is not a directory"));
+            }
+        }
         #[cfg(debug_assertions)]
         log_index_phase("validate", &mut phase_started, report.entries.len());
         let mut roots = Vec::new();
@@ -208,7 +224,7 @@ impl ScanTree {
 
         #[cfg(debug_assertions)]
         log_index_phase("hierarchy_coverage", &mut phase_started, report.entries.len());
-        let mut bags: Vec<Option<IdentityBag>> = (0..report.entries.len()).map(|_| None).collect();
+        let mut bags: Vec<Option<Box<IdentityBag>>> = (0..report.entries.len()).map(|_| None).collect();
         // Explicit hierarchy postorder replaces global path sorting. Ancestors
         // are processed after all descendants, independent of scan entry order.
         let mut order = Vec::with_capacity(nodes.len());
@@ -233,20 +249,20 @@ impl ScanTree {
                 ResourceKind::File => {
                     if let Some(parent) = parent {
                         bags[parent]
-                            .get_or_insert_with(IdentityBag::default)
+                            .get_or_insert_with(|| Box::new(IdentityBag::default()))
                             .insert(entry.identity, &measurements, cancellation)?;
                     }
                 }
                 ResourceKind::Directory => {
-                    let bag = bags[position].take().unwrap_or_default();
-                    let mut summary = bag.summary.clone();
+                    let bag = bags[position].take().map(|bag| *bag).unwrap_or_default();
+                    let mut summary = bag.summary()?;
                     summary.complete =
                         complete || (localized && !incomplete_paths.contains(entry.path.as_path()));
                     if !summary.complete { summary.private_bytes = None; }
                     nodes[position].summary = Some(summary);
                     if let Some(parent) = parent {
                         bags[parent]
-                            .get_or_insert_with(IdentityBag::default)
+                            .get_or_insert_with(|| Box::new(IdentityBag::default()))
                             .merge(bag, &measurements, cancellation)?;
                     }
                 }
@@ -500,38 +516,61 @@ impl Measurements {
     }
 }
 
+/// Every identity is normalized across the whole forest before any sums.
+/// Only identities observed more than once need per-subtree membership sets.
+struct IdentityMeasurement {
+    measurement: Measurements,
+    repeated: bool,
+}
+
 struct IdentityBag {
     identities: HashSet<FileIdentity>,
-    summary: DirectorySummary,
+    singles: DirectorySummary,
+    shared: DirectorySummary,
+}
+
+fn empty_summary() -> DirectorySummary {
+    DirectorySummary { private_bytes: Some(0), ..Default::default() }
 }
 
 impl Default for IdentityBag {
     fn default() -> Self {
-        Self { identities: HashSet::new(), summary: DirectorySummary { private_bytes: Some(0), ..Default::default() } }
+        Self { identities: HashSet::new(), singles: empty_summary(), shared: empty_summary() }
     }
 }
 
 impl IdentityBag {
+    fn summary(&self) -> Result<DirectorySummary, ScanError> {
+        let mut summary = self.singles.clone();
+        merge_summary(&mut summary, &self.shared)?;
+        Ok(summary)
+    }
+
     fn insert(
         &mut self,
         identity: FileIdentity,
-        measurements: &HashMap<FileIdentity, Measurements>,
+        measurements: &HashMap<FileIdentity, IdentityMeasurement>,
         cancellation: &Cancellation,
     ) -> Result<(), ScanError> {
         check_cancelled(cancellation)?;
-        if self.identities.insert(identity) {
-            let measurement = measurements[&identity];
-            let prior = if self.summary.unique_files == 0 { Some(0u64) } else { self.summary.private_bytes };
-            self.summary.private_bytes = prior.and_then(|a| measurement.private.and_then(|b| a.checked_add(b)));
-            checked_add(&mut self.summary.unique_files, 1)?;
-            match measurement.logical {
-                Some(bytes) => checked_add(&mut self.summary.logical_bytes_known, bytes)?,
-                None => checked_add(&mut self.summary.logical_bytes_unknown_files, 1)?,
-            }
-            match measurement.allocated {
-                Some(bytes) => checked_add(&mut self.summary.allocated_bytes_known, bytes)?,
-                None => checked_add(&mut self.summary.allocated_bytes_unknown_files, 1)?,
-            }
+        let known = &measurements[&identity];
+        let summary = if known.repeated {
+            if !self.identities.insert(identity) { return Ok(()); }
+            &mut self.shared
+        } else {
+            &mut self.singles
+        };
+        let measurement = known.measurement;
+        summary.private_bytes = summary.private_bytes
+            .and_then(|a| measurement.private.and_then(|b| a.checked_add(b)));
+        checked_add(&mut summary.unique_files, 1)?;
+        match measurement.logical {
+            Some(bytes) => checked_add(&mut summary.logical_bytes_known, bytes)?,
+            None => checked_add(&mut summary.logical_bytes_unknown_files, 1)?,
+        }
+        match measurement.allocated {
+            Some(bytes) => checked_add(&mut summary.allocated_bytes_known, bytes)?,
+            None => checked_add(&mut summary.allocated_bytes_unknown_files, 1)?,
         }
         Ok(())
     }
@@ -539,20 +578,33 @@ impl IdentityBag {
     fn merge(
         &mut self,
         mut other: Self,
-        measurements: &HashMap<FileIdentity, Measurements>,
+        measurements: &HashMap<FileIdentity, IdentityMeasurement>,
         cancellation: &Cancellation,
     ) -> Result<(), ScanError> {
         check_cancelled(cancellation)?;
-        // Consume the smaller set; never retain a descendant set after merging.
-        // Along unary chains the bag is moved, not copied or re-summed.
+        // Singleton identities are globally disjoint: merge their totals in
+        // constant time. Shared identities still use smaller-to-larger unions,
+        // preserving independent sibling and cross-root hardlink accounting.
         if self.identities.len() < other.identities.len() {
             std::mem::swap(self, &mut other);
         }
+        merge_summary(&mut self.singles, &other.singles)?;
         for identity in other.identities {
             self.insert(identity, measurements, cancellation)?;
         }
         Ok(())
     }
+}
+
+fn merge_summary(into: &mut DirectorySummary, other: &DirectorySummary) -> Result<(), ScanError> {
+    into.private_bytes = into.private_bytes
+        .and_then(|a| other.private_bytes.and_then(|b| a.checked_add(b)));
+    checked_add(&mut into.unique_files, other.unique_files)?;
+    checked_add(&mut into.logical_bytes_known, other.logical_bytes_known)?;
+    checked_add(&mut into.logical_bytes_unknown_files, other.logical_bytes_unknown_files)?;
+    checked_add(&mut into.allocated_bytes_known, other.allocated_bytes_known)?;
+    checked_add(&mut into.allocated_bytes_unknown_files, other.allocated_bytes_unknown_files)?;
+    Ok(())
 }
 
 fn checked_add(total: &mut u64, value: u64) -> Result<(), ScanError> {
