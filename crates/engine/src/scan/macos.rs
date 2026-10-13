@@ -533,7 +533,7 @@ pub(super) fn summarize_cache(
     progress: impl FnMut(usize, u64, u64),
 ) -> Result<super::cache::Summary, ScanError> {
     super::cache::summarize(
-        &cache::CacheBackend,
+        &cache::CacheBackend::new(path),
         path,
         expected,
         limits,
@@ -553,7 +553,7 @@ pub(super) fn summarize_project(
     progress: impl FnMut(usize, u64, u64),
 ) -> Result<super::cache::Summary, ScanError> {
     super::cache::summarize_with_project_budget(
-        &cache::CacheBackend,
+        &cache::CacheBackend::new(path),
         path,
         expected,
         limits,
