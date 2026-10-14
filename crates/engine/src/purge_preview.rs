@@ -31,7 +31,7 @@ pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 6;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 7;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -711,6 +711,23 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             url: "https://code.visualstudio.com/docs/setup/uninstall#clean-uninstall",
             reviewed_utc: "2026-10-14",
             license_note: "Microsoft VS Code documentation",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "intellij-jcef",
+        rule_id: "com.jetbrains.intellij.2026_1.jcef_cache.macos",
+        rule_version: 1,
+        title: "IntelliJ IDEA 2026.1 embedded browser cache",
+        suffix: &["Library", "Caches", "JetBrains", "IntelliJIdea2026.1", "jcef_cache"],
+        location: "~/Library/Caches/JetBrains/IntelliJIdea2026.1/jcef_cache",
+        location_kind: "directory",
+        rebuildability_note: "JetBrains documents removing this exact embedded browser cache after quitting the IDE and Toolbox. Embedded pages may reload or require signing in again. Only the default IntelliJ IDEA 2026.1 leaf is supported; Local History, IDE indexes, projects, settings, other products, versions and custom roots are excluded.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "JetBrains: Embedded browser does not work",
+            url: "https://youtrack.jetbrains.com/articles/SUPPORT-A-4076",
+            reviewed_utc: "2026-10-14",
+            license_note: "JetBrains official support knowledge base; independent implementation",
         }],
     },
     DeveloperCacheRule {
@@ -2109,6 +2126,12 @@ const VSCODE_WRITERS: &[&str] = &["Electron", "Code", "code", "code-tunnel", "no
 #[cfg(target_os = "macos")]
 const VSCODE_HELPERS: &[&str] = &["Code Helper", "Code - Insiders Helper"];
 
+// Generic JVM/JCEF names deliberately favor false positives over moving a live cache.
+#[cfg(target_os = "macos")]
+const INTELLIJ_WRITERS: &[&str] = &["idea", "idea64", "java", "jetbrains-toolbox", "jetbrains-toolbox-helper"];
+#[cfg(target_os = "macos")]
+const INTELLIJ_HELPERS: &[&str] = &["jcef", "JCEF", "cef_server", "IntelliJ", "JetBrains", "jetbrains-toolbox"];
+
 #[cfg(target_os = "macos")]
 const CURSOR_WRITERS: &[&str] = &["Cursor", "cursor", "cursor-agent", "Electron", "node"];
 #[cfg(target_os = "macos")]
@@ -2116,6 +2139,12 @@ const CURSOR_HELPERS: &[&str] = &["Cursor Helper"];
 
 #[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    if tool == "intellij-jcef" {
+        return named_process_active_or_unknown(
+            sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
+            INTELLIJ_WRITERS, INTELLIJ_HELPERS,
+        );
+    }
     if tool == "cursor" {
         return named_process_active_or_unknown(
             sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
@@ -2221,7 +2250,7 @@ fn process_paths_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>, bundles: &
 fn application_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
     matches!(
         tool,
-        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media" | "vscode-stable" | "cursor"
+        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media" | "vscode-stable" | "cursor" | "intellij-jcef"
     )
 }
 
@@ -2669,6 +2698,31 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn intellij_writer_census_fails_closed() {
+        for name in [
+            "idea", "idea64", "java", "jetbrains-toolbox", "jetbrains-toolbox-helper",
+            "jcef Helper (Renderer)", "JCEF Helper", "cef_server", "IntelliJ IDEA",
+        ] {
+            assert!(named_process_active_or_unknown(
+                Ok::<_, ()>(vec![PathBuf::from(name)]),
+                INTELLIJ_WRITERS,
+                INTELLIJ_HELPERS
+            ));
+        }
+        assert!(named_process_active_or_unknown(
+            Err::<Vec<PathBuf>, _>(()),
+            INTELLIJ_WRITERS,
+            INTELLIJ_HELPERS
+        ));
+        assert!(!named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from("/bin/Other")]),
+            INTELLIJ_WRITERS,
+            INTELLIJ_HELPERS
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn cursor_writer_census_fails_closed() {
         for name in [
             "Electron",
@@ -2721,6 +2775,22 @@ mod tests {
             VSCODE_WRITERS,
             VSCODE_HELPERS
         ));
+    }
+
+    #[test]
+    fn intellij_only_discovers_documented_version_and_leaf() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let base = home.join("Library/Caches/JetBrains");
+        for relative in [
+            "IntelliJIdea2026.1/jcef_cache", "IntelliJIdea2026.1/LocalHistory",
+            "IntelliJIdea2026.1/caches", "IntelliJIdea2026.2/jcef_cache",
+            "DataGrip2026.1/jcef_cache", "IdeaIC2026.1/jcef_cache",
+        ] { fs::create_dir_all(base.join(relative)).unwrap(); }
+        let preview = developer_cache_preview_at(&home, &home);
+        let paths: Vec<_> = preview.developer_caches.iter()
+            .filter(|i| i.tool == "intellij-jcef").map(|i| i.path.clone()).collect();
+        assert_eq!(paths, vec![base.join("IntelliJIdea2026.1/jcef_cache")]);
     }
 
     #[test]

@@ -1334,3 +1334,8 @@ Cursor exact cache rules `com.cursor.cached_data.macos` and
 `com.cursor.extension_vsix_cache.macos` use the unchanged developer-cache ABI.
 Hosts must present Review without preselection; APP_CACHE_RULES.md defines the
 exact default leaves, staff evidence, exclusions and conservative writer guard.
+
+IntelliJ IDEA 2026.1 adds exact cache rule
+`com.jetbrains.intellij.2026_1.jcef_cache.macos` (`tool: intellij-jcef`), with no ABI
+or journal changes. Hosts must keep this candidate unchecked in Review and explain
+embedded-page reload/sign-in consequences; see `APP_CACHE_RULES.md`.
