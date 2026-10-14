@@ -714,6 +714,40 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
         }],
     },
     DeveloperCacheRule {
+        tool: "cursor",
+        rule_id: "com.cursor.cached_data.macos",
+        rule_version: 1,
+        title: "Cursor compiled startup cache",
+        suffix: &["Library", "Application Support", "Cursor", "CachedData"],
+        location: "~/Library/Application Support/Cursor/CachedData",
+        location_kind: "directory",
+        rebuildability_note: "Cursor staff documents this exact default macOS cache leaf for the 2.5.26 troubleshooting layout. Quit Cursor and its CLI first. Startup may be slower and extension packages may require downloading again, affecting offline reinstalls. Settings, chats, User, workspace state, installed extensions, logs and other cache leaves are excluded.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Cursor staff: clear only CachedData and CachedExtensionVSIXs",
+            url: "https://forum.cursor.com/t/unable-to-load-any-extensions-2-5-26/153436/8",
+            reviewed_utc: "2026-10-14",
+            license_note: "Cursor official support forum, CursorStaff response; independent implementation",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "cursor",
+        rule_id: "com.cursor.extension_vsix_cache.macos",
+        rule_version: 1,
+        title: "Cursor extension download cache",
+        suffix: &["Library", "Application Support", "Cursor", "CachedExtensionVSIXs"],
+        location: "~/Library/Application Support/Cursor/CachedExtensionVSIXs",
+        location_kind: "directory",
+        rebuildability_note: "Cursor staff documents this exact default macOS cache leaf for the 2.5.26 troubleshooting layout. Quit Cursor and its CLI first. Startup may be slower and extension packages may require downloading again, affecting offline reinstalls. Settings, chats, User, workspace state, installed extensions, logs and other cache leaves are excluded.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Cursor staff: clear only CachedData and CachedExtensionVSIXs",
+            url: "https://forum.cursor.com/t/unable-to-load-any-extensions-2-5-26/153436/8",
+            reviewed_utc: "2026-10-14",
+            license_note: "Cursor official support forum, CursorStaff response; independent implementation",
+        }],
+    },
+    DeveloperCacheRule {
         tool: "teams-classic",
         rule_id: "com.microsoft.teams.classic_cache.macos",
         rule_version: 1,
@@ -2076,7 +2110,18 @@ const VSCODE_WRITERS: &[&str] = &["Electron", "Code", "code", "code-tunnel", "no
 const VSCODE_HELPERS: &[&str] = &["Code Helper", "Code - Insiders Helper"];
 
 #[cfg(target_os = "macos")]
+const CURSOR_WRITERS: &[&str] = &["Cursor", "cursor", "cursor-agent", "Electron", "node"];
+#[cfg(target_os = "macos")]
+const CURSOR_HELPERS: &[&str] = &["Cursor Helper"];
+
+#[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    if tool == "cursor" {
+        return named_process_active_or_unknown(
+            sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
+            CURSOR_WRITERS, CURSOR_HELPERS,
+        );
+    }
     if tool == "vscode-stable" {
         return named_process_active_or_unknown(
             sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
@@ -2176,7 +2221,7 @@ fn process_paths_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>, bundles: &
 fn application_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
     matches!(
         tool,
-        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media" | "vscode-stable"
+        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media" | "vscode-stable" | "cursor"
     )
 }
 
@@ -2624,6 +2669,34 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn cursor_writer_census_fails_closed() {
+        for name in [
+            "Electron",
+            "Cursor Helper (Plugin)",
+            "cursor",
+            "cursor-agent",
+            "node",
+        ] {
+            assert!(named_process_active_or_unknown(
+                Ok::<_, ()>(vec![PathBuf::from(name)]),
+                CURSOR_WRITERS,
+                CURSOR_HELPERS
+            ));
+        }
+        assert!(named_process_active_or_unknown(
+            Err::<Vec<PathBuf>, _>(()),
+            CURSOR_WRITERS,
+            CURSOR_HELPERS
+        ));
+        assert!(!named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from("/bin/Other")]),
+            CURSOR_WRITERS,
+            CURSOR_HELPERS
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn vscode_writer_census_fails_closed() {
         for name in [
             "Electron",
@@ -2648,6 +2721,36 @@ mod tests {
             VSCODE_WRITERS,
             VSCODE_HELPERS
         ));
+    }
+
+    #[test]
+    fn cursor_only_discovers_documented_default_leaves() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let support = home.join("Library/Application Support/Cursor");
+        for leaf in [
+            "CachedData",
+            "CachedExtensionVSIXs",
+            "User",
+            "logs",
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+        ] {
+            fs::create_dir_all(support.join(leaf)).unwrap();
+        }
+        fs::create_dir_all(home.join("Library/Application Support/Cursor - Insiders/CachedData"))
+            .unwrap();
+        let preview = developer_cache_preview_at(&home, &home);
+        let paths: Vec<_> = preview
+            .developer_caches
+            .iter()
+            .filter(|i| i.tool == "cursor")
+            .map(|i| i.path.clone())
+            .collect();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&support.join("CachedData")));
+        assert!(paths.contains(&support.join("CachedExtensionVSIXs")));
     }
 
     #[test]

@@ -64,7 +64,7 @@ the complete exact-leaf/version/rebuildability chain for these shapes.
 | --- | --- | --- |
 | Slack direct desktop; store variant excluded | `Application Support/Slack/{Cache,Code Cache,GPUCache}` | [Slack reinstall guidance](https://slack.com/intl/en-gb/help/articles/360048367814-Update-the-Slack-desktop-app) identifies the data root, but deleting all app data during reinstall does not prove each leaf's cache-only semantics. Exact leaf mapping remains unverified. |
 | VS Code stable desktop; Insiders/portable excluded | `Application Support/Code/{Cache,Code Cache,GPUCache}` | These three leaves remain unverified. The separately documented CachedData and CachedExtensionVSIXs leaves below are now supported; no User, workspaces, logs or WebStorage. |
-| Cursor desktop; version mapping unresolved | `Application Support/Cursor/{Cache,CachedData,CachedExtensionVSIXs,Code Cache,GPUCache}` | [Cursor documentation](https://cursor.com/docs) and troubleshooting search did not establish this exact five-leaf contract. VS Code ancestry is not proof. |
+| Cursor desktop | `Application Support/Cursor/{Cache,Code Cache,GPUCache}` | These three leaves remain unverified. The two documented staff-supported leaves are covered separately below; VS Code ancestry alone is not proof. |
 | Zoom desktop; version mapping unresolved | `Caches/us.zoom.xos` | [Zoom cache guidance](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0058835) describes an Application Support data location instead. That is not evidence for this leaf; do not substitute account data. |
 | Figma desktop; current support layout | `Caches/com.figma.Desktop` | [Figma reset guidance](https://help.figma.com/hc/en-us/articles/22380853110551-Clear-the-Figma-desktop-app-cache) refers to `Application Support/Figma`, not this Caches leaf. No exact-rule promotion. A separate bundle-owned candidate may qualify only under the full contract below. |
 | Brave desktop; stable default profile | `Caches/BraveSoftware/Brave-Browser/<profile>/{Cache,Code Cache,GPUCache}` | [Brave data deletion guidance](https://support.brave.app/hc/en-us/articles/4413256282765-How-do-I-delete-my-data-in-Brave) describes broader profile data. Separate cache-tree leaf mapping remains unverified. |
@@ -329,3 +329,30 @@ hard-link accounting, no-follow/cloud checks, exclusions, identity revalidation,
 typed approval and Trash-only journal semantics remain unchanged.
 
 Build and compile-only evidence do not establish native cleanup acceptance.
+
+## Cursor default cache leaves (2026-10-14)
+
+The exact rules `com.cursor.cached_data.macos` and
+`com.cursor.extension_vsix_cache.macos` admit only passwd-home
+`Library/Application Support/Cursor/CachedData` and
+`Library/Application Support/Cursor/CachedExtensionVSIXs`.
+
+[Cursor's official staff reply](https://forum.cursor.com/t/unable-to-load-any-extensions-2-5-26/153436/8)
+by deanrie on 2026-03-03 explicitly lists both macOS paths as cache-only cleanup
+and distinguishes it from deleting settings/data. The [public topic metadata](https://forum.cursor.com/t/153436.json)
+identifies post 8 as `staff: true`, `primary_group_name: CursorStaff` (checked
+2026-10-14). The evidence concerns the 2.5.26 default layout; it does not establish
+all future versions or custom data roots. No vendor commands are executed.
+
+Both leaves are Review-only in the App, never automatically selected. Explain
+startup rebuilding and possible package redownload/offline reinstall cost.
+Settings, chats, User/workspace storage, installed extensions, logs, other cache
+leaves, custom roots and other products are excluded. No whole Cursor data-root
+cleanup is allowed. Preview, approval and last native revalidation deny active or
+unknown writers: Cursor, cursor, cursor-agent, Electron, node, and Cursor Helper
+prefixes. Generic Electron/Node denial is deliberately conservative and can block
+unrelated apps; never terminate a process to enable cleanup.
+
+Existing complete scan, hard-link accounting, no-follow, cloud/identity checks,
+exclusion policy, native exact allowlist and typed Trash-only approval remain.
+Native cleanup acceptance is separate from builds and compile-only checks.
