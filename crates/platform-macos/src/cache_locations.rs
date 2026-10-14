@@ -52,6 +52,21 @@ impl CacheLocation {
 /// The reviewed exact engine rules (including the two approved Adobe leaves). No generic bundle-ID or Containers shape.
 pub const CACHE_LOCATIONS: &[CacheLocation] = &[
     CacheLocation {
+        rule_id: "com.microsoft.vscode.cached_data.macos",
+        base: &["Library", "Application Support", "Code", "CachedData"],
+        profile_leaf: None,
+    },
+    CacheLocation {
+        rule_id: "com.microsoft.vscode.extension_vsix_cache.macos",
+        base: &[
+            "Library",
+            "Application Support",
+            "Code",
+            "CachedExtensionVSIXs",
+        ],
+        profile_leaf: None,
+    },
+    CacheLocation {
         rule_id: "com.adobe.common.media_cache_files.macos",
         base: &[
             "Library",
@@ -249,6 +264,15 @@ mod tests {
             "/Users/fixture/Library/Caches/Google/Chrome/Default/Cookies",
             "/Users/fixture/Library/Application Support/Google/Chrome/Default/Cache",
             "/Users/fixture/Library/Application Support/discord/Local Storage",
+            "/Users/fixture/Library/Application Support/Code",
+            "/Users/fixture/Library/Application Support/Code/User",
+            "/Users/fixture/Library/Application Support/Code/logs",
+            "/Users/fixture/Library/Application Support/Code/Cache",
+            "/Users/fixture/Library/Application Support/Code/Code Cache",
+            "/Users/fixture/Library/Application Support/Code/GPUCache",
+            "/Users/fixture/Library/Application Support/Code/CachedData/child",
+            "/Users/fixture/Library/Application Support/Code - Insiders/CachedData",
+            "/Users/fixture/Library/Application Support/Cursor/CachedData",
             "/Users/fixture/Library/Caches/Firefox/Profiles/.hidden/cache2",
             "/Users/fixture/Library/Caches/com.example.unreviewed",
             "/Users/fixture/Library/Containers/com.example.app/Data/Library/Caches",
