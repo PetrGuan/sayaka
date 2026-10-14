@@ -52,6 +52,11 @@ impl CacheLocation {
 /// The reviewed exact engine rules (including the two approved Adobe leaves). No generic bundle-ID or Containers shape.
 pub const CACHE_LOCATIONS: &[CacheLocation] = &[
     CacheLocation {
+        rule_id: "com.jetbrains.webstorm.2026_2.jcef_cache.macos",
+        base: &["Library", "Caches", "JetBrains", "WebStorm2026.2", "jcef_cache"],
+        profile_leaf: None,
+    },
+    CacheLocation {
         rule_id: "com.jetbrains.datagrip.2026_1.jcef_cache.macos",
         base: &["Library", "Caches", "JetBrains", "DataGrip2026.1", "jcef_cache"],
         profile_leaf: None,
@@ -302,6 +307,10 @@ mod tests {
             "/Users/fixture/Library/Caches/JetBrains/IntelliJIdea2026.1/LocalHistory",
             "/Users/fixture/Library/Caches/JetBrains/IntelliJIdea2026.1/jcef_cache/child",
             "/Users/fixture/Library/Caches/JetBrains/IntelliJIdea2026.2/jcef_cache",
+            "/Users/fixture/Library/Caches/JetBrains/WebStorm2026.1/jcef_cache",
+            "/Users/fixture/Library/Caches/JetBrains/WebStorm2026.3/jcef_cache",
+            "/Users/fixture/Library/Caches/JetBrains/WebStorm2026.2/LocalHistory",
+            "/Users/fixture/Library/Caches/JetBrains/WebStorm2026.2/jcef_cache/child",
             "/Users/fixture/Library/Caches/JetBrains/DataGrip2026.2/jcef_cache",
             "/Users/fixture/Library/Caches/JetBrains/DataGrip2026.1/LocalHistory",
             "/Users/fixture/Library/Caches/JetBrains/DataGrip2026.1/jcef_cache/child",
