@@ -1324,3 +1324,8 @@ Release cancels active work and returns BUSY until the worker exits; callers mus
 retain the handle and folder grant until release succeeds. Existing default
 `scan_start_v1` behavior is unchanged. Debug builds emit `index.begin` and index
 completion timings; these are runtime diagnostics, not benchmark evidence.
+
+VS Code stable exact cache rules: `com.microsoft.vscode.cached_data.macos` and
+`com.microsoft.vscode.extension_vsix_cache.macos` use the existing developer-cache
+preview/execution ABI. See APP_CACHE_RULES.md for exact paths, evidence and writer
+refusals. Hosts should use Review rather than automatic selection.

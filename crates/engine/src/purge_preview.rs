@@ -665,6 +665,45 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
         }],
     },
     DeveloperCacheRule {
+        tool: "vscode-stable",
+        rule_id: "com.microsoft.vscode.cached_data.macos",
+        rule_version: 1,
+        title: "VS Code compiled startup cache",
+        suffix: &["Library", "Application Support", "Code", "CachedData"],
+        location: "~/Library/Application Support/Code/CachedData",
+        location_kind: "directory",
+        rebuildability_note: "VS Code stable default data layout, verified against 1.104.3. Compiled startup data is recreated on launch; the next startup can be slower. Quit VS Code and its CLI first. Only this exact leaf is included; User, workspace state, installed extensions, logs, other caches, Insiders and custom data roots are excluded.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Microsoft VS Code 1.104.3 cache implementation (MIT)",
+            url: "https://github.com/microsoft/vscode/blob/1.104.3/src/main.ts",
+            reviewed_utc: "2026-10-14",
+            license_note: "Microsoft VS Code source, MIT; independent implementation",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "vscode-stable",
+        rule_id: "com.microsoft.vscode.extension_vsix_cache.macos",
+        rule_version: 1,
+        title: "VS Code extension download cache",
+        suffix: &[
+            "Library",
+            "Application Support",
+            "Code",
+            "CachedExtensionVSIXs",
+        ],
+        location: "~/Library/Application Support/Code/CachedExtensionVSIXs",
+        location_kind: "directory",
+        rebuildability_note: "VS Code stable default data layout, verified against 1.104.3. Downloaded extension packages may need downloading again; offline reinstalls may be unavailable. Installed extensions are not removed. Quit VS Code and its CLI first. Only this exact leaf is included; User, workspace state, installed extensions, logs, other caches, Insiders and custom data roots are excluded.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "Microsoft VS Code 1.104.3 cache implementation (MIT)",
+            url: "https://github.com/microsoft/vscode/blob/1.104.3/src/vs/platform/extensionManagement/node/extensionDownloader.ts",
+            reviewed_utc: "2026-10-14",
+            license_note: "Microsoft VS Code source, MIT; independent implementation",
+        }],
+    },
+    DeveloperCacheRule {
         tool: "teams-classic",
         rule_id: "com.microsoft.teams.classic_cache.macos",
         rule_version: 1,
@@ -2019,8 +2058,22 @@ fn revalidate_developer_cache_selection_with_home(
     Ok(())
 }
 
+// Electron also covers renamed VS Code bundles and its Electron-backed CLI.
+// Conservatively block generic Node writers, which can run the extension CLI.
+#[cfg(target_os = "macos")]
+const VSCODE_WRITERS: &[&str] = &["Electron", "Code", "code", "code-tunnel", "node"];
+#[cfg(target_os = "macos")]
+const VSCODE_HELPERS: &[&str] = &["Code Helper", "Code - Insiders Helper"];
+
 #[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    if tool == "vscode-stable" {
+        return named_process_active_or_unknown(
+            sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
+            VSCODE_WRITERS,
+            VSCODE_HELPERS,
+        );
+    }
     if tool == "adobe-media" {
         return adobe::active_or_unknown(account_home);
     }
@@ -2113,7 +2166,7 @@ fn process_paths_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>, bundles: &
 fn application_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
     matches!(
         tool,
-        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media"
+        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media" | "vscode-stable"
     )
 }
 
@@ -2557,6 +2610,64 @@ mod tests {
             exact,
             prefixes,
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vscode_writer_census_fails_closed() {
+        for name in [
+            "Electron",
+            "Code Helper (Plugin)",
+            "code",
+            "code-tunnel",
+            "node",
+        ] {
+            assert!(named_process_active_or_unknown(
+                Ok::<_, ()>(vec![PathBuf::from(name)]),
+                VSCODE_WRITERS,
+                VSCODE_HELPERS
+            ));
+        }
+        assert!(named_process_active_or_unknown(
+            Err::<Vec<PathBuf>, _>(()),
+            VSCODE_WRITERS,
+            VSCODE_HELPERS
+        ));
+        assert!(!named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from("/bin/Other")]),
+            VSCODE_WRITERS,
+            VSCODE_HELPERS
+        ));
+    }
+
+    #[test]
+    fn vscode_only_discovers_documented_default_leaves() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let support = home.join("Library/Application Support/Code");
+        for leaf in [
+            "CachedData",
+            "CachedExtensionVSIXs",
+            "User",
+            "logs",
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+        ] {
+            fs::create_dir_all(support.join(leaf)).unwrap();
+        }
+        fs::create_dir_all(home.join("Library/Application Support/Code - Insiders/CachedData"))
+            .unwrap();
+        let preview = developer_cache_preview_at(&home, &home);
+        let paths: Vec<_> = preview
+            .developer_caches
+            .iter()
+            .filter(|i| i.tool == "vscode-stable")
+            .map(|i| i.path.clone())
+            .collect();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&support.join("CachedData")));
+        assert!(paths.contains(&support.join("CachedExtensionVSIXs")));
     }
 
     #[test]

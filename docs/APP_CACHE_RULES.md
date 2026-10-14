@@ -63,7 +63,7 @@ the complete exact-leaf/version/rebuildability chain for these shapes.
 | Candidate/version scope | Proposed leaves | Evidence reviewed and unresolved point |
 | --- | --- | --- |
 | Slack direct desktop; store variant excluded | `Application Support/Slack/{Cache,Code Cache,GPUCache}` | [Slack reinstall guidance](https://slack.com/intl/en-gb/help/articles/360048367814-Update-the-Slack-desktop-app) identifies the data root, but deleting all app data during reinstall does not prove each leaf's cache-only semantics. Exact leaf mapping remains unverified. |
-| VS Code stable desktop; Insiders/portable excluded | `Application Support/Code/{Cache,CachedData,CachedExtensionVSIXs,Code Cache,GPUCache}` | [VS Code FAQ](https://code.visualstudio.com/docs/supporting/faq) did not establish these five leaf cleanup contracts. Need product-maintained path and rebuildability evidence; no `User`, workspaces, logs or WebStorage. |
+| VS Code stable desktop; Insiders/portable excluded | `Application Support/Code/{Cache,Code Cache,GPUCache}` | These three leaves remain unverified. The separately documented CachedData and CachedExtensionVSIXs leaves below are now supported; no User, workspaces, logs or WebStorage. |
 | Cursor desktop; version mapping unresolved | `Application Support/Cursor/{Cache,CachedData,CachedExtensionVSIXs,Code Cache,GPUCache}` | [Cursor documentation](https://cursor.com/docs) and troubleshooting search did not establish this exact five-leaf contract. VS Code ancestry is not proof. |
 | Zoom desktop; version mapping unresolved | `Caches/us.zoom.xos` | [Zoom cache guidance](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0058835) describes an Application Support data location instead. That is not evidence for this leaf; do not substitute account data. |
 | Figma desktop; current support layout | `Caches/com.figma.Desktop` | [Figma reset guidance](https://help.figma.com/hc/en-us/articles/22380853110551-Clear-the-Figma-desktop-app-cache) refers to `Application Support/Figma`, not this Caches leaf. No exact-rule promotion. A separate bundle-owned candidate may qualify only under the full contract below. |
@@ -288,3 +288,38 @@ amendment. This only prevents an OS-provided link from making all copy coverage
 unknown. It never admits a symlinked cache owner/target or an Apple-owned cache;
 all existing owner/target restrictions remain. The held system evidence is
 revalidated with the preview proof, and other links still make coverage unknown.
+
+## VS Code stable default cache leaves (2026-10-14)
+
+Two exact directory rules extend the existing revalidated cache Trash contract:
+`com.microsoft.vscode.cached_data.macos` and
+`com.microsoft.vscode.extension_vsix_cache.macos`, at the passwd-home suffixes
+`Library/Application Support/Code/CachedData` and
+`Library/Application Support/Code/CachedExtensionVSIXs` respectively.
+
+Evidence is pinned to Microsoft's MIT-licensed VS Code 1.104.3 source (reviewed
+2026-10-14), not generic Electron naming:
+- [macOS default user-data mapping](https://github.com/microsoft/vscode/blob/1.104.3/src/vs/platform/environment/node/userDataPath.ts).
+- [compiled cache path and creation](https://github.com/microsoft/vscode/blob/1.104.3/src/main.ts).
+- [product cleanup of old compiled caches](https://github.com/microsoft/vscode/blob/1.104.3/src/vs/code/electron-utility/sharedProcess/contrib/codeCacheCleaner.ts).
+- [extension download cache path](https://github.com/microsoft/vscode/blob/1.104.3/src/vs/platform/environment/common/environmentService.ts).
+- [download on cache miss and eviction](https://github.com/microsoft/vscode/blob/1.104.3/src/vs/platform/extensionManagement/node/extensionDownloader.ts).
+- [Microsoft's VSIX cache validation instructions](https://github.com/microsoft/vscode/issues/99873).
+
+This is a default-layout qualification, not a promise for every product version.
+Moving compiled data can slow the next startup. Moving VSIX downloads requires
+redownloading packages and can prevent offline reinstalls; installed extensions
+are outside these leaves. The App must offer these as Review, not preselected.
+User, workspace state, logs, extensions, Cache, Code Cache, GPUCache, Insiders,
+portable/custom data roots and derivatives such as Cursor remain excluded.
+
+Preview and pre-move engine guards reject active or unknown process census.
+Executable basenames Electron, Code, code, code-tunnel and node, and Code Helper
+or Code - Insiders Helper prefixes block both leaves. Blocking generic Electron
+and Node is deliberately conservative, including renamed bundles/CLI writers;
+it may also block unrelated apps. No process is terminated. Native allowlisting
+independently admits only the two leaves; existing home anchoring, complete scan,
+hard-link accounting, no-follow/cloud checks, exclusions, identity revalidation,
+typed approval and Trash-only journal semantics remain unchanged.
+
+Build and compile-only evidence do not establish native cleanup acceptance.
