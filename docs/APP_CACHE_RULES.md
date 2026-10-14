@@ -381,3 +381,27 @@ policy exclusions, no-follow path validation, explicit typed approval and Trash-
 execution remain unchanged. Ruleset revision is 7; wire/journal contracts are unchanged.
 
 Launcher evidence: [JetBrains command-line support](https://intellij-support.jetbrains.com/hc/en-us/articles/360011901879-How-to-start-IDE-from-the-command-line) names `idea`; [JBCefApp source](https://github.com/JetBrains/intellij-community/blob/master/platform/ui.jcef/jcef/JBCefApp.java) names `jcef Helper`. Generic `java` and `cef_server` guards also cover standalone JVM/remote Chromium writers.
+
+### DataGrip 2026.1 embedded browser cache (2026-10-14)
+
+Exact rule `com.jetbrains.datagrip.2026_1.jcef_cache.macos` permits only
+`~/Library/Caches/JetBrains/DataGrip2026.1/jcef_cache` under the passwd home.
+[JetBrains DBE-26220](https://youtrack.jetbrains.com/issue/DBE-26220) prescribes
+removing this leaf for the Geo Viewer failure in DataGrip 2026.1.3/2026.1.4.
+This qualifies the default 2026.1 directory layout, not all versions/products.
+[JetBrains JCEF guidance](https://youtrack.jetbrains.com/articles/SUPPORT-A-4076)
+requires quitting the IDE and Toolbox first. Embedded pages may reload or require
+sign-in again; the App must present Review, unchecked.
+
+SQL files, database connection configuration, projects, plugins, Local History,
+IDE indexes, sibling directories, custom roots and other versions are excluded.
+There is no wildcard or database operation. Process checks block `datagrip`,
+generic `java`, `jetbrains-toolbox` and its helper; prefixes `jcef`, `JCEF`,
+`cef_server`, `DataGrip`, `JetBrains`, `jetbrains-toolbox` also block. Unknown census
+fails closed; generic JVM/helper matches deliberately permit false positives.
+The [official launcher reference](https://www.jetbrains.com/help/datagrip/cli-commands-for-data-sources.html)
+confirms `Contents/MacOS/datagrip`. Existing prepare/approval/final revalidation,
+complete scan, hard-link accounting, protected paths, no-follow checks, typed
+approval and Trash-only handling remain unchanged. Ruleset 8; no ABI/journal change.
+Build/compile checks do not establish native cleanup or DataGrip behavior; owner
+acceptance is still needed. No real cache removal is part of implementation.
