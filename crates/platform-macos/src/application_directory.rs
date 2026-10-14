@@ -229,10 +229,20 @@ impl Observation {
     /// after getxattr binds its result to that same leaf. No content open or
     /// extension inference.
     pub fn is_finder_alias(&self, entry: &DirEntry) -> io::Result<bool> {
+        self.evidence.generation()?;
+        let alias = self.is_finder_alias_during_enumeration(entry)?;
+        self.evidence.generation()?;
+        Ok(alias)
+    }
+
+    /// Batch form for a complete enumeration that MUST successfully call finish()
+    /// before publishing any inventory. Parent generation checks are amortized at
+    /// capture/finish; all per-file identity, dataless, no-follow and FinderInfo
+    /// checks remain immediate. Any early exit must discard the whole inventory.
+    pub fn is_finder_alias_during_enumeration(&self, entry: &DirEntry) -> io::Result<bool> {
         if entry.path().parent() != Some(self.evidence.path.as_path()) {
             return Err(changed());
         }
-        self.evidence.generation()?;
         let path = entry.path();
         let name = CString::new(entry.file_name().as_bytes()).map_err(|_| changed())?;
         let before = Stamp::read_at(&self.evidence.held, &name)?;
@@ -267,7 +277,6 @@ impl Observation {
         };
         validate_alias_stamp(&self.evidence.held, &name, &path, &before)?;
         let alias = finder_info_result(result, &info)?;
-        self.evidence.generation()?;
         Ok(alias)
     }
 }
@@ -453,13 +462,34 @@ mod tests {
         let mut seen = 0;
         while let Some(entry) = directory.next_entry().unwrap() {
             assert_eq!(
-                directory.is_finder_alias(&entry).unwrap(),
+                directory.is_finder_alias_during_enumeration(&entry).unwrap(),
                 entry.file_name() == "shortcut.html"
             );
             seen += 1;
         }
         assert_eq!(seen, 2);
-        directory.revalidate().unwrap();
+        directory.finish().unwrap();
+    }
+    #[test]
+    fn batched_alias_checks_require_unchanged_parent_at_finish() {
+        let (_temp, path) = fixture();
+        std::fs::write(path.join("regular"), b"fixture").unwrap();
+        let mut directory = Observation::capture(&path).unwrap();
+        let entry = directory.next_entry().unwrap().unwrap();
+        assert!(!directory.is_finder_alias_during_enumeration(&entry).unwrap());
+        std::fs::write(path.join("added"), b"mutation").unwrap();
+        assert!(directory.finish().is_err());
+    }
+    #[test]
+    fn batched_alias_checks_reject_replaced_leaf_immediately() {
+        let (_temp, path) = fixture();
+        std::fs::write(path.join("regular"), b"fixture").unwrap();
+        let mut directory = Observation::capture(&path).unwrap();
+        let entry = directory.next_entry().unwrap().unwrap();
+        std::fs::rename(path.join("regular"), path.join("old")).unwrap();
+        std::os::unix::fs::symlink("old", path.join("regular")).unwrap();
+        assert!(directory.is_finder_alias_during_enumeration(&entry).is_err());
+        assert!(directory.finish().is_err());
     }
     #[test]
     fn replacement_and_case_rename_invalidate_enumeration() {

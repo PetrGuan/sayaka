@@ -4,6 +4,60 @@
 //! streaming DFS, lending subtrees to idle peers with bounded retained ancestors.
 //! All lending ancestors stay open until every worker finishes, so change checks
 //! cover their descendants. No per-file records are queued.
+// Workers must never acquire stderr: a CLI caller can hold it while joining.
+// At most one summary and one resource record per worker, emitted by the caller.
+#[cfg(debug_assertions)]
+#[derive(Default)]
+struct ThreadRecords(Mutex<Vec<String>>);
+#[cfg(debug_assertions)]
+impl Drop for ThreadRecords {
+    fn drop(&mut self) {
+        use std::io::Write;
+        let records = self.0.get_mut().unwrap_or_else(|e| e.into_inner());
+        for record in records {
+            let _ = writeln!(std::io::stderr().lock(), "[SayakaSizing] {record}");
+        }
+    }
+}
+
+// Per-thread intervals distinguish CPU work from off-CPU time without adding a
+// resource syscall to every directory/file operation. Off-CPU includes queue,
+// scheduling and I/O waits; it is deliberately not labelled disk time.
+#[cfg(all(debug_assertions, target_os = "macos"))]
+struct ThreadTiming<'a> {
+    root: &'a Path,
+    role: &'static str,
+    index: usize,
+    started: Instant,
+    cpu: Option<u64>,
+    records: &'a ThreadRecords,
+}
+#[cfg(all(debug_assertions, target_os = "macos"))]
+impl<'a> ThreadTiming<'a> {
+    fn new(root: &'a Path, role: &'static str, index: usize, records: &'a ThreadRecords) -> Self {
+        Self { root, role, index, records, started: Instant::now(),
+            cpu: sayaka_platform_macos::process_resources::thread_cpu_ns().ok() }
+    }
+}
+#[cfg(all(debug_assertions, target_os = "macos"))]
+impl Drop for ThreadTiming<'_> {
+    fn drop(&mut self) {
+        let cpu = sayaka_platform_macos::process_resources::thread_cpu_ns().ok()
+            .zip(self.cpu).and_then(|(end, start)| end.checked_sub(start));
+        let wall = self.started.elapsed().as_nanos();
+        let record = match cpu {
+            Some(cpu) => format!(
+                "event=thread_resources path={:?} role={} index={} wall_us={} cpu_us={} off_cpu_us={} cpu_unit=us",
+                self.root, self.role, self.index, wall / 1000, cpu / 1000, wall.saturating_sub(u128::from(cpu)) / 1000),
+            None => format!(
+                "event=thread_resources path={:?} role={} index={} wall_us={} cpu_status=unavailable",
+                self.root, self.role, self.index, wall / 1000),
+        };
+        lock(&self.records.0).push(record);
+    }
+}
+
+
 use super::*;
 use crate::scan::walk::{Backend, Cursor, ThreadPolicy};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -72,6 +126,8 @@ struct Queue<D> {
 }
 type Sizes = (Option<u64>, Option<u64>, Option<u64>);
 struct Shared<'a, D> {
+    #[cfg(debug_assertions)]
+    thread_records: ThreadRecords,
     root: &'a Path,
     expected: FileIdentity,
     limits: &'a ScanLimits,
@@ -299,6 +355,8 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
     let policy = backend.enter_thread()?;
     let result = (|| {
         let shared = Shared {
+            #[cfg(debug_assertions)]
+            thread_records: ThreadRecords::default(),
             root,
             expected,
             limits,
@@ -349,6 +407,8 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
         };
         if project_budget.is_some() && limits.workers == 1 {
             // With no spare project slot, retain the single streaming DFS.
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            let _resources = ThreadTiming::new(root, "single", 0, &shared.thread_records);
             walk(&shared, frame, false, &mut progress)?;
         } else {
             std::thread::scope(|scope| -> Result<(), ScanError> {
@@ -376,6 +436,8 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                             success: false,
                         };
                         let policy = backend.enter_thread()?;
+                        #[cfg(all(debug_assertions, target_os = "macos"))]
+                        let _resources = ThreadTiming::new(shared.root, "worker", index, &shared.thread_records);
                         let result = (|| {
                             #[cfg(debug_assertions)]
                             let (mut jobs, mut active_us, mut slowest_us, mut slowest_path) = (0usize, 0u128, 0u128, PathBuf::new());
@@ -394,7 +456,7 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                             }
                             #[cfg(debug_assertions)]
                             if jobs != 0 {
-                                eprintln!("[SayakaSizing] event=worker path={:?} index={index} jobs={jobs} active_us={active_us} slowest_job_us={slowest_us} slowest_path={slowest_path:?}", shared.root);
+                                lock(&shared.thread_records.0).push(format!("event=worker path={:?} index={index} jobs={jobs} active_us={active_us} slowest_job_us={slowest_us} slowest_path={slowest_path:?}", shared.root));
                             }
                             Ok(())
                         })();
@@ -415,6 +477,8 @@ pub(in crate::scan) fn summarize_with_project_budget<B: Backend>(
                     }
                 }
                 let retained_root = if failure.is_none() {
+                    #[cfg(all(debug_assertions, target_os = "macos"))]
+                    let _resources = ThreadTiming::new(root, "producer", 0, &shared.thread_records);
                     match walk(&shared, frame, true, &mut progress) {
                         Ok(root) => root,
                         Err(error) => {
@@ -780,6 +844,8 @@ mod scheduling_tests {
 
     fn shared<'a, D>(limits: &'a ScanLimits, cancellation: &'a Cancellation) -> Shared<'a, D> {
         Shared {
+            #[cfg(debug_assertions)]
+            thread_records: ThreadRecords::default(),
             root: Path::new("/cache"), expected: FileIdentity::Unix { device: 1, inode: 1 },
             limits, cancellation, started: Instant::now(), project_budget: None,
             stopped: AtomicBool::new(false),

@@ -28,3 +28,21 @@ pub fn snapshot() -> std::io::Result<ProcessResources> {
         footprint_bytes: info.ri_phys_footprint,
     })
 }
+
+/// Current-thread CPU time, already in nanoseconds (unlike proc_pid_rusage ticks).
+/// Debug diagnostics only; never a budget or authorization input.
+#[cfg(debug_assertions)]
+pub fn thread_cpu_ns() -> std::io::Result<u64> {
+    let mut time = std::mem::MaybeUninit::<libc::timespec>::uninit();
+    // SAFETY: clock_gettime initializes this output on success; no ownership transfer.
+    if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, time.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful clock_gettime initialized both fields.
+    let time = unsafe { time.assume_init() };
+    let secs = u64::try_from(time.tv_sec).map_err(|_| std::io::Error::other("negative CPU time"))?;
+    let nanos = u64::try_from(time.tv_nsec).ok().filter(|n| *n < 1_000_000_000)
+        .ok_or_else(|| std::io::Error::other("invalid CPU nanoseconds"))?;
+    secs.checked_mul(1_000_000_000).and_then(|v| v.checked_add(nanos))
+        .ok_or_else(|| std::io::Error::other("thread CPU time overflow"))
+}
