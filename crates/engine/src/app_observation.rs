@@ -73,11 +73,15 @@ impl Bundle {
         })
     }
     fn capture_system_safari() -> io::Result<Self> {
-        let observation = platform::system_safari::Observation::capture()?;
-        let mut bundle = Self::capture(observation.path())?;
-        if bundle.id != "com.apple.Safari" { return Err(error("copies_unknown: system Safari identity")); }
-        bundle.system_safari = Some(observation);
+        // Capture the manifest inside the retained Safari chain, then validate
+        // its signature once. Later revalidation still performs the full check.
+        let (observation, mut bundle) = platform::system_safari::Observation::capture_with(|path| {
+            let bundle = Self::capture(path)?;
+            if bundle.id != "com.apple.Safari" { return Err(error("copies_unknown: system Safari identity")); }
+            Ok(bundle)
+        })?;
         bundle.revalidate()?;
+        bundle.system_safari = Some(observation);
         Ok(bundle)
     }
     fn capture_application_link(path: &Path, roots: &[Root]) -> io::Result<Self> {
@@ -273,7 +277,7 @@ fn inventory_observed(
                 }
                 if !ty.is_dir()
                     && (!ty.is_file() || path.extension().is_some_and(|e| e == "app")
-                        || diagnostics.run("finder_alias", &path, || directory.is_finder_alias(&entry))?)
+                        || diagnostics.run("finder_alias", &path, || directory.is_finder_alias_during_enumeration(&entry))?)
                 {
                     return Err(error(format!("copies_unknown: alias or unsupported entry path={path:?}")));
                 }

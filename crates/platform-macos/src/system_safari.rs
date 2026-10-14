@@ -206,6 +206,11 @@ pub struct Observation {
 }
 impl Observation {
     pub fn capture() -> io::Result<Self> {
+        Self::capture_with(|_| Ok(())).map(|(observation, ())| observation)
+    }
+    /// Inspect within retained chain evidence before the mandatory full signature
+    /// validation. No partially validated Observation escapes on any error.
+    pub fn capture_with<T>(inspect: impl FnOnce(&Path) -> io::Result<T>) -> io::Result<(Self, T)> {
         let policy = crate::ReadOnlyPolicy::enter()?;
         let result = (|| {
             let links = [
@@ -242,8 +247,9 @@ impl Observation {
                 directories,
                 destination,
             };
+            let value = timed("manifest_capture", || inspect(observation.path()))?;
             observation.revalidate()?;
-            Ok(observation)
+            Ok((observation, value))
         })();
         let restored = policy.restore();
         let observation = result?;
@@ -263,11 +269,11 @@ impl Observation {
                 d.revalidate()?;
             }
             self.destination.revalidate()?;
-            crate::devtools::verify_code_requirement(
-                self.path(),
-                "anchor apple and identifier \"com.apple.Safari\"",
-            )
-            .map_err(|_| unknown())?;
+            timed("signature_check", || {
+                crate::devtools::verify_code_requirement(
+                    self.path(), r#"anchor apple and identifier "com.apple.Safari""#,
+                ).map_err(|_| unknown())
+            })?;
             for d in &self.directories {
                 d.revalidate()?;
             }
@@ -280,6 +286,20 @@ impl Observation {
         result?;
         restored
     }
+}
+
+fn timed<T>(operation: &str, action: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    #[cfg(debug_assertions)]
+    let start = std::time::Instant::now();
+    let result = action();
+    #[cfg(debug_assertions)]
+    {
+        use std::io::Write;
+        let _ = writeln!(io::stderr().lock(), "[SayakaSafari] event=operation operation={operation} wall_us={} success={}", start.elapsed().as_micros(), result.is_ok());
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = operation;
+    result
 }
 
 #[cfg(test)]
