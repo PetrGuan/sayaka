@@ -405,3 +405,27 @@ complete scan, hard-link accounting, protected paths, no-follow checks, typed
 approval and Trash-only handling remain unchanged. Ruleset 8; no ABI/journal change.
 Build/compile checks do not establish native cleanup or DataGrip behavior; owner
 acceptance is still needed. No real cache removal is part of implementation.
+
+### WebStorm 2026.2 embedded browser cache (#140, reviewed 2026-10-14)
+
+Only `~/Library/Caches/JetBrains/WebStorm2026.2/jcef_cache` is added, using
+`com.jetbrains.webstorm.2026_2.jcef_cache.macos` (`tool: webstorm-jcef`).
+Evidence combines the [official WebStorm 2026.2 directory reference](https://www.jetbrains.com/help/webstorm/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html)
+with [JetBrains JCEF removal guidance](https://youtrack.jetbrains.com/articles/SUPPORT-A-4076).
+The former documents the macOS system root, which also contains Local History;
+the latter identifies only the jcef_cache leaf and requires exiting IDE and
+Toolbox. No blanket system-root cleanup or wildcard version matching is allowed.
+Other versions/products/custom roots, projects, settings, plugins, IDE indexes,
+Local History and sibling directories are excluded. Embedded pages may reload or
+require signing in again; this is unchecked Review, not automatic selection.
+
+The `webstorm` launcher is documented in [JetBrains support](https://intellij-support.jetbrains.com/hc/en-us/community/posts/4408054265106-Webstorm-won-t-start-on-Mac).
+Process protection blocks webstorm, generic java, jetbrains-toolbox and its helper,
+and prefixes jcef, JCEF, cef_server, WebStorm, JetBrains, jetbrains-toolbox.
+Unknown census blocks cleanup; generic JVM/helper matches can conservatively block
+unrelated apps. Complete scan, hard-link accounting, policy/no-follow checks,
+repeated execution revalidation, typed approval, Trash-only behavior and licensing
+remain unchanged. No ABI/journal change. Build/compile-only evidence is not native
+cleanup or subsequent WebStorm behavior acceptance; no real cache was removed.
+
+Ruleset revision is 9. Hosts must use the exact rule ID for product-specific copy.
