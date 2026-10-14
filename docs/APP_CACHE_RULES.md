@@ -297,8 +297,14 @@ Two exact directory rules extend the existing revalidated cache Trash contract:
 `Library/Application Support/Code/CachedData` and
 `Library/Application Support/Code/CachedExtensionVSIXs` respectively.
 
-Evidence is pinned to Microsoft's MIT-licensed VS Code 1.104.3 source (reviewed
-2026-10-14), not generic Electron naming:
+Evidence combines Microsoft's official stable macOS data-root documentation
+with MIT-licensed VS Code 1.104.3 source for the leaf mapping and behavior
+(reviewed 2026-10-14), not generic Electron naming. The source alone uses
+product.nameShort and does not establish the branded root:
+- [official clean-uninstall data locations](https://code.visualstudio.com/docs/setup/uninstall#clean-uninstall)
+  explicitly identifies `$HOME/Library/Application Support/Code` on macOS.
+  This is evidence for the root name only, NOT permission to delete that root or
+  its other user data. The 1.104.3 source below establishes the two cache leaves.
 - [macOS default user-data mapping](https://github.com/microsoft/vscode/blob/1.104.3/src/vs/platform/environment/node/userDataPath.ts).
 - [compiled cache path and creation](https://github.com/microsoft/vscode/blob/1.104.3/src/main.ts).
 - [product cleanup of old compiled caches](https://github.com/microsoft/vscode/blob/1.104.3/src/vs/code/electron-utility/sharedProcess/contrib/codeCacheCleaner.ts).

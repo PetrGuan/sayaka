@@ -679,6 +679,11 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             url: "https://github.com/microsoft/vscode/blob/1.104.3/src/main.ts",
             reviewed_utc: "2026-10-14",
             license_note: "Microsoft VS Code source, MIT; independent implementation",
+        }, EvidenceSource {
+            title: "Microsoft VS Code official macOS user-data root (root evidence only)",
+            url: "https://code.visualstudio.com/docs/setup/uninstall#clean-uninstall",
+            reviewed_utc: "2026-10-14",
+            license_note: "Microsoft VS Code documentation",
         }],
     },
     DeveloperCacheRule {
@@ -701,6 +706,11 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             url: "https://github.com/microsoft/vscode/blob/1.104.3/src/vs/platform/extensionManagement/node/extensionDownloader.ts",
             reviewed_utc: "2026-10-14",
             license_note: "Microsoft VS Code source, MIT; independent implementation",
+        }, EvidenceSource {
+            title: "Microsoft VS Code official macOS user-data root (root evidence only)",
+            url: "https://code.visualstudio.com/docs/setup/uninstall#clean-uninstall",
+            reviewed_utc: "2026-10-14",
+            license_note: "Microsoft VS Code documentation",
         }],
     },
     DeveloperCacheRule {
