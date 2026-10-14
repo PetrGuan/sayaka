@@ -1329,3 +1329,8 @@ VS Code stable exact cache rules: `com.microsoft.vscode.cached_data.macos` and
 `com.microsoft.vscode.extension_vsix_cache.macos` use the existing developer-cache
 preview/execution ABI. See APP_CACHE_RULES.md for exact paths, evidence and writer
 refusals. Hosts should use Review rather than automatic selection.
+
+Cursor exact cache rules `com.cursor.cached_data.macos` and
+`com.cursor.extension_vsix_cache.macos` use the unchanged developer-cache ABI.
+Hosts must present Review without preselection; APP_CACHE_RULES.md defines the
+exact default leaves, staff evidence, exclusions and conservative writer guard.
