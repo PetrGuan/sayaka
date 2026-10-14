@@ -31,7 +31,7 @@ pub const PURGE_SCHEMA_VERSION: u32 = 1;
 pub const PURGE_KIND: &str = "sayaka.purge_preview";
 pub const DEFAULT_STALE_DAYS: u32 = 30;
 pub const MAX_STALE_DAYS: u32 = 3650;
-pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 7;
+pub const DEVELOPER_CACHE_RULESET_REVISION: u32 = 8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PurgeProfile {
@@ -711,6 +711,23 @@ const DEVELOPER_CACHE_RULES: &[DeveloperCacheRule] = &[
             url: "https://code.visualstudio.com/docs/setup/uninstall#clean-uninstall",
             reviewed_utc: "2026-10-14",
             license_note: "Microsoft VS Code documentation",
+        }],
+    },
+    DeveloperCacheRule {
+        tool: "datagrip-jcef",
+        rule_id: "com.jetbrains.datagrip.2026_1.jcef_cache.macos",
+        rule_version: 1,
+        title: "DataGrip 2026.1 embedded browser cache",
+        suffix: &["Library", "Caches", "JetBrains", "DataGrip2026.1", "jcef_cache"],
+        location: "~/Library/Caches/JetBrains/DataGrip2026.1/jcef_cache",
+        location_kind: "directory",
+        rebuildability_note: "JetBrains documents removing this exact embedded browser cache after quitting the IDE and Toolbox. Embedded pages may reload or require signing in again. Only the default DataGrip 2026.1 leaf is supported; Local History, IDE indexes, SQL files, database connection settings, projects, other products, versions and custom roots are excluded.",
+        lock_siblings: &[],
+        evidence: &[EvidenceSource {
+            title: "JetBrains DataGrip: Geo viewer is blank",
+            url: "https://youtrack.jetbrains.com/issue/DBE-26220",
+            reviewed_utc: "2026-10-14",
+            license_note: "JetBrains official support knowledge base; independent implementation",
         }],
     },
     DeveloperCacheRule {
@@ -2128,6 +2145,11 @@ const VSCODE_HELPERS: &[&str] = &["Code Helper", "Code - Insiders Helper"];
 
 // Generic JVM/JCEF names deliberately favor false positives over moving a live cache.
 #[cfg(target_os = "macos")]
+const DATAGRIP_WRITERS: &[&str] = &["datagrip", "java", "jetbrains-toolbox", "jetbrains-toolbox-helper"];
+#[cfg(target_os = "macos")]
+const DATAGRIP_HELPERS: &[&str] = &["jcef", "JCEF", "cef_server", "DataGrip", "JetBrains", "jetbrains-toolbox"];
+
+#[cfg(target_os = "macos")]
 const INTELLIJ_WRITERS: &[&str] = &["idea", "idea64", "java", "jetbrains-toolbox", "jetbrains-toolbox-helper"];
 #[cfg(target_os = "macos")]
 const INTELLIJ_HELPERS: &[&str] = &["jcef", "JCEF", "cef_server", "IntelliJ", "JetBrains", "jetbrains-toolbox"];
@@ -2139,6 +2161,12 @@ const CURSOR_HELPERS: &[&str] = &["Cursor Helper"];
 
 #[cfg(target_os = "macos")]
 fn application_active_or_unknown(tool: &str, account_home: &Path) -> bool {
+    if tool == "datagrip-jcef" {
+        return named_process_active_or_unknown(
+            sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
+            DATAGRIP_WRITERS, DATAGRIP_HELPERS,
+        );
+    }
     if tool == "intellij-jcef" {
         return named_process_active_or_unknown(
             sayaka_platform_macos::status::current_user_executable_paths_complete(65_536),
@@ -2250,7 +2278,7 @@ fn process_paths_active_or_unknown<E>(paths: Result<Vec<PathBuf>, E>, bundles: &
 fn application_active_or_unknown(tool: &str, _account_home: &Path) -> bool {
     matches!(
         tool,
-        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media" | "vscode-stable" | "cursor" | "intellij-jcef"
+        "chrome" | "edge" | "firefox" | "teams-classic" | "discord" | "adobe-media" | "vscode-stable" | "cursor" | "intellij-jcef" | "datagrip-jcef"
     )
 }
 
@@ -2698,6 +2726,31 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn datagrip_writer_census_fails_closed() {
+        for name in [
+            "datagrip", "java", "jetbrains-toolbox", "jetbrains-toolbox-helper",
+            "jcef Helper (Renderer)", "JCEF Helper", "cef_server", "DataGrip",
+        ] {
+            assert!(named_process_active_or_unknown(
+                Ok::<_, ()>(vec![PathBuf::from(name)]),
+                DATAGRIP_WRITERS,
+                DATAGRIP_HELPERS
+            ));
+        }
+        assert!(named_process_active_or_unknown(
+            Err::<Vec<PathBuf>, _>(()),
+            DATAGRIP_WRITERS,
+            DATAGRIP_HELPERS
+        ));
+        assert!(!named_process_active_or_unknown(
+            Ok::<_, ()>(vec![PathBuf::from("/bin/Other")]),
+            DATAGRIP_WRITERS,
+            DATAGRIP_HELPERS
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn intellij_writer_census_fails_closed() {
         for name in [
             "idea", "idea64", "java", "jetbrains-toolbox", "jetbrains-toolbox-helper",
@@ -2775,6 +2828,22 @@ mod tests {
             VSCODE_WRITERS,
             VSCODE_HELPERS
         ));
+    }
+
+    #[test]
+    fn datagrip_only_discovers_documented_version_and_leaf() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("account");
+        let base = home.join("Library/Caches/JetBrains");
+        for relative in [
+            "DataGrip2026.1/jcef_cache", "DataGrip2026.1/LocalHistory",
+            "DataGrip2026.1/caches", "DataGrip2026.2/jcef_cache",
+            "IntelliJIdea2026.1/jcef_cache", "IdeaIC2026.1/jcef_cache",
+        ] { fs::create_dir_all(base.join(relative)).unwrap(); }
+        let preview = developer_cache_preview_at(&home, &home);
+        let paths: Vec<_> = preview.developer_caches.iter()
+            .filter(|i| i.tool == "datagrip-jcef").map(|i| i.path.clone()).collect();
+        assert_eq!(paths, vec![base.join("DataGrip2026.1/jcef_cache")]);
     }
 
     #[test]
