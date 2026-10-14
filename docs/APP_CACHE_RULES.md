@@ -356,3 +356,28 @@ unrelated apps; never terminate a process to enable cleanup.
 Existing complete scan, hard-link accounting, no-follow, cloud/identity checks,
 exclusion policy, native exact allowlist and typed Trash-only approval remain.
 Native cleanup acceptance is separate from builds and compile-only checks.
+
+### IntelliJ IDEA 2026.1 embedded browser cache (2026-10-14)
+
+The exact native and engine rule `com.jetbrains.intellij.2026_1.jcef_cache.macos`
+permits only `~/Library/Caches/JetBrains/IntelliJIdea2026.1/jcef_cache` under the
+passwd home. [JetBrains support](https://youtrack.jetbrains.com/articles/SUPPORT-A-4076)
+identifies this macOS example and instructs users to quit the IDE and Toolbox
+before removing the embedded Chromium cache. The scope is the documented default
+2026.1 layout, not all JetBrains products or versions. There is no wildcard.
+
+The App must show Review, unchecked, and disclose possible embedded-page reloads
+and sign-in prompts. Projects, settings, plugins, Local History, IDE indexes,
+other sibling directories, custom roots and other product/version roots are not
+targets. Cache reconstruction and sign-in behavior still need owner acceptance;
+build/compile evidence is not destructive runtime acceptance.
+
+Activity is checked again at the existing prepare/approval/last-native boundaries:
+`idea`, `idea64`, generic `java`, `jetbrains-toolbox` and its helpers; executable
+prefixes `jcef`, `JCEF`, `cef_server`, `IntelliJ`, `JetBrains`, `jetbrains-toolbox`. Generic JVM
+and helper matches may conservatively block cleanup for unrelated applications.
+An incomplete process census blocks execution. Complete scan, hard-link accounting,
+policy exclusions, no-follow path validation, explicit typed approval and Trash-only
+execution remain unchanged. Ruleset revision is 7; wire/journal contracts are unchanged.
+
+Launcher evidence: [JetBrains command-line support](https://intellij-support.jetbrains.com/hc/en-us/articles/360011901879-How-to-start-IDE-from-the-command-line) names `idea`; [JBCefApp source](https://github.com/JetBrains/intellij-community/blob/master/platform/ui.jcef/jcef/JBCefApp.java) names `jcef Helper`. Generic `java` and `cef_server` guards also cover standalone JVM/remote Chromium writers.

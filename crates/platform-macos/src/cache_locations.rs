@@ -52,6 +52,11 @@ impl CacheLocation {
 /// The reviewed exact engine rules (including the two approved Adobe leaves). No generic bundle-ID or Containers shape.
 pub const CACHE_LOCATIONS: &[CacheLocation] = &[
     CacheLocation {
+        rule_id: "com.jetbrains.intellij.2026_1.jcef_cache.macos",
+        base: &["Library", "Caches", "JetBrains", "IntelliJIdea2026.1", "jcef_cache"],
+        profile_leaf: None,
+    },
+    CacheLocation {
         rule_id: "com.cursor.cached_data.macos",
         base: &["Library", "Application Support", "Cursor", "CachedData"],
         profile_leaf: None,
@@ -288,6 +293,11 @@ mod tests {
             "/Users/fixture/Library/Application Support/Cursor/Code Cache",
             "/Users/fixture/Library/Application Support/Cursor/GPUCache",
             "/Users/fixture/Library/Application Support/Cursor/CachedData/child",
+            "/Users/fixture/Library/Caches/JetBrains/IntelliJIdea2026.1",
+            "/Users/fixture/Library/Caches/JetBrains/IntelliJIdea2026.1/LocalHistory",
+            "/Users/fixture/Library/Caches/JetBrains/IntelliJIdea2026.1/jcef_cache/child",
+            "/Users/fixture/Library/Caches/JetBrains/IntelliJIdea2026.2/jcef_cache",
+            "/Users/fixture/Library/Caches/JetBrains/DataGrip2026.1/jcef_cache",
             "/Users/fixture/Library/Caches/Firefox/Profiles/.hidden/cache2",
             "/Users/fixture/Library/Caches/com.example.unreviewed",
             "/Users/fixture/Library/Containers/com.example.app/Data/Library/Caches",
