@@ -429,3 +429,28 @@ remain unchanged. No ABI/journal change. Build/compile-only evidence is not nati
 cleanup or subsequent WebStorm behavior acceptance; no real cache was removed.
 
 Ruleset revision is 9. Hosts must use the exact rule ID for product-specific copy.
+
+### PyCharm 2026.2 embedded browser cache (#140, reviewed 2026-10-15)
+
+Exact rule `com.jetbrains.pycharm.2026_2.jcef_cache.macos` (`tool: pycharm-jcef`)
+adds only `~/Library/Caches/JetBrains/PyCharm2026.2/jcef_cache`.
+The [PyCharm 2026.2 directory reference](https://www.jetbrains.com/help/pycharm/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html)
+confirms the default macOS system root; [JetBrains JCEF guidance](https://youtrack.jetbrains.com/articles/SUPPORT-A-4076)
+identifies the leaf and requires exiting the IDE and Toolbox.
+[PyCharm cache invalidation documentation](https://www.jetbrains.com/help/pycharm/invalidate-caches.html)
+explicitly includes embedded-browser cookies. This is unchecked Review: embedded
+page preferences/cookies may reset and pages may reload or require sign-in.
+
+No wildcard, PyCharmCE or other versions/products/custom roots. Projects, Python
+environments, notebooks, settings, plugins, IDE indexes, Local History and sibling
+directories are excluded. The [official launch guide](https://intellij-support.jetbrains.com/hc/en-us/articles/360011901879-How-to-start-IDE-from-the-command-line)
+confirms the pycharm executable. Protection blocks pycharm, generic java,
+jetbrains-toolbox and helper, plus jcef/JCEF/cef_server/PyCharm/JetBrains/
+jetbrains-toolbox prefixes. Unknown census blocks cleanup; generic JVM matches
+can conservatively block unrelated apps. Existing complete scan, hard-link
+accounting, policy/no-follow checks, typed approval, repeated execution
+revalidation, Trash-only behavior and licensing remain unchanged. No ABI/journal
+change. Native cleanup/recreation still needs owner acceptance; no real cache
+removal or unit/UI test execution is part of this implementation.
+
+Ruleset revision is 10. Hosts must match the exact rule ID for specific copy.

@@ -1345,3 +1345,5 @@ DataGrip 2026.1 adds exact rule `com.jetbrains.datagrip.2026_1.jcef_cache.macos`
 Review and disclose embedded-page reload/sign-in consequences. See `APP_CACHE_RULES.md`.
 
 WebStorm 2026.2 adds `com.jetbrains.webstorm.2026_2.jcef_cache.macos` (`tool: webstorm-jcef`). No ABI/journal changes. Hosts must keep it unchecked in Review with embedded-page reload/sign-in consequences; see `APP_CACHE_RULES.md`.
+
+PyCharm 2026.2 adds `com.jetbrains.pycharm.2026_2.jcef_cache.macos` (`tool: pycharm-jcef`). No ABI/journal changes. Hosts must keep it unchecked in Review, disclose embedded-browser cookies/reset/sign-in consequences and match its exact rule ID; see `APP_CACHE_RULES.md`.
