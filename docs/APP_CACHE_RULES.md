@@ -454,3 +454,28 @@ change. Native cleanup/recreation still needs owner acceptance; no real cache
 removal or unit/UI test execution is part of this implementation.
 
 Ruleset revision is 10. Hosts must match the exact rule ID for specific copy.
+
+### GoLand 2026.2 embedded browser cache (#140, reviewed 2026-10-15)
+
+Only `~/Library/Caches/JetBrains/GoLand2026.2/jcef_cache` is added, via
+`com.jetbrains.goland.2026_2.jcef_cache.macos` (`tool: goland-jcef`).
+[GoLand 2026.2 directory documentation](https://www.jetbrains.com/help/go/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html)
+confirms the default macOS root. [JetBrains JCEF removal guidance](https://youtrack.jetbrains.com/articles/SUPPORT-A-4076)
+identifies the leaf and requires quitting IDE and Toolbox.
+[GoLand invalidation documentation](https://www.jetbrains.com/help/go/invalidate-caches.html)
+confirms browser cookies are included. This is unchecked Review; embedded-page
+cookies/preferences may reset and pages may reload or require signing in again.
+
+Other versions/products/custom roots, projects, Go SDKs, Go module/build caches,
+settings, plugins, indexes, Local History and sibling directories are not targets.
+No wildcard or whole-system-directory removal is allowed.
+The [official launcher guide](https://intellij-support.jetbrains.com/hc/en-us/articles/360011901879-How-to-start-IDE-from-the-command-line)
+confirms goland. Activity checks block goland, generic java, Toolbox and helper,
+plus jcef/JCEF/cef_server/GoLand/JetBrains/jetbrains-toolbox prefixes. Unknown census
+fails closed; generic JVM/helper matches can block unrelated apps conservatively.
+Complete scan, hard-link accounting, protected paths, no-follow, typed approval,
+repeated revalidation, Trash-only behavior and licensing are unchanged. No
+ABI/journal change. Native cleanup and subsequent GoLand behavior still require
+owner acceptance. No real cache deletion or unit/UI tests are performed here.
+
+Ruleset revision is 11; hosts must match exact rule ID for product-specific copy.

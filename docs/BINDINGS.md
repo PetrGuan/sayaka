@@ -1347,3 +1347,5 @@ Review and disclose embedded-page reload/sign-in consequences. See `APP_CACHE_RU
 WebStorm 2026.2 adds `com.jetbrains.webstorm.2026_2.jcef_cache.macos` (`tool: webstorm-jcef`). No ABI/journal changes. Hosts must keep it unchecked in Review with embedded-page reload/sign-in consequences; see `APP_CACHE_RULES.md`.
 
 PyCharm 2026.2 adds `com.jetbrains.pycharm.2026_2.jcef_cache.macos` (`tool: pycharm-jcef`). No ABI/journal changes. Hosts must keep it unchecked in Review, disclose embedded-browser cookies/reset/sign-in consequences and match its exact rule ID; see `APP_CACHE_RULES.md`.
+
+GoLand 2026.2 adds `com.jetbrains.goland.2026_2.jcef_cache.macos` (`tool: goland-jcef`). No ABI/journal changes. Hosts must show exact-rule unchecked Review and cookies/reset/sign-in consequences; see `APP_CACHE_RULES.md`.
