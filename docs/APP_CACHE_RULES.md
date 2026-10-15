@@ -479,3 +479,28 @@ ABI/journal change. Native cleanup and subsequent GoLand behavior still require
 owner acceptance. No real cache deletion or unit/UI tests are performed here.
 
 Ruleset revision is 11; hosts must match exact rule ID for product-specific copy.
+
+### PhpStorm 2026.2 embedded browser cache (#140, reviewed 2026-10-15)
+
+Exact rule `com.jetbrains.phpstorm.2026_2.jcef_cache.macos` (`tool: phpstorm-jcef`)
+adds only `~/Library/Caches/JetBrains/PhpStorm2026.2/jcef_cache`.
+[PhpStorm 2026.2 directory documentation](https://www.jetbrains.com/help/phpstorm/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html)
+confirms the default macOS root. [JetBrains JCEF removal guidance](https://youtrack.jetbrains.com/articles/SUPPORT-A-4076)
+identifies the leaf and requires exiting IDE and Toolbox.
+[PhpStorm invalidation documentation](https://www.jetbrains.com/help/phpstorm/invalidate-caches.html)
+confirms embedded-browser cookies are included. Candidates stay unchecked Review;
+cookies/preferences may reset and pages may reload or require sign-in.
+
+No wildcard, other versions/products/custom roots, whole system directory,
+projects, Composer dependencies/cache, PHP environments, settings, plugins, IDE
+indexes, Local History or sibling directories. The
+[official support response](https://intellij-support.jetbrains.com/hc/en-us/community/posts/7305600447890-Downloaded-PhpStorm-on-Mac-but-doesn-t-want-to-open)
+identifies the phpstorm executable. Activity checks block phpstorm, generic java,
+Toolbox and helper, plus jcef/JCEF/cef_server/PhpStorm/JetBrains/jetbrains-toolbox
+prefixes. Unknown census fails closed; generic JVM/helper matches may block
+unrelated apps conservatively. Full scan, hardlinks, policy/no-follow checks,
+typed approval, repeated revalidation, Trash-only handling and licensing remain
+unchanged. No ABI/journal change. Native cleanup and PhpStorm restart behavior
+still require owner acceptance. No real cache deletion or unit/UI tests are run.
+
+Ruleset revision is 12. Hosts must match exact rule ID for specific copy.
